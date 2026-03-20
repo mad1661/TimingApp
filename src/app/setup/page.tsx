@@ -476,10 +476,7 @@ export default function SetupPage() {
 
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-white mb-2">Racing Starts At</h3>
-              <p className="text-xs text-gray-500 mb-3">
-                getresults uses 12-hour time without AM/PM. Set what hour racing starts so times display correctly.
-                Hours before this are treated as PM.
-              </p>
+              <p className="text-xs text-gray-500 mb-3">Reference for when racing starts today</p>
               <div className="flex flex-wrap gap-2">
                 {[6, 7, 8, 9, 10].map((h) => (
                   <button key={h} onClick={() => {
@@ -493,9 +490,6 @@ export default function SetupPage() {
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-600 mt-2">
-                Currently: hours {racingStartHour > 1 ? `1–${racingStartHour - 1}` : "none"} → PM, hours {racingStartHour}–12 → AM/noon
-              </p>
             </div>
 
             <button onClick={handleLockIn} disabled={!selectedEvent}

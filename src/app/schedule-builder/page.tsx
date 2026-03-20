@@ -246,7 +246,6 @@ function ScheduleBuilderInner() {
   const [copied, setCopied] = useState(false);
   const [actuals, setActuals] = useState<ScheduleActual[]>([]);
   const [otherDayEntries, setOtherDayEntries] = useState<PlanEntry[]>([]);
-  const racingStartHour = live.config?.racingStartHour ?? 8;
 
   const dragIdx = useRef<number | null>(null);
   const dragOverIdx = useRef<number | null>(null);
@@ -511,9 +510,9 @@ function ScheduleBuilderInner() {
 
     for (const entry of entries) {
       if (entry.status === "completed" && entry.actualEnd) {
-        const actEnd = parseActualTime(entry.actualEnd, racingStartHour);
+        const actEnd = parseActualTime(entry.actualEnd);
         if (actEnd) {
-          const actStart = entry.actualStart ? parseActualTime(entry.actualStart, racingStartHour) : null;
+          const actStart = entry.actualStart ? parseActualTime(entry.actualStart) : null;
           const startHM = actStart ? { h: actStart.h, m: actStart.m } : minutesToHM(curMin);
           times.push({
             startH: startHM.h,
@@ -783,10 +782,10 @@ function ScheduleBuilderInner() {
                       {fmtDurSec(entry.plannedDurationSec)}
                     </td>
                     <td className="p-3 text-center font-mono text-green-400 text-xs whitespace-nowrap">
-                      {entry.actualStart ? fmtActualTime(entry.actualStart, racingStartHour) : ""}
+                      {entry.actualStart ? fmtActualTime(entry.actualStart) : ""}
                     </td>
                     <td className="p-3 text-center font-mono text-green-400/70 text-xs whitespace-nowrap">
-                      {entry.actualEnd ? fmtActualTime(entry.actualEnd, racingStartHour) : ""}
+                      {entry.actualEnd ? fmtActualTime(entry.actualEnd) : ""}
                     </td>
                     <td className="p-3 text-center">
                       {!isCompleted ? (

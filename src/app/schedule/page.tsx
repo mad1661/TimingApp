@@ -255,7 +255,6 @@ interface PlanData {
 
 export default function SchedulePage() {
   const live = useLiveData();
-  const rsh = live.config?.racingStartHour ?? 8;
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [plans, setPlans] = useState<Map<string, PlanData>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -334,7 +333,7 @@ export default function SchedulePage() {
   const buildDayRows = (date: string): { rows: ScheduleRow[]; downtimeMin: number; hasActualData: boolean; projectedEnd: string } => {
     const actualEntries = schedule
       .filter((s) => fmtDateShort(s.firstTimestamp) === date)
-      .sort((a, b) => sortKey(a.firstTimestamp, rsh).localeCompare(sortKey(b.firstTimestamp, rsh)));
+      .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
 
     const dayPlan = plans.get(date) || null;
     const hasPlan = dayPlan !== null;
@@ -454,7 +453,7 @@ export default function SchedulePage() {
     if (lastRow?.projEnd) {
       projectedEnd = lastRow.projEnd;
     } else if (lastRow && !lastRow.isPlanned && lastRow.end) {
-      projectedEnd = fmtTimeShort(lastRow.end, rsh);
+      projectedEnd = fmtTimeShort(lastRow.end);
     }
 
     const dayManualDt = manualDowntimes.filter((md) => md.date && isoToMDY(md.date) === date);
@@ -602,17 +601,6 @@ export default function SchedulePage() {
           <p className="text-gray-400">{live.config.eventName}</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500">Start:</span>
-            {[6, 7, 8, 9, 10].map((h) => (
-              <button key={h} onClick={() => {
-                if (live.config) live.setConfig({ ...live.config, racingStartHour: h });
-              }}
-                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${rsh === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-500 hover:text-white"}`}>
-                {h}
-              </button>
-            ))}
-          </div>
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -726,11 +714,11 @@ export default function SchedulePage() {
         const actualSessions = sessions.filter((s) => !s.isPlanned);
         const dayPairs = actualSessions.reduce((s, r) => s + r.pairs, 0);
         const dayRuns = actualSessions.reduce((s, r) => s + r.numCars, 0);
-        const firstTime = actualSessions[0] ? fmtTimeShort(actualSessions[0].actual, rsh) : "";
-        const lastTime = actualSessions[actualSessions.length - 1] ? fmtTimeShort(actualSessions[actualSessions.length - 1].end, rsh) : "";
+        const firstTime = actualSessions[0] ? fmtTimeShort(actualSessions[0].actual) : "";
+        const lastTime = actualSessions[actualSessions.length - 1] ? fmtTimeShort(actualSessions[actualSessions.length - 1].end) : "";
 
-        const firstD = actualSessions[0] ? parseTs(actualSessions[0].actual, rsh) : null;
-        const lastD = actualSessions[actualSessions.length - 1] ? parseTs(actualSessions[actualSessions.length - 1].end, rsh) : null;
+        const firstD = actualSessions[0] ? parseTs(actualSessions[0].actual) : null;
+        const lastD = actualSessions[actualSessions.length - 1] ? parseTs(actualSessions[actualSessions.length - 1].end) : null;
         const totalMin = firstD && lastD ? Math.round((lastD.getTime() - firstD.getTime()) / 60000) : 0;
         const activeMin = Math.max(totalMin - downtimeMin, 1);
         const pairsPerHour = activeMin > 0 ? Math.round((dayPairs / activeMin) * 60 * 10) / 10 : 0;
@@ -745,7 +733,7 @@ export default function SchedulePage() {
                   {date.split("/")[1]}
                 </div>
                 <div>
-                  <p className="text-white font-bold text-lg">{fmtDate(actualSessions[0]?.actual || date, rsh)}</p>
+                  <p className="text-white font-bold text-lg">{fmtDate(actualSessions[0]?.actual || date)}</p>
                   {hasActualData ? (
                     <p className="text-white/70 text-xs">
                       {firstTime} &mdash; {lastTime}
@@ -852,8 +840,8 @@ export default function SchedulePage() {
                       if (row.type === "downtime") {
                         return (
                           <tr key={`dt-${i}`} className={`border-b border-nhra-border/50 ${row.manualId ? "bg-yellow-500/10" : "bg-yellow-500/5"}`}>
-                            <td className="p-2 pl-5 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.startTs) : fmtTime12(row.startTs, rsh)}</td>
-                            <td className="p-2 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.endTs) : fmtTime12(row.endTs, rsh)}</td>
+                            <td className="p-2 pl-5 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.startTs) : fmtTime12(row.startTs)}</td>
+                            <td className="p-2 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.endTs) : fmtTime12(row.endTs)}</td>
                             <td colSpan={3} className="p-2 text-center">
                               <span className="inline-flex items-center gap-2 text-yellow-500 text-xs font-medium">
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -896,8 +884,8 @@ export default function SchedulePage() {
 
                       return (
                         <tr key={i} className="border-b border-nhra-border/50 hover:bg-nhra-border/20 transition-colors">
-                          <td className="p-3 pl-5 font-mono text-green-400 font-medium whitespace-nowrap">{fmtTime12(row.actual, rsh)}</td>
-                          <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime12(row.end, rsh)}</td>
+                          <td className="p-3 pl-5 font-mono text-green-400 font-medium whitespace-nowrap">{fmtTime12(row.actual)}</td>
+                          <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime12(row.end)}</td>
                           <td className="p-3 text-white font-medium">
                             <Link href={`/runs?category=${encodeURIComponent(row.category)}`} className="hover:text-nhra-accent transition-colors">
                               {row.category}
