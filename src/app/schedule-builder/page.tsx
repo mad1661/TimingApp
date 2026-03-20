@@ -272,11 +272,6 @@ function ScheduleBuilderInner() {
   const dragOverIdx = useRef<number | null>(null);
 
   useEffect(() => {
-    const sp = searchParams.get("date");
-    if (sp && sp !== planDate) setPlanDate(sp);
-  }, [searchParams, planDate, setPlanDate]);
-
-  useEffect(() => {
     if (typeof window !== "undefined" && planDate) {
       const url = new URL(window.location.href);
       if (url.searchParams.get("date") !== planDate) {
@@ -284,7 +279,7 @@ function ScheduleBuilderInner() {
         window.history.replaceState({}, "", url.toString());
       }
     }
-  }, []);
+  }, [planDate]);
 
   const loadPlan = useCallback(async () => {
     if (!eventKey || !planDate) return;
