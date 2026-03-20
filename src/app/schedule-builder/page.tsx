@@ -238,15 +238,26 @@ function ScheduleBuilderInner() {
   const [entries, setEntries] = useState<PlanEntry[]>([]);
   const [startTime, setStartTime] = useState("8:00 AM");
   const [delayMinutes, setDelayMinutes] = useState(0);
-  const [planDate, setPlanDate] = useState(() => {
+  const [planDate, setPlanDateRaw] = useState(() => {
     const sp = searchParams.get("date");
     if (sp) return sp;
     if (typeof window !== "undefined") {
       const u = new URL(window.location.href);
-      return u.searchParams.get("date") || "";
+      const fromUrl = u.searchParams.get("date");
+      if (fromUrl) return fromUrl;
     }
-    return "";
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   });
+
+  const setPlanDate = useCallback((date: string) => {
+    setPlanDateRaw(date);
+    if (typeof window !== "undefined" && date) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("date", date);
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -263,7 +274,17 @@ function ScheduleBuilderInner() {
   useEffect(() => {
     const sp = searchParams.get("date");
     if (sp && sp !== planDate) setPlanDate(sp);
-  }, [searchParams, planDate]);
+  }, [searchParams, planDate, setPlanDate]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && planDate) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("date") !== planDate) {
+        url.searchParams.set("date", planDate);
+        window.history.replaceState({}, "", url.toString());
+      }
+    }
+  }, []);
 
   const loadPlan = useCallback(async () => {
     if (!eventKey || !planDate) return;
@@ -378,7 +399,7 @@ function ScheduleBuilderInner() {
   }, [actuals, entries, planDate, catAliases]);
 
   const savePlan = async () => {
-    if (!eventKey) return;
+    if (!eventKey || !planDate) return;
     setSaving(true);
     try {
       await fetch("/api/schedule-plan", {
