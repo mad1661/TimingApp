@@ -161,6 +161,8 @@ interface DayScheduleRow {
   projStart?: string;
   projEnd?: string;
   fixedTime?: string;
+  plannedPairs?: number;
+  plannedPerPairSec?: number;
 }
 
 function parseStartTime(s: string): { h: number; m: number } | null {
@@ -404,6 +406,8 @@ export default function SchedulePage() {
             durationMin: actual.durationMinutes,
             isPlanned: false,
             fixedTime: pe.fixedTime || "",
+            plannedPairs: pe.pairs,
+            plannedPerPairSec: pe.perPairSec,
           }];
         }
 
@@ -489,6 +493,18 @@ export default function SchedulePage() {
             const actEnd = parseTs(row.end);
             if (actEnd) {
               curMin = hmToMinutes(actEnd.getHours(), actEnd.getMinutes());
+              if (row.plannedPairs && row.pairs < row.plannedPairs) {
+                const remaining = row.plannedPairs - row.pairs;
+                let paceMin: number;
+                if (row.pairs >= 2 && row.durationMin > 0) {
+                  paceMin = row.durationMin / (row.pairs - 1);
+                } else if (row.plannedPerPairSec) {
+                  paceMin = row.plannedPerPairSec / 60;
+                } else {
+                  paceMin = 3;
+                }
+                curMin += Math.round(remaining * paceMin);
+              }
             }
           }
         }
