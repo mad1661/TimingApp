@@ -175,14 +175,15 @@ export function parseRunsFromHtml(
 
     const timestamp = cleanText(getText(0));
     const name = cleanText(getText(4));
+    const car_number = cleanText(getText(3));
 
-    if (!name) return;
+    if (!name && !car_number && !timestamp) return;
 
     runs.push({
       timestamp,
       round: cleanText(getText(1)),
       qual_pos: parseNum(getText(2)) as number | null,
-      car_number: cleanText(getText(3)),
+      car_number,
       name,
       class_index: cleanText(getText(5)),
       rt: parseNum(getText(6)),

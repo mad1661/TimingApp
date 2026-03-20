@@ -260,7 +260,7 @@ function RunsPageInner() {
               onClick={() => setShowIgnored(!showIgnored)}
               className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showIgnored ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-400" : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-white"}`}
             >
-              {showIgnored ? "Hiding Ignored" : "Show Ignored"} ({ignoredKeys.size})
+              {showIgnored ? "Showing Ignored" : "Show Ignored"} ({ignoredKeys.size})
             </button>
           )}
           <button

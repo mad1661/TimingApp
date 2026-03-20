@@ -772,10 +772,31 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
 
 const SESSION_GAP_MAX_MIN = 10;
 
-export async function getScheduleData(eventCode: string, season: string, pmStart: boolean = false): Promise<ScheduleEntry[]> {
-  const eventRuns = await getEventRuns(eventCode, season);
+export async function getIgnoredKeys(eventCode: string, season: string): Promise<Set<string>> {
+  try {
+    const db = getDb();
+    const doc = await db.collection("ignored_runs").doc(`${eventCode}_${season}`).get();
+    if (doc.exists) {
+      const keys: string[] = doc.data()?.keys || [];
+      return new Set(keys);
+    }
+  } catch (err) {
+    console.error("[DB] Failed to load ignored keys:", err);
+  }
+  return new Set();
+}
 
-  tagRunTimestamps(eventRuns, pmStart);
+export async function getScheduleData(eventCode: string, season: string, pmStart: boolean = false): Promise<ScheduleEntry[]> {
+  const [allRuns, ignoredKeys] = await Promise.all([
+    getEventRuns(eventCode, season),
+    getIgnoredKeys(eventCode, season),
+  ]);
+
+  tagRunTimestamps(allRuns, pmStart);
+
+  const eventRuns = ignoredKeys.size > 0
+    ? allRuns.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key))
+    : allRuns;
 
   const grouped = new Map<string, { timestamps: Map<string, Set<string>>; }>();
 
