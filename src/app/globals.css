@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme {
+  --color-nhra-red: #C8102E;
+  --color-nhra-blue: #003DA5;
+  --color-nhra-dark: #1a1a2e;
+  --color-nhra-darker: #12121f;
+  --color-nhra-card: #1e1e32;
+  --color-nhra-border: #2a2a44;
+  --color-nhra-accent: #4a9eff;
+  --color-nhra-green: #22c55e;
+  --color-nhra-yellow: #eab308;
+  --color-nhra-orange: #f97316;
+}
+
+body {
+  background: var(--color-nhra-darker);
+  color: #e2e8f0;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-nhra-darker);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-nhra-border);
+  border-radius: 4px;
+}
+
+@media print {
+  body { background: white !important; color: black !important; }
+  nav, .print\:hidden { display: none !important; }
+  main { margin: 0 !important; padding: 0 !important; }
+  .timeslip-card { box-shadow: none !important; margin: 0 auto; }
+}
