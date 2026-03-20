@@ -601,7 +601,18 @@ export default function SchedulePage() {
           <h1 className="text-3xl font-bold text-white mb-1">Daily Schedule</h1>
           <p className="text-gray-400">{live.config.eventName}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-500">Start:</span>
+            {[6, 7, 8, 9, 10].map((h) => (
+              <button key={h} onClick={() => {
+                if (live.config) live.setConfig({ ...live.config, racingStartHour: h });
+              }}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${rsh === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-500 hover:text-white"}`}>
+                {h}
+              </button>
+            ))}
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
             <input
               type="checkbox"
