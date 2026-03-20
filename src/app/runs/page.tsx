@@ -41,6 +41,21 @@ interface Filters {
 
 const PAGE_SIZE = 50;
 
+function fmtRunTime(ts: string | null): string {
+  if (!ts) return "-";
+  const parts = ts.split(" ");
+  const timePart = parts[1];
+  const ampm = parts[2] || "";
+  if (!timePart) return ts;
+  const [hh, mm, ss] = timePart.split(":");
+  let h = parseInt(hh, 10);
+  const suffix = ampm || (h >= 12 ? "PM" : "AM");
+  if (ampm === "PM" && h < 12) h += 12;
+  if (ampm === "AM" && h === 12) h = 0;
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${mm}:${ss} ${suffix}`;
+}
+
 export default function RunsPage() {
   return (
     <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading...</div>}>
@@ -309,6 +324,7 @@ function RunsPageInner() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
+                <SortHeader col="timestamp" label="Time" />
                 <SortHeader col="name" label="Racer" />
                 <SortHeader col="category" label="Category" />
                 <SortHeader col="round" label="Rnd" />
@@ -328,9 +344,9 @@ function RunsPageInner() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={15} className="p-8 text-center text-gray-500">Loading...</td></tr>
+                <tr><td colSpan={16} className="p-8 text-center text-gray-500">Loading...</td></tr>
               ) : displayRuns.length === 0 ? (
-                <tr><td colSpan={15} className="p-8 text-center text-gray-500">No runs found</td></tr>
+                <tr><td colSpan={16} className="p-8 text-center text-gray-500">No runs found</td></tr>
               ) : (() => {
                 const rows: React.ReactNode[] = [];
                 let pairIdx = 0;
@@ -351,6 +367,9 @@ function RunsPageInner() {
 
                   rows.push(
                     <tr key={run.id || `${run._dedup_key || i}`} className={`${borderClass} hover:bg-nhra-border/20 transition-colors ${pairBg} ${isIgnored ? "bg-yellow-900/10" : ""}`}>
+                      <td className={`p-3 whitespace-nowrap font-mono text-xs text-gray-500 ${ignoredStyle}`}>
+                        {isFirstInPair ? fmtRunTime(run.timestamp) : ""}
+                      </td>
                       <td className={`p-3 whitespace-nowrap ${ignoredStyle}`}>
                         <div className="flex items-center gap-2">
                           {isInPair && (
