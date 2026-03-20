@@ -1,0 +1,18 @@
+runConfig:
+  minInstances: 0
+  maxInstances: 4
+  cpu: 1
+  memoryMiB: 512
+  concurrency: 80
+
+env:
+  - variable: NHRA_USERNAME
+    secret: NHRA_USERNAME
+  - variable: NHRA_PASSWORD
+    secret: NHRA_PASSWORD
+  - variable: FB_ADMIN_PROJECT_ID
+    value: nhra-timing-app
+  - variable: FB_ADMIN_CLIENT_EMAIL
+    secret: FB_ADMIN_CLIENT_EMAIL
+  - variable: FB_ADMIN_PRIVATE_KEY
+    secret: FB_ADMIN_PRIVATE_KEY
