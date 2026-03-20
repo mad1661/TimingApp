@@ -106,7 +106,7 @@ function fmtDurSec(sec: number): string {
   return `${mins}m${String(s).padStart(2, "0")}s`;
 }
 
-function parseTs(ts: string, racingStartHour: number = 8): Date | null {
+function parseTs(ts: string): Date | null {
   try {
     const parts = ts.split(" ");
     const datePart = parts[0];
@@ -117,27 +117,26 @@ function parseTs(ts: string, racingStartHour: number = 8): Date | null {
     let hour = parseInt(hh, 10);
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
-    else if (!ampm && hour >= 1 && hour < racingStartHour) hour += 12;
     return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), hour, parseInt(mm), parseInt(ss || "0"));
   } catch {
     return null;
   }
 }
 
-function sortKey(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function sortKey(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toISOString();
 }
 
-function fmtTime12(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function fmtTime12(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
 }
 
-function fmtTimeShort(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function fmtTimeShort(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 }
@@ -212,7 +211,7 @@ function groupActuals(actuals: ScheduleActual[]): ScheduleActual[][] {
   return groups;
 }
 
-function parseActualTs(ts: string, racingStartHour: number = 8): { h: number; m: number } | null {
+function parseActualTs(ts: string): { h: number; m: number } | null {
   try {
     const parts = ts.split(" ");
     const timePart = parts[1];
@@ -222,7 +221,6 @@ function parseActualTs(ts: string, racingStartHour: number = 8): { h: number; m:
     let h = parseInt(hh, 10);
     if (ampm === "PM" && h !== 12) h += 12;
     else if (ampm === "AM" && h === 12) h = 0;
-    else if (!ampm && h >= 1 && h < racingStartHour) h += 12;
     return { h, m: parseInt(mm, 10) };
   } catch {
     return null;

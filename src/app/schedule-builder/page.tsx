@@ -187,7 +187,7 @@ function prevRoundInfo(
   return null;
 }
 
-function parseActualTime(ts: string, racingStartHour: number = 8): { h: number; m: number } | null {
+function parseActualTime(ts: string): { h: number; m: number } | null {
   try {
     const parts = ts.split(" ");
     const timePart = parts[1];
@@ -197,15 +197,14 @@ function parseActualTime(ts: string, racingStartHour: number = 8): { h: number; 
     let h = parseInt(hh, 10);
     if (ampm === "PM" && h !== 12) h += 12;
     else if (ampm === "AM" && h === 12) h = 0;
-    else if (!ampm && h >= 1 && h < racingStartHour) h += 12;
     return { h, m: parseInt(mm, 10) };
   } catch {
     return null;
   }
 }
 
-function fmtActualTime(ts: string, racingStartHour: number = 8): string {
-  const parsed = parseActualTime(ts, racingStartHour);
+function fmtActualTime(ts: string): string {
+  const parsed = parseActualTime(ts);
   if (!parsed) return ts;
   return fmtTime(parsed.h, parsed.m);
 }

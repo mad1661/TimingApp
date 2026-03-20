@@ -309,6 +309,7 @@ export interface RunsQuery {
 
 export async function queryRuns(q: RunsQuery): Promise<{ runs: RunRow[]; total: number }> {
   let runs = await getEventRuns(q.event_code, q.season);
+  tagRunTimestamps(runs);
 
   if (q.category) runs = runs.filter((r) => r.category === q.category);
   if (q.round) runs = runs.filter((r) => r.round === q.round);
@@ -404,9 +405,11 @@ export async function searchRacers(search: string, eventCode: string, season: st
 }
 
 export async function getRacerRuns(name: string, eventCode: string, season: string): Promise<RunRow[]> {
-  return (await getEventRuns(eventCode, season))
+  const runs = await getEventRuns(eventCode, season);
+  tagRunTimestamps(runs);
+  return runs
     .filter((r) => r.name === name)
-    .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
 export interface DashboardStats {
@@ -482,12 +485,14 @@ export async function getCategoryStats(eventCode: string, season: string): Promi
 }
 
 export async function getEliminationRuns(eventCode: string, season: string, category: string): Promise<RunRow[]> {
-  return (await getEventRuns(eventCode, season))
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+  return allRuns
     .filter((r) => r.category === category && r.round?.startsWith("E"))
     .sort((a, b) => {
       const roundCmp = (a.round || "").localeCompare(b.round || "");
       if (roundCmp !== 0) return roundCmp;
-      return (a.timestamp || "").localeCompare(b.timestamp || "");
+      return tsSortKey(a.timestamp || "").localeCompare(tsSortKey(b.timestamp || ""));
     });
 }
 
@@ -667,7 +672,7 @@ export interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function parseTsToDate(ts: string, racingStartHour: number = 8): Date | null {
+function parseTsToDate(ts: string): Date | null {
   try {
     const parts = ts.split(" ");
     const datePart = parts[0];
@@ -679,7 +684,6 @@ function parseTsToDate(ts: string, racingStartHour: number = 8): Date | null {
 
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
-    else if (!ampm && hour >= 1 && hour < racingStartHour) hour += 12;
 
     return new Date(
       parseInt(year),
@@ -699,10 +703,49 @@ function tsSortKey(ts: string): string {
   return d ? d.toISOString() : ts;
 }
 
+/**
+ * Infer AM/PM for raw 12-hour timestamps by looking at the chronological
+ * order of runs (via created_at). Once we see hour 12 (noon), all subsequent
+ * hours 1-11 are PM. Tags each run's timestamp with " AM" or " PM".
+ */
+function tagRunTimestamps(runs: RunRow[]): void {
+  const byDay = new Map<string, RunRow[]>();
+  for (const run of runs) {
+    if (!run.timestamp) continue;
+    if (run.timestamp.split(" ").length > 2) continue;
+    const day = run.timestamp.split(" ")[0];
+    const arr = byDay.get(day) || [];
+    arr.push(run);
+    byDay.set(day, arr);
+  }
+
+  for (const [, dayRuns] of byDay) {
+    dayRuns.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+
+    let passedNoon = false;
+    for (const run of dayRuns) {
+      const timePart = run.timestamp!.split(" ")[1];
+      if (!timePart) continue;
+      const h = parseInt(timePart.split(":")[0], 10);
+
+      if (h === 12) {
+        passedNoon = true;
+        run.timestamp = run.timestamp + " PM";
+      } else if (passedNoon) {
+        run.timestamp = run.timestamp + " PM";
+      } else {
+        run.timestamp = run.timestamp + " AM";
+      }
+    }
+  }
+}
+
 const SESSION_GAP_MAX_MIN = 10;
 
 export async function getScheduleData(eventCode: string, season: string): Promise<ScheduleEntry[]> {
   const eventRuns = await getEventRuns(eventCode, season);
+
+  tagRunTimestamps(eventRuns);
 
   const grouped = new Map<string, { timestamps: Map<string, Set<string>>; }>();
 
@@ -787,6 +830,7 @@ export async function getScheduleData(eventCode: string, season: string): Promis
 
 export async function getLatestPair(eventCode: string, season: string): Promise<RunRow[]> {
   const runs = await getEventRuns(eventCode, season);
+  tagRunTimestamps(runs);
 
   const withData = runs.filter((r) => r.timestamp && (r.rt != null || r.ft1320 != null || r.ft660 != null));
   if (withData.length === 0) return [];

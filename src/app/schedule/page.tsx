@@ -14,7 +14,7 @@ interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function parseTs(ts: string, racingStartHour: number = 8): Date | null {
+function parseTs(ts: string): Date | null {
   try {
     const parts = ts.split(" ");
     const datePart = parts[0];
@@ -25,33 +25,32 @@ function parseTs(ts: string, racingStartHour: number = 8): Date | null {
     let hour = parseInt(hh, 10);
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
-    else if (!ampm && hour >= 1 && hour < racingStartHour) hour += 12;
     return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), hour, parseInt(mm), parseInt(ss || "0"));
   } catch {
     return null;
   }
 }
 
-function sortKey(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function sortKey(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toISOString();
 }
 
-function fmtTime12(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function fmtTime12(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
 }
 
-function fmtTimeShort(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function fmtTimeShort(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 }
 
-function fmtDate(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function fmtDate(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toLocaleDateString("en-US", { weekday: "long", month: "2-digit", day: "2-digit", year: "numeric" });
 }
@@ -60,8 +59,8 @@ function fmtDateShort(ts: string): string {
   return ts.split(" ")[0] || ts;
 }
 
-function fmtDateLabel(ts: string, rsh: number = 8): string {
-  const d = parseTs(ts, rsh);
+function fmtDateLabel(ts: string): string {
+  const d = parseTs(ts);
   if (!d) return ts;
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
@@ -333,7 +332,7 @@ export default function SchedulePage() {
   const buildDayRows = (date: string): { rows: ScheduleRow[]; downtimeMin: number; hasActualData: boolean; projectedEnd: string } => {
     const actualEntries = schedule
       .filter((s) => fmtDateShort(s.firstTimestamp) === date)
-      .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
+      .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp, rsh)));
 
     const dayPlan = plans.get(date) || null;
     const hasPlan = dayPlan !== null;
