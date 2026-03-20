@@ -20,7 +20,7 @@ export const RACE_CLASSES: RaceClass[] = [
   { name: "Super Gas", code: "SG", perPairSec: 55, isRacing: true, fieldSize: 32 },
   { name: "Super Stock", code: "SS", perPairSec: 55, isRacing: true, fieldSize: 32 },
   { name: "Super Street", code: "SST", perPairSec: 55, isRacing: true, fieldSize: 32 },
-  { name: "Stock", code: "STK", perPairSec: 55, isRacing: true, fieldSize: 32 },
+  { name: "Stock Eliminator", code: "STK", perPairSec: 55, isRacing: true, fieldSize: 32 },
   { name: "Sportsman", code: "SPTM", perPairSec: 55, isRacing: true },
   { name: "Sportsman Motorcycle", code: "SMC", perPairSec: 55, isRacing: true },
   { name: "Street Legal", code: "SL", perPairSec: 55, isRacing: true },
