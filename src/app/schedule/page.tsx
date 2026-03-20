@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
 
@@ -268,15 +268,14 @@ export default function SchedulePage() {
   const [dtEnd, setDtEnd] = useState("");
   const [dtDate, setDtDate] = useState("");
   const [dtSaving, setDtSaving] = useState(false);
-  const [pmStart, setPmStartState] = useState(live.config?.pmStart ?? false);
-  const pmStartSynced = useRef(false);
-
-  useEffect(() => {
-    if (!pmStartSynced.current && live.config) {
-      setPmStartState(live.config.pmStart ?? false);
-      pmStartSynced.current = true;
-    }
-  }, [live.config]);
+  const [pmStart, setPmStartState] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = localStorage.getItem("timindata_live_config");
+      if (raw) return JSON.parse(raw).pmStart ?? false;
+    } catch {}
+    return false;
+  });
 
   const setPmStart = (val: boolean) => {
     setPmStartState(val);
