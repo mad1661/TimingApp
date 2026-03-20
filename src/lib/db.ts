@@ -129,6 +129,7 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
         }
       }
       const runs = Array.from(dedupMap.values());
+      backfillNames(runs);
 
       evictIfNeeded();
 
@@ -236,7 +237,8 @@ export async function insertRuns(
         const existing = cache.runs[existingIdx];
         const changed = run.rt !== existing.rt || run.ft1320 !== existing.ft1320 ||
           run.ft660 !== existing.ft660 || run.ft60 !== existing.ft60 ||
-          run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner;
+          run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner ||
+          (!existing.name && run.name);
         if (!changed) continue;
       }
 
@@ -273,8 +275,26 @@ export async function insertRuns(
     });
   }
 
+  backfillNames(cache.runs);
+
   console.log(`[DB] Inserted ${newRuns.length} new runs for ${eventKey(eventCode, season)} — ${cache.runs.length} total cached`);
   return newRuns.length;
+}
+
+function backfillNames(runs: RunRow[]): void {
+  const nameMap = new Map<string, string>();
+  for (const run of runs) {
+    if (!run.name || !run.car_number || !run.category) continue;
+    const key = `${run.car_number.trim()}|||${run.category}`;
+    if (!nameMap.has(key)) nameMap.set(key, run.name);
+  }
+
+  for (const run of runs) {
+    if (run.name || !run.car_number || !run.category) continue;
+    const key = `${run.car_number.trim()}|||${run.category}`;
+    const name = nameMap.get(key);
+    if (name) run.name = name;
+  }
 }
 
 export async function logFetch(eventCode: string, season: string, eventType: string, runCount: number): Promise<void> {

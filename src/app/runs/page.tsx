@@ -376,9 +376,13 @@ function RunsPageInner() {
                             <span className={`w-1 h-6 rounded-full shrink-0 ${run.is_winner ? "bg-green-500" : "bg-gray-700"}`} />
                           )}
                           <div>
-                            <Link href={`/racer/${encodeURIComponent(run.name || "")}`} className="text-white hover:text-nhra-accent font-medium">
-                              {run.name}
-                            </Link>
+                            {run.name ? (
+                              <Link href={`/racer/${encodeURIComponent(run.name)}`} className="text-white hover:text-nhra-accent font-medium">
+                                {run.name}
+                              </Link>
+                            ) : (
+                              <span className="text-gray-500 italic text-xs">No Name</span>
+                            )}
                             <span className="text-nhra-accent font-bold text-sm ml-2">#{run.car_number}</span>
                             {isIgnored && <span className="ml-2 text-yellow-500 text-xs font-medium no-underline" style={{ textDecoration: "none" }}>IGNORED</span>}
                           </div>
