@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
 
@@ -269,6 +269,14 @@ export default function SchedulePage() {
   const [dtDate, setDtDate] = useState("");
   const [dtSaving, setDtSaving] = useState(false);
   const [pmStart, setPmStartState] = useState(live.config?.pmStart ?? false);
+  const pmStartSynced = useRef(false);
+
+  useEffect(() => {
+    if (!pmStartSynced.current && live.config) {
+      setPmStartState(live.config.pmStart ?? false);
+      pmStartSynced.current = true;
+    }
+  }, [live.config]);
 
   const setPmStart = (val: boolean) => {
     setPmStartState(val);
