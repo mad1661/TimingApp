@@ -53,6 +53,8 @@ export default function SetupPage() {
   const [intervalSeconds, setIntervalSeconds] = useState(60);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
+  const [aliasFrom, setAliasFrom] = useState("");
+  const [aliasTo, setAliasTo] = useState("");
 
   useEffect(() => {
     if (live.config) {
@@ -290,6 +292,71 @@ export default function SetupPage() {
                 {purgeResult}
               </p>
             )}
+          </div>
+
+          {/* Category Name Fixes */}
+          <div className="mt-4 pt-4 border-t border-green-500/10">
+            <h3 className="text-sm font-semibold text-white mb-3">Category Name Corrections</h3>
+            <p className="text-xs text-gray-500 mb-3">Rename categories that come in from getresults with the wrong name. The schedule builder will treat both names as the same class.</p>
+
+            {Object.keys(live.config?.categoryAliases || {}).length > 0 && (
+              <div className="space-y-2 mb-3">
+                {Object.entries(live.config!.categoryAliases!).map(([from, to]) => (
+                  <div key={from} className="flex items-center gap-2 bg-nhra-darker rounded-lg px-3 py-2 border border-nhra-border">
+                    <span className="text-gray-400 text-sm flex-1 truncate">{from}</span>
+                    <svg className="w-4 h-4 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
+                    <span className="text-white text-sm font-medium flex-1 truncate">{to}</span>
+                    <button
+                      onClick={() => {
+                        const updated = { ...live.config!.categoryAliases };
+                        delete updated[from];
+                        const newConfig = { ...live.config!, categoryAliases: updated };
+                        live.setConfig(newConfig);
+                      }}
+                      className="text-red-400/60 hover:text-red-400 transition-colors ml-1 shrink-0"
+                      title="Remove"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={aliasFrom}
+                onChange={(e) => setAliasFrom(e.target.value)}
+                placeholder="Wrong name (e.g. Stock)"
+                className="flex-1 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm placeholder-gray-600 focus:outline-none focus:border-nhra-accent"
+              />
+              <input
+                type="text"
+                value={aliasTo}
+                onChange={(e) => setAliasTo(e.target.value)}
+                placeholder="Correct name (e.g. Stock Eliminator)"
+                className="flex-1 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm placeholder-gray-600 focus:outline-none focus:border-nhra-accent"
+              />
+              <button
+                onClick={() => {
+                  if (!aliasFrom.trim() || !aliasTo.trim() || !live.config) return;
+                  const updated = { ...(live.config.categoryAliases || {}), [aliasFrom.trim()]: aliasTo.trim() };
+                  const newConfig = { ...live.config, categoryAliases: updated };
+                  live.setConfig(newConfig);
+                  setAliasFrom("");
+                  setAliasTo("");
+                }}
+                disabled={!aliasFrom.trim() || !aliasTo.trim()}
+                className="px-4 py-2 bg-nhra-accent/20 text-nhra-accent border border-nhra-accent/30 rounded-lg text-sm font-medium hover:bg-nhra-accent/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </div>
       )}

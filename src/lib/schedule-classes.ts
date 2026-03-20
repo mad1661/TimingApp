@@ -51,7 +51,7 @@ export const RACE_CLASSES: RaceClass[] = [
   { name: "Nostalgia Exhibition", code: "NS", perPairSec: 120, isRacing: true },
   { name: "Nostalgia Top Fuel", code: "NTF", perPairSec: 210, isRacing: true },
   { name: "Nostalgia Funny Car", code: "NFC", perPairSec: 210, isRacing: true },
-  { name: "Legends Nitro Funny Car", code: "NFC", perPairSec: 210, isRacing: true },
+  { name: "Legacy Nitro Funny Car", code: "NFC", perPairSec: 210, isRacing: true },
   { name: "Nostalgia Pro Stock", code: "NPS", perPairSec: 150, isRacing: true },
   { name: "Legends Match Race", code: "LMR", perPairSec: 60, isRacing: true },
   { name: "Exhibition", code: "EXH", perPairSec: 150, isRacing: true },

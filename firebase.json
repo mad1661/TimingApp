@@ -1,4 +1,15 @@
 {
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "redirects": [
+      {
+        "source": "**",
+        "destination": "https://timingapp--nhra-timing-app.us-east4.hosted.app",
+        "type": 302
+      }
+    ]
+  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"

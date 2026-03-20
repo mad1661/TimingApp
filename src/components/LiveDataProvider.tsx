@@ -14,6 +14,7 @@ export interface LiveConfig {
   dateFilter?: string;
   racingStartHour?: number;
   pmStart?: boolean;
+  categoryAliases?: Record<string, string>;
 }
 
 interface LiveDataState {

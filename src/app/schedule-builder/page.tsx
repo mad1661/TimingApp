@@ -127,18 +127,24 @@ function carsForNextRound(prevCars: number, prevRound: string, newRound: string,
   return prevCars;
 }
 
-function normalizeCategoryName(name: string): string {
+function normalizeCategoryName(name: string, extraAliases?: Record<string, string>): string {
   const normalized = name.toUpperCase().trim().replace(/\s+/g, " ");
-  const aliases: Record<string, string> = {
+  const builtIn: Record<string, string> = {
     "STOCK ELIMINATOR": "STOCK",
+    "LEGENDS NITRO FUNNY CAR": "LEGACY NITRO FUNNY CAR",
   };
-  return aliases[normalized] || normalized;
+  if (extraAliases) {
+    for (const [from, to] of Object.entries(extraAliases)) {
+      builtIn[from.toUpperCase().trim()] = to.toUpperCase().trim();
+    }
+  }
+  return builtIn[normalized] || normalized;
 }
 
-function mergeActualsByClass(actuals: ScheduleActual[]): Map<string, ScheduleActual> {
+function mergeActualsByClass(actuals: ScheduleActual[], aliases?: Record<string, string>): Map<string, ScheduleActual> {
   const merged = new Map<string, ScheduleActual>();
   for (const actual of actuals) {
-    const key = `${normalizeCategoryName(actual.category)}|||${normalizeRound(actual.round)}`;
+    const key = `${normalizeCategoryName(actual.category, aliases)}|||${normalizeRound(actual.round)}`;
     const existing = merged.get(key);
     if (existing) {
       existing.totalRuns += actual.totalRuns;
@@ -158,16 +164,18 @@ function prevRoundInfo(
   actuals: ScheduleActual[],
   className: string,
   classCode: string,
-  otherDayEntries?: PlanEntry[]
+  otherDayEntries?: PlanEntry[],
+  aliases?: Record<string, string>
 ): { round: string; cars: number } | null {
+  const norm = normalizeCategoryName(className, aliases);
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (e.className === className && e.round && !e.isBreak) {
+    if (normalizeCategoryName(e.className, aliases) === norm && e.round && !e.isBreak) {
       return { round: e.round, cars: e.cars };
     }
   }
   const classActuals = actuals
-    .filter((a) => a.category === className)
+    .filter((a) => normalizeCategoryName(a.category, aliases) === norm)
     .sort((a, b) => {
       const na = normalizeRound(a.round);
       const nb = normalizeRound(b.round);
@@ -180,7 +188,7 @@ function prevRoundInfo(
   if (otherDayEntries) {
     for (let i = otherDayEntries.length - 1; i >= 0; i--) {
       const e = otherDayEntries[i];
-      if (e.className === className && e.round && !e.isBreak) {
+      if (normalizeCategoryName(e.className, aliases) === norm && e.round && !e.isBreak) {
         return { round: e.round, cars: e.cars };
       }
     }
@@ -225,6 +233,7 @@ function ScheduleBuilderInner() {
   const season = live.config?.season || "";
   const eventName = live.config?.eventName || "";
   const eventKey = eventCode && season ? `${eventCode}_${season}` : "";
+  const catAliases = live.config?.categoryAliases;
 
   const [entries, setEntries] = useState<PlanEntry[]>([]);
   const [startTime, setStartTime] = useState("8:00 AM");
@@ -335,12 +344,12 @@ function ScheduleBuilderInner() {
     if (dayActuals.length === 0) return;
 
     let changed = false;
-    const merged = mergeActualsByClass(dayActuals);
+    const merged = mergeActualsByClass(dayActuals, catAliases);
     const matched = new Set<string>();
 
     const updated = entries.map((entry) => {
       if (entry.status === "completed" || entry.isBreak) return entry;
-      const key = `${normalizeCategoryName(entry.className)}|||${normalizeRound(entry.round)}`;
+      const key = `${normalizeCategoryName(entry.className, catAliases)}|||${normalizeRound(entry.round)}`;
       if (matched.has(key)) return entry;
       const actual = merged.get(key);
       if (!actual) return entry;
@@ -360,7 +369,7 @@ function ScheduleBuilderInner() {
       };
     });
     if (changed) setEntries(updated);
-  }, [actuals, entries, planDate]);
+  }, [actuals, entries, planDate, catAliases]);
 
   const savePlan = async () => {
     if (!eventKey) return;
@@ -380,7 +389,7 @@ function ScheduleBuilderInner() {
   };
 
   const addEntry = (rc: RaceClass, isBreak: boolean) => {
-    const prev = isBreak ? null : prevRoundInfo(entries, actuals, rc.name, rc.code, otherDayEntries);
+    const prev = isBreak ? null : prevRoundInfo(entries, actuals, rc.name, rc.code, otherDayEntries, catAliases);
     let round = "T1";
     let cars = 0;
     let pairs = 0;
@@ -456,7 +465,7 @@ function ScheduleBuilderInner() {
           merged.plannedDurationSec = merged.pairs * merged.perPairSec;
         }
         if ("round" in updates && merged.classCode && !merged.isBreak) {
-          const pi = prevRoundInfo(prev, actuals, merged.className, merged.classCode, otherDayEntries);
+          const pi = prevRoundInfo(prev, actuals, merged.className, merged.classCode, otherDayEntries, catAliases);
           if (pi && merged.cars === 0) {
             const autoCars = carsForNextRound(pi.cars, pi.round, merged.round, merged.fieldSize);
             merged.cars = autoCars;
@@ -883,7 +892,7 @@ function ScheduleBuilderInner() {
             </div>
             <div className="overflow-y-auto flex-1 p-2">
               {filteredClasses.map((rc, i) => {
-                const prev = rc.isRacing ? prevRoundInfo(entries, actuals, rc.name, rc.code, otherDayEntries) : null;
+                const prev = rc.isRacing ? prevRoundInfo(entries, actuals, rc.name, rc.code, otherDayEntries, catAliases) : null;
                 const nr = prev ? nextRound(prev.round) : "T1";
                 const bumpLabel = rc.fieldSize ? ` · Bump: ${rc.fieldSize}` : "";
                 const hint = prev ? `Next: ${nr} (${prev.cars} cars${bumpLabel})` : (rc.fieldSize ? `Bump: ${rc.fieldSize}` : "");
