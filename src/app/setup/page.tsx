@@ -270,7 +270,20 @@ export default function SetupPage() {
           </div>
           {live.lastError && <p className="text-xs text-red-400 mt-2">{live.lastError}</p>}
 
-          <div className="mt-4 pt-4 border-t border-green-500/10">
+          <div className="mt-4 pt-4 border-t border-green-500/10 flex items-center gap-3 flex-wrap">
+            <span className="text-xs text-gray-400">Racing starts at:</span>
+            {[6, 7, 8, 9, 10].map((h) => (
+              <button key={h} onClick={() => {
+                setRacingStartHour(h);
+                if (live.config) live.setConfig({ ...live.config, racingStartHour: h });
+              }}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${racingStartHour === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}>
+                {h} AM
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 pt-3 border-t border-green-500/10">
             <div className="flex items-center gap-3">
               <button
                 onClick={handlePurgeRefetch}
@@ -469,7 +482,12 @@ export default function SetupPage() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {[6, 7, 8, 9, 10].map((h) => (
-                  <button key={h} onClick={() => setRacingStartHour(h)}
+                  <button key={h} onClick={() => {
+                    setRacingStartHour(h);
+                    if (live.config) {
+                      live.setConfig({ ...live.config, racingStartHour: h });
+                    }
+                  }}
                     className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${racingStartHour === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}>
                     {h} AM
                   </button>
