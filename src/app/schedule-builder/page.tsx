@@ -189,12 +189,14 @@ function prevRoundInfo(
 
 function parseActualTime(ts: string): { h: number; m: number } | null {
   try {
-    const [, timePart] = ts.split(" ");
+    const parts = ts.split(" ");
+    const timePart = parts[1];
+    const ampm = parts[2]?.toUpperCase();
     if (!timePart) return null;
     const [hh, mm] = timePart.split(":");
     let h = parseInt(hh, 10);
-    if (h >= 1 && h <= 6) h += 12;
-    if (h === 12) h = 12;
+    if (ampm === "PM" && h !== 12) h += 12;
+    else if (ampm === "AM" && h === 12) h = 0;
     return { h, m: parseInt(mm, 10) };
   } catch {
     return null;

@@ -106,19 +106,18 @@ function fmtDurSec(sec: number): string {
   return `${mins}m${String(s).padStart(2, "0")}s`;
 }
 
-function inferHour24(hour12: number): number {
-  if (hour12 === 12) return 12;
-  if (hour12 >= 1 && hour12 <= 6) return hour12 + 12;
-  return hour12;
-}
-
 function parseTs(ts: string): Date | null {
   try {
-    const [datePart, timePart] = ts.split(" ");
+    const parts = ts.split(" ");
+    const datePart = parts[0];
+    const timePart = parts[1];
+    const ampm = parts[2]?.toUpperCase();
     const [month, day, year] = datePart.split("/");
     const [hh, mm, ss] = timePart.split(":");
-    const h24 = inferHour24(parseInt(hh, 10));
-    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), h24, parseInt(mm), parseInt(ss || "0"));
+    let hour = parseInt(hh, 10);
+    if (ampm === "PM" && hour !== 12) hour += 12;
+    else if (ampm === "AM" && hour === 12) hour = 0;
+    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), hour, parseInt(mm), parseInt(ss || "0"));
   } catch {
     return null;
   }
@@ -214,12 +213,14 @@ function groupActuals(actuals: ScheduleActual[]): ScheduleActual[][] {
 
 function parseActualTs(ts: string): { h: number; m: number } | null {
   try {
-    const [, timePart] = ts.split(" ");
+    const parts = ts.split(" ");
+    const timePart = parts[1];
+    const ampm = parts[2]?.toUpperCase();
     if (!timePart) return null;
     const [hh, mm] = timePart.split(":");
     let h = parseInt(hh, 10);
-    if (h >= 1 && h <= 6) h += 12;
-    if (h === 12) h = 12;
+    if (ampm === "PM" && h !== 12) h += 12;
+    else if (ampm === "AM" && h === 12) h = 0;
     return { h, m: parseInt(mm, 10) };
   } catch {
     return null;
