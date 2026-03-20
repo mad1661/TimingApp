@@ -710,11 +710,18 @@ function tsSortKey(ts: string): string {
  * Default: starts in AM mode. Once hour 12 appears, switches to PM.
  * If pmStart is true, starts in PM mode (for days that only race afternoon).
  */
+function stripAmPm(ts: string): string {
+  return ts.replace(/ (AM|PM)$/i, "");
+}
+
 function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
+  for (const run of runs) {
+    if (run.timestamp) run.timestamp = stripAmPm(run.timestamp);
+  }
+
   const byDay = new Map<string, RunRow[]>();
   for (const run of runs) {
     if (!run.timestamp) continue;
-    if (run.timestamp.split(" ").length > 2) continue;
     const day = run.timestamp.split(" ")[0];
     const arr = byDay.get(day) || [];
     arr.push(run);
