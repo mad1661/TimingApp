@@ -30,6 +30,7 @@ interface ScheduleActual {
   lastTimestamp: string;
   pairCount: number;
   totalRuns: number;
+  durationMinutes: number;
 }
 
 function uid(): string {
@@ -134,22 +135,22 @@ function normalizeCategoryName(name: string): string {
   return aliases[normalized] || normalized;
 }
 
-function groupActuals(actuals: ScheduleActual[]): ScheduleActual[][] {
-  const groups: ScheduleActual[][] = [];
+function mergeActualsByClass(actuals: ScheduleActual[]): Map<string, ScheduleActual> {
+  const merged = new Map<string, ScheduleActual>();
   for (const actual of actuals) {
-    const lastGroup = groups[groups.length - 1];
-    const lastActual = lastGroup?.[lastGroup.length - 1];
-    if (
-      lastActual &&
-      normalizeCategoryName(lastActual.category) === normalizeCategoryName(actual.category) &&
-      normalizeRound(lastActual.round) === normalizeRound(actual.round)
-    ) {
-      lastGroup.push(actual);
+    const key = `${normalizeCategoryName(actual.category)}|||${normalizeRound(actual.round)}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.totalRuns += actual.totalRuns;
+      existing.pairCount += actual.pairCount;
+      existing.durationMinutes += actual.durationMinutes;
+      if (actual.firstTimestamp < existing.firstTimestamp) existing.firstTimestamp = actual.firstTimestamp;
+      if (actual.lastTimestamp > existing.lastTimestamp) existing.lastTimestamp = actual.lastTimestamp;
     } else {
-      groups.push([actual]);
+      merged.set(key, { ...actual });
     }
   }
-  return groups;
+  return merged;
 }
 
 function prevRoundInfo(
@@ -334,31 +335,29 @@ function ScheduleBuilderInner() {
     if (dayActuals.length === 0) return;
 
     let changed = false;
-    const actualGroups = groupActuals(dayActuals);
-    let actualCursor = 0;
+    const merged = mergeActualsByClass(dayActuals);
+    const matched = new Set<string>();
+
     const updated = entries.map((entry) => {
-      if (entry.status === "completed") return entry;
-      const group = !entry.isBreak && actualCursor < actualGroups.length ? actualGroups[actualCursor] : null;
-      if (group) {
-        actualCursor += 1;
-        changed = true;
-        const actualCategory = group[0].category;
-        const actualRound = group[0].round;
-        const actualPairs = group.reduce((sum, item) => sum + item.pairCount, 0);
-        const actualCars = group.reduce((sum, item) => sum + item.totalRuns, 0);
-        return {
-          ...entry,
-          className: actualCategory,
-          round: actualRound,
-          cars: actualCars,
-          pairs: actualPairs,
-          status: "completed" as const,
-          actualStart: group[0].firstTimestamp,
-          actualEnd: group[group.length - 1].lastTimestamp,
-          actualPairs,
-        };
-      }
-      return entry;
+      if (entry.status === "completed" || entry.isBreak) return entry;
+      const key = `${normalizeCategoryName(entry.className)}|||${normalizeRound(entry.round)}`;
+      if (matched.has(key)) return entry;
+      const actual = merged.get(key);
+      if (!actual) return entry;
+
+      matched.add(key);
+      changed = true;
+      return {
+        ...entry,
+        className: actual.category,
+        round: actual.round,
+        cars: actual.totalRuns,
+        pairs: actual.pairCount,
+        status: "completed" as const,
+        actualStart: actual.firstTimestamp,
+        actualEnd: actual.lastTimestamp,
+        actualPairs: actual.pairCount,
+      };
     });
     if (changed) setEntries(updated);
   }, [actuals, entries, planDate]);
