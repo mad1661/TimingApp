@@ -268,7 +268,12 @@ export default function SchedulePage() {
   const [dtEnd, setDtEnd] = useState("");
   const [dtDate, setDtDate] = useState("");
   const [dtSaving, setDtSaving] = useState(false);
-  const [pmStart, setPmStart] = useState(false);
+  const [pmStart, setPmStartState] = useState(live.config?.pmStart ?? false);
+
+  const setPmStart = (val: boolean) => {
+    setPmStartState(val);
+    if (live.config) live.setConfig({ ...live.config, pmStart: val });
+  };
 
   const eventCode = live.config?.eventCode;
   const season = live.config?.season;

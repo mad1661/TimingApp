@@ -51,7 +51,6 @@ export default function SetupPage() {
   const [datesLoading, setDatesLoading] = useState(false);
 
   const [intervalSeconds, setIntervalSeconds] = useState(60);
-  const [racingStartHour, setRacingStartHour] = useState(8);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
 
@@ -63,7 +62,6 @@ export default function SetupPage() {
       setEventType(live.config.eventType);
       setIntervalSeconds(live.config.intervalSeconds);
       if (live.config.dateFilter) setSelectedDate(live.config.dateFilter);
-      if (live.config.racingStartHour != null) setRacingStartHour(live.config.racingStartHour);
       setLoggedIn(true);
     }
   }, [live.config]);
@@ -158,7 +156,6 @@ export default function SetupPage() {
       eventName: selectedEvent.displayName,
       intervalSeconds,
       dateFilter: selectedDate || undefined,
-      racingStartHour,
     };
     live.setConfig(config);
     live.start();
@@ -270,20 +267,7 @@ export default function SetupPage() {
           </div>
           {live.lastError && <p className="text-xs text-red-400 mt-2">{live.lastError}</p>}
 
-          <div className="mt-4 pt-4 border-t border-green-500/10 flex items-center gap-3 flex-wrap">
-            <span className="text-xs text-gray-400">Racing starts at:</span>
-            {[6, 7, 8, 9, 10].map((h) => (
-              <button key={h} onClick={() => {
-                setRacingStartHour(h);
-                if (live.config) live.setConfig({ ...live.config, racingStartHour: h });
-              }}
-                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${racingStartHour === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}>
-                {h} AM
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 pt-3 border-t border-green-500/10">
+          <div className="mt-4 pt-4 border-t border-green-500/10">
             <div className="flex items-center gap-3">
               <button
                 onClick={handlePurgeRefetch}
@@ -472,24 +456,6 @@ export default function SetupPage() {
                   {opt.label}
                 </button>
               ))}
-            </div>
-
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold text-white mb-2">Racing Starts At</h3>
-              <p className="text-xs text-gray-500 mb-3">Reference for when racing starts today</p>
-              <div className="flex flex-wrap gap-2">
-                {[6, 7, 8, 9, 10].map((h) => (
-                  <button key={h} onClick={() => {
-                    setRacingStartHour(h);
-                    if (live.config) {
-                      live.setConfig({ ...live.config, racingStartHour: h });
-                    }
-                  }}
-                    className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${racingStartHour === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}>
-                    {h} AM
-                  </button>
-                ))}
-              </div>
             </div>
 
             <button onClick={handleLockIn} disabled={!selectedEvent}
