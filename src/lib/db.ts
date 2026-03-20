@@ -724,14 +724,22 @@ function tsSortKey(ts: string): string {
 }
 
 /**
- * Infer AM/PM for raw 12-hour timestamps by looking at the chronological
- * order of runs (via created_at). Tags each run's timestamp with " AM" or " PM".
+ * Infer AM/PM for raw 12-hour timestamps.
+ * Sorts by the time component using race-day ordering (6-11 AM, 12 PM, 1-5 PM).
  *
  * Default: starts in AM mode. Once hour 12 appears, switches to PM.
  * If pmStart is true, starts in PM mode (for days that only race afternoon).
  */
 function stripAmPm(ts: string): string {
   return ts.replace(/ (AM|PM)$/i, "");
+}
+
+function raceDaySortKey(ts: string): number {
+  const timePart = ts.split(" ")[1];
+  if (!timePart) return 0;
+  const [hh, mm, ss] = timePart.split(":").map(Number);
+  const h24 = hh === 12 ? 12 : hh >= 6 ? hh : hh + 12;
+  return h24 * 3600 + (mm || 0) * 60 + (ss || 0);
 }
 
 function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
@@ -749,7 +757,7 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
-    dayRuns.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+    dayRuns.sort((a, b) => raceDaySortKey(a.timestamp!) - raceDaySortKey(b.timestamp!));
 
     let passedNoon = pmStart;
 

@@ -233,8 +233,10 @@ function RunsPageInner() {
     URL.revokeObjectURL(url);
   }
 
-  const displayRuns = showIgnored ? runs : runs.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key));
-  const ignoredCount = runs.filter((r) => r._dedup_key && ignoredKeys.has(r._dedup_key)).length;
+  const displayRuns = showIgnored
+    ? runs
+    : runs.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key));
+  const ignoredOnPage = runs.filter((r) => r._dedup_key && ignoredKeys.has(r._dedup_key)).length;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   const SortHeader = ({ col, label, align = "left" }: { col: string; label: string; align?: string }) => (
@@ -403,17 +405,14 @@ function RunsPageInner() {
                       </td>
                       <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.dial_in?.toFixed(2) ?? "-"}</td>
                       <td className={`p-3 text-gray-400 ${ignoredStyle}`}>{run.lane}</td>
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center whitespace-nowrap">
                         {isIgnored ? (
                           <button
                             onClick={() => handleRestore(run)}
                             disabled={ignoreLoading === run._dedup_key}
-                            className="text-yellow-500 hover:text-yellow-300 transition-colors disabled:opacity-50"
-                            title="Restore this run"
+                            className="px-2 py-1 bg-yellow-600/20 border border-yellow-600/40 text-yellow-400 rounded text-xs font-medium hover:bg-yellow-600/30 hover:text-yellow-300 transition-colors disabled:opacity-50"
                           >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" />
-                            </svg>
+                            {ignoreLoading === run._dedup_key ? "..." : "Restore"}
                           </button>
                         ) : run._dedup_key ? (
                           <button
