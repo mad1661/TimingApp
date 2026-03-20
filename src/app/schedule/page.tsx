@@ -333,7 +333,7 @@ export default function SchedulePage() {
   const buildDayRows = (date: string): { rows: ScheduleRow[]; downtimeMin: number; hasActualData: boolean; projectedEnd: string } => {
     const actualEntries = schedule
       .filter((s) => fmtDateShort(s.firstTimestamp) === date)
-      .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp, rsh)));
+      .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
 
     const dayPlan = plans.get(date) || null;
     const hasPlan = dayPlan !== null;
