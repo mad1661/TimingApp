@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 
 interface PlanEntry {
@@ -74,11 +74,6 @@ function parseTime(s: string): { h: number; m: number } | null {
   return { h, m };
 }
 
-function addSeconds(h: number, m: number, sec: number): { h: number; m: number } {
-  const totalMin = h * 60 + m + sec / 60;
-  return { h: Math.floor(totalMin / 60) % 24, m: Math.round(totalMin % 60) };
-}
-
 function hmToMinutes(h: number, m: number): number {
   return h * 60 + m;
 }
@@ -92,18 +87,6 @@ function fmtTime(h: number, m: number): string {
   const ampm = h >= 12 ? "PM" : "AM";
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
   return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
-}
-
-function fmtDurSec(sec: number): string {
-  if (sec <= 0) return "—";
-  const mins = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  if (mins >= 60) {
-    const hr = Math.floor(mins / 60);
-    const rm = mins % 60;
-    return rm > 0 ? `${hr}h ${rm}m` : `${hr}h`;
-  }
-  return `${mins}m${String(s).padStart(2, "0")}s`;
 }
 
 function parseTs(ts: string): Date | null {
@@ -171,6 +154,12 @@ function fmtDateShort(ts: string): string {
   return ts.split(" ")[0] || ts;
 }
 
+function fmtDateLabel(ts: string): string {
+  const d = parseTs(ts);
+  if (!d) return ts;
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
 function isoToMDY(iso: string): string {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
@@ -189,133 +178,189 @@ function normalizeCategoryName(name: string): string {
   const normalized = name.toUpperCase().trim().replace(/\s+/g, " ");
   const aliases: Record<string, string> = {
     "STOCK ELIMINATOR": "STOCK",
+    "LEGENDS NITRO FUNNY CAR": "LEGACY NITRO FUNNY CAR",
   };
   return aliases[normalized] || normalized;
 }
 
-function groupActuals(actuals: ScheduleActual[]): ScheduleActual[][] {
-  const groups: ScheduleActual[][] = [];
+function mergeActualsByClass(actuals: ScheduleActual[]): Map<string, ScheduleActual> {
+  const merged = new Map<string, ScheduleActual>();
   for (const actual of actuals) {
-    const lastGroup = groups[groups.length - 1];
-    const lastActual = lastGroup?.[lastGroup.length - 1];
-    if (
-      lastActual &&
-      normalizeCategoryName(lastActual.category) === normalizeCategoryName(actual.category) &&
-      normalizeRound(lastActual.round) === normalizeRound(actual.round)
-    ) {
-      lastGroup.push(actual);
+    const key = `${normalizeCategoryName(actual.category)}|||${normalizeRound(actual.round)}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.totalRuns += actual.totalRuns;
+      existing.pairCount += actual.pairCount;
+      existing.durationMinutes += actual.durationMinutes;
+      if (actual.firstTimestamp < existing.firstTimestamp) existing.firstTimestamp = actual.firstTimestamp;
+      if (actual.lastTimestamp > existing.lastTimestamp) existing.lastTimestamp = actual.lastTimestamp;
     } else {
-      groups.push([actual]);
+      merged.set(key, { ...actual });
     }
   }
-  return groups;
+  return merged;
 }
 
-function parseActualTs(ts: string): { h: number; m: number } | null {
-  try {
-    const parts = ts.split(" ");
-    const timePart = parts[1];
-    const ampm = parts[2]?.toUpperCase();
-    if (!timePart) return null;
-    const [hh, mm] = timePart.split(":");
-    let h = parseInt(hh, 10);
-    if (ampm === "PM" && h !== 12) h += 12;
-    else if (ampm === "AM" && h === 12) h = 0;
-    return { h, m: parseInt(mm, 10) };
-  } catch {
-    return null;
-  }
+function todayDateStr(): string {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${mm}/${dd}/${now.getFullYear()}`;
 }
 
-function fmtActualTime(ts: string): string {
-  const parsed = parseActualTs(ts);
-  if (!parsed) return ts;
-  return fmtTime(parsed.h, parsed.m);
+const REFRESH_INTERVAL_MS = 30000;
+
+export default function PublicScheduleWrapper() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-nhra-darker flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-nhra-red border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-gray-400">Loading schedule...</p>
+          </div>
+        </div>
+      }
+    >
+      <PublicSchedulePage />
+    </Suspense>
+  );
 }
 
-export default function PublicSchedulePage() {
+function PublicSchedulePage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const eventKey = (params.eventKey as string) || "";
   const dateParam = searchParams.get("date") || "";
   const [eventCode, season] = eventKey.includes("_") ? eventKey.split("_", 2) : [eventKey, ""];
 
-  const [plan, setPlan] = useState<{ startTime: string; eventName: string; date: string; delayMinutes?: number; entries: PlanEntry[] } | null>(null);
+  const [allPlans, setAllPlans] = useState<PlanData[]>([]);
   const [actuals, setActuals] = useState<ScheduleActual[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hasPlan, setHasPlan] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>(dateParam || "today");
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     try {
-      const planUrl = dateParam
-        ? `/api/schedule-plan?event_key=${encodeURIComponent(eventKey)}&date=${encodeURIComponent(dateParam)}`
-        : `/api/schedule-plan?event_key=${encodeURIComponent(eventKey)}`;
       const [planRes, actualRes] = await Promise.all([
-        fetch(planUrl),
+        fetch(`/api/schedule-plan?event_key=${encodeURIComponent(eventKey)}`),
         eventCode && season
           ? fetch(`/api/stats?type=schedule&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`)
           : Promise.resolve(null),
       ]);
 
       const planData = await planRes.json();
-      if (planData.plan && planData.plan.entries?.length > 0) {
-        setPlan(planData.plan);
-        setHasPlan(true);
-      } else if (planData.plans?.length > 0) {
-        const today = new Date().toISOString().slice(0, 10);
-        const match = planData.plans.find((p: PlanData) => p.date === today) || planData.plans[planData.plans.length - 1];
-        if (match?.entries?.length > 0) {
-          setPlan(match);
-          setHasPlan(true);
-        }
-      }
+      const plans: PlanData[] = planData.plans || (planData.plan ? [planData.plan] : []);
+      setAllPlans(plans.filter((p) => p.entries?.length > 0));
 
       if (actualRes) {
         const actualData = await actualRes.json();
         setActuals(actualData.schedule || []);
       }
+      setLastRefresh(new Date());
     } catch (err) {
       console.error("Load error:", err);
     }
     setLoading(false);
-  }, [eventKey, eventCode, season, dateParam]);
+  }, [eventKey, eventCode, season]);
 
   useEffect(() => {
     if (eventKey) loadData();
   }, [eventKey, loadData]);
 
-  const targetDate = dateParam || plan?.date || "";
-  const targetDateMDY = isoToMDY(targetDate);
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      if (eventKey) loadData(false);
+    }, REFRESH_INTERVAL_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [eventKey, loadData]);
+
+  const allDates = (() => {
+    const d = new Set<string>();
+    for (const s of actuals) d.add(fmtDateShort(s.firstTimestamp));
+    for (const p of allPlans) {
+      if (p.date) d.add(isoToMDY(p.date));
+    }
+    return [...d].sort();
+  })();
+
+  const today = todayDateStr();
+
+  const visibleDate = (() => {
+    if (selectedDate === "today") {
+      if (allDates.includes(today)) return today;
+      return allDates.length > 0 ? allDates[allDates.length - 1] : "";
+    }
+    return selectedDate;
+  })();
+
+  const dayPlan = allPlans.find((p) => isoToMDY(p.date) === visibleDate) || null;
+  const eventName = allPlans[0]?.eventName || `Event ${eventCode}`;
 
   const buildRows = (): { rows: ScheduleRow[]; projectedEnd: string } => {
     const actualEntries = actuals
-      .filter((s) => !targetDateMDY || fmtDateShort(s.firstTimestamp) === targetDateMDY)
+      .filter((s) => !visibleDate || fmtDateShort(s.firstTimestamp) === visibleDate)
       .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
 
     let sessionRows: DayScheduleRow[];
 
-    if (hasPlan && plan) {
-      const actualGroups = groupActuals(actualEntries);
-      let actualCursor = 0;
+    if (dayPlan) {
+      const merged = mergeActualsByClass(actualEntries);
+      const matched = new Set<string>();
 
-      sessionRows = plan.entries.flatMap<DayScheduleRow>((entry) => {
-        const group = !entry.isBreak && actualCursor < actualGroups.length ? actualGroups[actualCursor] : null;
-        if (group) {
-          actualCursor += 1;
-          return group.map((match) => ({
+      sessionRows = dayPlan.entries.flatMap<DayScheduleRow>((entry) => {
+        if (entry.isBreak) {
+          return [{
             type: "session" as const,
-            actual: match.firstTimestamp,
-            end: match.lastTimestamp,
-            category: match.category,
-            round: match.round,
-            numCars: match.totalRuns,
-            pairs: match.pairCount,
-            durationMin: match.durationMinutes,
+            actual: "",
+            end: "",
+            category: entry.className,
+            round: entry.round,
+            numCars: 0,
+            pairs: entry.pairs,
+            durationMin: Math.round(entry.plannedDurationSec / 60),
+            isPlanned: true,
+            fixedTime: entry.fixedTime || "",
+          }];
+        }
+
+        const key = `${normalizeCategoryName(entry.className)}|||${normalizeRound(entry.round)}`;
+        if (matched.has(key)) {
+          return [{
+            type: "session" as const,
+            actual: "",
+            end: "",
+            category: entry.className,
+            round: entry.round,
+            numCars: 0,
+            pairs: entry.pairs,
+            durationMin: Math.round(entry.plannedDurationSec / 60),
+            isPlanned: true,
+            fixedTime: entry.fixedTime || "",
+          }];
+        }
+
+        const actual = merged.get(key);
+        if (actual) {
+          matched.add(key);
+          return [{
+            type: "session" as const,
+            actual: actual.firstTimestamp,
+            end: actual.lastTimestamp,
+            category: actual.category,
+            round: actual.round,
+            numCars: actual.totalRuns,
+            pairs: actual.pairCount,
+            durationMin: actual.durationMinutes,
             isPlanned: false,
             fixedTime: entry.fixedTime || "",
-          }));
+          }];
         }
+
         return [{
           type: "session" as const,
           actual: "",
@@ -330,21 +375,23 @@ export default function PublicSchedulePage() {
         }];
       });
 
-      for (let i = actualCursor; i < actualGroups.length; i++) {
-        const rows = actualGroups[i].map((a) => ({
-          type: "session" as const,
-          actual: a.firstTimestamp,
-          end: a.lastTimestamp,
-          category: a.category,
-          round: a.round,
-          numCars: a.totalRuns,
-          pairs: a.pairCount,
-          durationMin: a.durationMinutes,
-          isPlanned: false,
-        }));
-        const insertIdx = sessionRows.findIndex((r) => r.isPlanned);
-        if (insertIdx >= 0) sessionRows.splice(insertIdx, 0, ...rows);
-        else sessionRows.push(...rows);
+      for (const [key, actual] of merged) {
+        if (!matched.has(key)) {
+          const insertIdx = sessionRows.findIndex((r) => r.isPlanned);
+          const row: DayScheduleRow = {
+            type: "session",
+            actual: actual.firstTimestamp,
+            end: actual.lastTimestamp,
+            category: actual.category,
+            round: actual.round,
+            numCars: actual.totalRuns,
+            pairs: actual.pairCount,
+            durationMin: actual.durationMinutes,
+            isPlanned: false,
+          };
+          if (insertIdx >= 0) sessionRows.splice(insertIdx, 0, row);
+          else sessionRows.push(row);
+        }
       }
     } else {
       sessionRows = actualEntries.map((entry) => ({
@@ -360,8 +407,8 @@ export default function PublicSchedulePage() {
       }));
     }
 
-    if (hasPlan && plan) {
-      const start = parseTime(plan.startTime);
+    if (dayPlan) {
+      const start = parseTime(dayPlan.startTime);
       if (start) {
         let curMin = hmToMinutes(start.h, start.m);
         let delayApplied = false;
@@ -369,7 +416,7 @@ export default function PublicSchedulePage() {
           if (row.isPlanned) {
             let startMin = curMin;
             if (!delayApplied) {
-              startMin += plan.delayMinutes || 0;
+              startMin += dayPlan.delayMinutes || 0;
               delayApplied = true;
             }
             if (row.fixedTime) {
@@ -427,6 +474,11 @@ export default function PublicSchedulePage() {
 
   const { rows, projectedEnd } = buildRows();
 
+  const sessions = rows.filter((r): r is DayScheduleRow => r.type === "session");
+  const actualSessions = sessions.filter((s) => !s.isPlanned);
+  const dayPairs = actualSessions.reduce((s, r) => s + r.pairs, 0);
+  const dayRuns = actualSessions.reduce((s, r) => s + r.numCars, 0);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-nhra-darker flex items-center justify-center">
@@ -438,7 +490,7 @@ export default function PublicSchedulePage() {
     );
   }
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && allPlans.length === 0) {
     return (
       <div className="min-h-screen bg-nhra-darker flex items-center justify-center px-4">
         <div className="bg-nhra-card border border-nhra-border rounded-xl p-12 text-center max-w-md">
@@ -454,14 +506,41 @@ export default function PublicSchedulePage() {
       <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="bg-nhra-red rounded-xl px-6 py-5 mb-6">
-          <h1 className="text-2xl font-bold text-white">{plan?.eventName || `Event ${eventCode}`}</h1>
+          <h1 className="text-2xl font-bold text-white">{eventName}</h1>
           <div className="flex flex-wrap gap-4 mt-2 text-white/80 text-sm">
-            {plan?.date && <span>{new Date(plan.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>}
-            {plan?.startTime && <span>Start: {plan.startTime}</span>}
-            {!!plan?.delayMinutes && <span>Delay: {plan.delayMinutes}m</span>}
+            {dayPlan?.date && <span>{new Date(dayPlan.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span>}
+            {dayPlan?.startTime && <span>Start: {dayPlan.startTime}</span>}
+            {!!dayPlan?.delayMinutes && <span>Delay: {dayPlan.delayMinutes}m</span>}
             {projectedEnd && <span>Projected End: {projectedEnd}</span>}
+            {actualSessions.length > 0 && (
+              <>
+                <span>{dayPairs} pairs</span>
+                <span>{dayRuns} runs</span>
+              </>
+            )}
           </div>
         </div>
+
+        {/* Day selector */}
+        {allDates.length > 1 && (
+          <div className="flex flex-wrap gap-2 mb-6">
+            <button
+              onClick={() => setSelectedDate("today")}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedDate === "today" ? "bg-nhra-red text-white" : "bg-nhra-card border border-nhra-border text-gray-400 hover:text-white"}`}
+            >
+              {allDates.includes(today) ? "Today" : "Latest"}
+            </button>
+            {allDates.map((date) => (
+              <button
+                key={date}
+                onClick={() => setSelectedDate(date)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedDate === date ? "bg-nhra-red text-white" : "bg-nhra-card border border-nhra-border text-gray-400 hover:text-white"} ${date === today ? "ring-1 ring-nhra-red/50" : ""}`}
+              >
+                {fmtDateLabel(date + " 12:00:00")}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Schedule Table */}
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
@@ -487,7 +566,12 @@ export default function PublicSchedulePage() {
                         <td className="p-2 pl-5 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{fmtTime12(row.startTs)}</td>
                         <td className="p-2 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{fmtTime12(row.endTs)}</td>
                         <td colSpan={3} className="p-2 text-center">
-                          <span className="inline-flex items-center gap-2 text-yellow-500 text-xs font-medium">Downtime</span>
+                          <span className="inline-flex items-center gap-2 text-yellow-500 text-xs font-medium">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Downtime
+                          </span>
                         </td>
                         <td className="p-2" />
                         <td className="p-2 text-right text-yellow-500/80 font-mono text-xs">{fmtDuration(row.durationMin)}</td>
@@ -535,7 +619,8 @@ export default function PublicSchedulePage() {
 
         {/* Footer */}
         <div className="mt-4 text-center text-gray-600 text-xs">
-          NHRA Timing Data &mdash; Updated live
+          NHRA Timing Data &mdash; Auto-refreshes every 30s
+          {lastRefresh && <span className="ml-2">(last: {lastRefresh.toLocaleTimeString()})</span>}
         </div>
       </div>
     </div>

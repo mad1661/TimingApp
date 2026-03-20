@@ -125,26 +125,27 @@ function normalizeCategoryName(name: string): string {
   const normalized = name.toUpperCase().trim().replace(/\s+/g, " ");
   const aliases: Record<string, string> = {
     "STOCK ELIMINATOR": "STOCK",
+    "LEGENDS NITRO FUNNY CAR": "LEGACY NITRO FUNNY CAR",
   };
   return aliases[normalized] || normalized;
 }
 
-function groupActualEntries(actualEntries: ScheduleEntry[]): ScheduleEntry[][] {
-  const groups: ScheduleEntry[][] = [];
-  for (const entry of actualEntries) {
-    const lastGroup = groups[groups.length - 1];
-    const lastEntry = lastGroup?.[lastGroup.length - 1];
-    if (
-      lastEntry &&
-      normalizeCategoryName(lastEntry.category) === normalizeCategoryName(entry.category) &&
-      normalizeRoundSched(lastEntry.round) === normalizeRoundSched(entry.round)
-    ) {
-      lastGroup.push(entry);
+function mergeActualsByClass(actuals: ScheduleEntry[]): Map<string, ScheduleEntry> {
+  const merged = new Map<string, ScheduleEntry>();
+  for (const actual of actuals) {
+    const key = `${normalizeCategoryName(actual.category)}|||${normalizeRoundSched(actual.round)}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.totalRuns += actual.totalRuns;
+      existing.pairCount += actual.pairCount;
+      existing.durationMinutes += actual.durationMinutes;
+      if (sortKey(actual.firstTimestamp) < sortKey(existing.firstTimestamp)) existing.firstTimestamp = actual.firstTimestamp;
+      if (sortKey(actual.lastTimestamp) > sortKey(existing.lastTimestamp)) existing.lastTimestamp = actual.lastTimestamp;
     } else {
-      groups.push([entry]);
+      merged.set(key, { ...actual });
     }
   }
-  return groups;
+  return merged;
 }
 
 interface DayScheduleRow {
@@ -354,26 +355,58 @@ export default function SchedulePage() {
     let sessionRows: DayScheduleRow[];
 
     if (hasPlan) {
-      const actualGroups = groupActualEntries(actualEntries);
-      let actualCursor = 0;
+      const merged = mergeActualsByClass(actualEntries);
+      const matched = new Set<string>();
 
       sessionRows = dayPlan.entries.flatMap<DayScheduleRow>((pe) => {
-        const group = !pe.isBreak && actualCursor < actualGroups.length ? actualGroups[actualCursor] : null;
-        if (group) {
-          actualCursor += 1;
-          return group.map((match) => ({
+        if (pe.isBreak) {
+          return [{
             type: "session" as const,
-            actual: match.firstTimestamp,
-            end: match.lastTimestamp,
-            category: match.category,
-            round: match.round,
-            numCars: match.totalRuns,
-            pairs: match.pairCount,
-            durationMin: match.durationMinutes,
+            actual: "",
+            end: "",
+            category: pe.className,
+            round: pe.round,
+            numCars: 0,
+            pairs: pe.pairs,
+            durationMin: Math.round(pe.plannedDurationSec / 60),
+            isPlanned: true,
+            fixedTime: pe.fixedTime || "",
+          }];
+        }
+
+        const key = `${normalizeCategoryName(pe.className)}|||${normalizeRoundSched(pe.round)}`;
+        if (matched.has(key)) {
+          return [{
+            type: "session" as const,
+            actual: "",
+            end: "",
+            category: pe.className,
+            round: pe.round,
+            numCars: 0,
+            pairs: pe.pairs,
+            durationMin: Math.round(pe.plannedDurationSec / 60),
+            isPlanned: true,
+            fixedTime: pe.fixedTime || "",
+          }];
+        }
+
+        const actual = merged.get(key);
+        if (actual) {
+          matched.add(key);
+          return [{
+            type: "session" as const,
+            actual: actual.firstTimestamp,
+            end: actual.lastTimestamp,
+            category: actual.category,
+            round: actual.round,
+            numCars: actual.totalRuns,
+            pairs: actual.pairCount,
+            durationMin: actual.durationMinutes,
             isPlanned: false,
             fixedTime: pe.fixedTime || "",
-          }));
+          }];
         }
+
         return [{
           type: "session" as const,
           actual: "",
@@ -388,21 +421,23 @@ export default function SchedulePage() {
         }];
       });
 
-      for (let i = actualCursor; i < actualGroups.length; i++) {
-        const rows = actualGroups[i].map((a) => ({
-          type: "session" as const,
-          actual: a.firstTimestamp,
-          end: a.lastTimestamp,
-          category: a.category,
-          round: a.round,
-          numCars: a.totalRuns,
-          pairs: a.pairCount,
-          durationMin: a.durationMinutes,
-          isPlanned: false,
-        }));
-        const insertIdx = sessionRows.findIndex((r) => r.isPlanned);
-        if (insertIdx >= 0) sessionRows.splice(insertIdx, 0, ...rows);
-        else sessionRows.push(...rows);
+      for (const [key, actual] of merged) {
+        if (!matched.has(key)) {
+          const insertIdx = sessionRows.findIndex((r) => r.isPlanned);
+          const row: DayScheduleRow = {
+            type: "session",
+            actual: actual.firstTimestamp,
+            end: actual.lastTimestamp,
+            category: actual.category,
+            round: actual.round,
+            numCars: actual.totalRuns,
+            pairs: actual.pairCount,
+            durationMin: actual.durationMinutes,
+            isPlanned: false,
+          };
+          if (insertIdx >= 0) sessionRows.splice(insertIdx, 0, row);
+          else sessionRows.push(row);
+        }
       }
     } else {
       sessionRows = actualEntries.map((entry) => ({

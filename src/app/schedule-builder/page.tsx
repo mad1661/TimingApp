@@ -255,6 +255,7 @@ function ScheduleBuilderInner() {
   const [copied, setCopied] = useState(false);
   const [actuals, setActuals] = useState<ScheduleActual[]>([]);
   const [otherDayEntries, setOtherDayEntries] = useState<PlanEntry[]>([]);
+  const [savedDates, setSavedDates] = useState<string[]>([]);
 
   const dragIdx = useRef<number | null>(null);
   const dragOverIdx = useRef<number | null>(null);
@@ -297,12 +298,17 @@ function ScheduleBuilderInner() {
       }
 
       const other: PlanEntry[] = [];
+      const dates = new Set<string>();
       for (const p of allPlans) {
-        if (p.date && p.date !== planDate && p.entries) {
-          for (const e of p.entries) other.push({ ...e, fixedTime: e.fixedTime || "", fieldSize: e.fieldSize || 0 });
+        if (p.date && p.entries && p.entries.length > 0) {
+          dates.add(p.date);
+          if (p.date !== planDate) {
+            for (const e of p.entries) other.push({ ...e, fixedTime: e.fixedTime || "", fieldSize: e.fieldSize || 0 });
+          }
         }
       }
       setOtherDayEntries(other);
+      setSavedDates([...dates].sort());
     } catch (err) {
       console.error("Load plan error:", err);
     }
@@ -624,6 +630,27 @@ function ScheduleBuilderInner() {
           </button>
         </div>
       </div>
+
+      {/* Saved day buttons */}
+      {savedDates.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          <span className="text-xs text-gray-500 self-center mr-1">Saved Days:</span>
+          {savedDates.map((d) => {
+            const dt = new Date(d + "T12:00:00");
+            const label = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+            const isActive = d === planDate;
+            return (
+              <button
+                key={d}
+                onClick={() => setPlanDate(d)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${isActive ? "bg-nhra-red text-white" : "bg-nhra-card border border-nhra-border text-gray-400 hover:text-white"}`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Action bar */}
       <div className="flex flex-wrap gap-3 mb-6">
