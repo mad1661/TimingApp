@@ -14,7 +14,7 @@ interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function parseTs(ts: string): Date | null {
+function parseTs(ts: string, pmShift: boolean = true): Date | null {
   try {
     const parts = ts.split(" ");
     const datePart = parts[0];
@@ -25,6 +25,7 @@ function parseTs(ts: string): Date | null {
     let hour = parseInt(hh, 10);
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
+    else if (!ampm && pmShift && hour >= 1 && hour <= 6) hour += 12;
     return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), hour, parseInt(mm), parseInt(ss || "0"));
   } catch {
     return null;

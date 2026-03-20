@@ -679,6 +679,7 @@ function parseTsToDate(ts: string): Date | null {
 
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
+    else if (!ampm && hour >= 1 && hour <= 6) hour += 12;
 
     return new Date(
       parseInt(year),
