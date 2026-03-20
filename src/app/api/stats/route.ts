@@ -45,7 +45,8 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === "schedule") {
-      const schedule = await getScheduleData(eventCode, season);
+      const pmStart = params.get("pm_start") === "1";
+      const schedule = await getScheduleData(eventCode, season, pmStart);
       return NextResponse.json({ schedule });
     }
 

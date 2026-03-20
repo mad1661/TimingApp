@@ -707,15 +707,10 @@ function tsSortKey(ts: string): string {
  * Infer AM/PM for raw 12-hour timestamps by looking at the chronological
  * order of runs (via created_at). Tags each run's timestamp with " AM" or " PM".
  *
- * Logic:
- * - Hours 7-11 as first run of the day = morning start (AM)
- * - Hours 1-6 as first run of the day = afternoon start (PM)
- * - Hour 12 = noon, switches to PM for all following runs
- * - Once past noon, hours 1-11 are PM
- * - If hours climb back to 7+ after being in PM 1-6 range, we've
- *   likely hit the next day's testing or it's evening (stays PM)
+ * Default: starts in AM mode. Once hour 12 appears, switches to PM.
+ * If pmStart is true, starts in PM mode (for days that only race afternoon).
  */
-function tagRunTimestamps(runs: RunRow[]): void {
+function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   const byDay = new Map<string, RunRow[]>();
   for (const run of runs) {
     if (!run.timestamp) continue;
@@ -729,16 +724,7 @@ function tagRunTimestamps(runs: RunRow[]): void {
   for (const [, dayRuns] of byDay) {
     dayRuns.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
 
-    const firstHour = (() => {
-      for (const run of dayRuns) {
-        const tp = run.timestamp!.split(" ")[1];
-        if (!tp) continue;
-        return parseInt(tp.split(":")[0], 10);
-      }
-      return 8;
-    })();
-
-    let passedNoon = firstHour >= 1 && firstHour <= 6;
+    let passedNoon = pmStart;
 
     for (const run of dayRuns) {
       const timePart = run.timestamp!.split(" ")[1];
@@ -759,10 +745,10 @@ function tagRunTimestamps(runs: RunRow[]): void {
 
 const SESSION_GAP_MAX_MIN = 10;
 
-export async function getScheduleData(eventCode: string, season: string): Promise<ScheduleEntry[]> {
+export async function getScheduleData(eventCode: string, season: string, pmStart: boolean = false): Promise<ScheduleEntry[]> {
   const eventRuns = await getEventRuns(eventCode, season);
 
-  tagRunTimestamps(eventRuns);
+  tagRunTimestamps(eventRuns, pmStart);
 
   const grouped = new Map<string, { timestamps: Map<string, Set<string>>; }>();
 

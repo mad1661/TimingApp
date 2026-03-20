@@ -268,6 +268,7 @@ export default function SchedulePage() {
   const [dtEnd, setDtEnd] = useState("");
   const [dtDate, setDtDate] = useState("");
   const [dtSaving, setDtSaving] = useState(false);
+  const [pmStart, setPmStart] = useState(false);
 
   const eventCode = live.config?.eventCode;
   const season = live.config?.season;
@@ -278,7 +279,7 @@ export default function SchedulePage() {
     setLoading(true);
     try {
       const [schedRes, planRes, dtRes] = await Promise.all([
-        fetch(`/api/stats?type=schedule&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`),
+        fetch(`/api/stats?type=schedule&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${pmStart ? "&pm_start=1" : ""}`),
         eventKey ? fetch(`/api/schedule-plan?event_key=${encodeURIComponent(eventKey)}`) : Promise.resolve(null),
         fetch(`/api/downtime?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`),
       ]);
@@ -302,7 +303,7 @@ export default function SchedulePage() {
       console.error(err);
     }
     setLoading(false);
-  }, [eventCode, season, eventKey]);
+  }, [eventCode, season, eventKey, pmStart]);
 
   useEffect(() => {
     if (eventCode && season) loadSchedule();
@@ -600,6 +601,12 @@ export default function SchedulePage() {
           <p className="text-gray-400">{live.config.eventName}</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={() => setPmStart(!pmStart)}
+            className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${pmStart ? "bg-nhra-accent/20 border-nhra-accent text-nhra-accent" : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-white"}`}
+          >
+            PM Start
+          </button>
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
             <input
               type="checkbox"
