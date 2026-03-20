@@ -667,19 +667,27 @@ export interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function inferHour24(hour12: number): number {
-  if (hour12 === 12) return 12;
-  if (hour12 >= 1 && hour12 <= 6) return hour12 + 12;
-  return hour12;
-}
-
 function parseTsToDate(ts: string): Date | null {
   try {
-    const [datePart, timePart] = ts.split(" ");
+    const parts = ts.split(" ");
+    const datePart = parts[0];
+    const timePart = parts[1];
+    const ampm = parts[2]?.toUpperCase();
     const [month, day, year] = datePart.split("/");
     const [hh, mm, ss] = timePart.split(":");
-    const h24 = inferHour24(parseInt(hh, 10));
-    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), h24, parseInt(mm), parseInt(ss || "0"));
+    let hour = parseInt(hh, 10);
+
+    if (ampm === "PM" && hour !== 12) hour += 12;
+    else if (ampm === "AM" && hour === 12) hour = 0;
+
+    return new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      hour,
+      parseInt(mm),
+      parseInt(ss || "0")
+    );
   } catch {
     return null;
   }
