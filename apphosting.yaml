@@ -12,7 +12,3 @@ env:
     secret: NHRA_PASSWORD
   - variable: FB_ADMIN_PROJECT_ID
     value: nhra-timing-app
-  - variable: FB_ADMIN_CLIENT_EMAIL
-    secret: FB_ADMIN_CLIENT_EMAIL
-  - variable: FB_ADMIN_PRIVATE_KEY
-    secret: FB_ADMIN_PRIVATE_KEY
