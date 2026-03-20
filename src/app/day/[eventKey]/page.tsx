@@ -449,19 +449,35 @@ function PublicSchedulePage() {
       }
     }
 
-    const combined: ScheduleRow[] = [];
-    for (let i = 0; i < sessionRows.length; i++) {
-      if (i > 0 && !sessionRows[i].isPlanned && !sessionRows[i - 1].isPlanned) {
-        const prevEnd = parseTs(sessionRows[i - 1].end);
-        const thisStart = parseTs(sessionRows[i].actual);
-        if (prevEnd && thisStart) {
-          const gapMin = Math.round((thisStart.getTime() - prevEnd.getTime()) / 60000);
-          if (gapMin >= 10) {
-            combined.push({ type: "downtime", startTs: sessionRows[i - 1].end, endTs: sessionRows[i].actual, durationMin: gapMin });
-          }
+    const chronoActuals = sessionRows
+      .filter((r) => !r.isPlanned && r.actual && r.end)
+      .sort((a, b) => sortKey(a.actual).localeCompare(sortKey(b.actual)));
+
+    const dtRows: DowntimeRow[] = [];
+    for (let i = 1; i < chronoActuals.length; i++) {
+      const prevEnd = parseTs(chronoActuals[i - 1].end);
+      const thisStart = parseTs(chronoActuals[i].actual);
+      if (prevEnd && thisStart) {
+        const gapMin = Math.round((thisStart.getTime() - prevEnd.getTime()) / 60000);
+        if (gapMin >= 2) {
+          dtRows.push({ type: "downtime", startTs: chronoActuals[i - 1].end, endTs: chronoActuals[i].actual, durationMin: gapMin });
         }
       }
-      combined.push(sessionRows[i]);
+    }
+
+    const combined: ScheduleRow[] = [...sessionRows];
+    for (const dt of dtRows) {
+      const dtStart = parseTs(dt.startTs);
+      if (!dtStart) { combined.push(dt); continue; }
+      let bestIdx = combined.length;
+      for (let i = 0; i < combined.length; i++) {
+        const row = combined[i];
+        if (row.type === "session" && !row.isPlanned && row.actual) {
+          const rowStart = parseTs(row.actual);
+          if (rowStart && rowStart > dtStart) { bestIdx = i; break; }
+        }
+      }
+      combined.splice(bestIdx, 0, dt);
     }
 
     const lastRow = sessionRows[sessionRows.length - 1];

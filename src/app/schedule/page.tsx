@@ -98,7 +98,7 @@ function roundLabel(r: string): string {
   return r;
 }
 
-const DOWNTIME_THRESHOLD_MIN = 10;
+const DOWNTIME_THRESHOLD_MIN = 2;
 
 function normalizeRoundSched(r: string): string {
   if (!r) return "";
@@ -505,24 +505,30 @@ export default function SchedulePage() {
 
     const dayManualDt = manualDowntimes.filter((md) => md.date && isoToMDY(md.date) === date);
 
-    const combined: ScheduleRow[] = [];
+    const chronoActuals = sessionRows
+      .filter((r) => !r.isPlanned && r.actual && r.end)
+      .sort((a, b) => sortKey(a.actual).localeCompare(sortKey(b.actual)));
+
+    const autoDowntimes: DowntimeRow[] = [];
     let totalDowntimeMin = 0;
 
-    for (let i = 0; i < sessionRows.length; i++) {
-      if (i > 0 && showDowntime && !sessionRows[i].isPlanned && !sessionRows[i - 1].isPlanned) {
-        const prevEnd = parseTs(sessionRows[i - 1].end);
-        const thisStart = parseTs(sessionRows[i].actual);
+    if (showDowntime) {
+      for (let i = 1; i < chronoActuals.length; i++) {
+        const prevEnd = parseTs(chronoActuals[i - 1].end);
+        const thisStart = parseTs(chronoActuals[i].actual);
         if (prevEnd && thisStart) {
           const gapMin = Math.round((thisStart.getTime() - prevEnd.getTime()) / 60000);
           if (gapMin >= DOWNTIME_THRESHOLD_MIN) {
-            combined.push({ type: "downtime", startTs: sessionRows[i - 1].end, endTs: sessionRows[i].actual, durationMin: gapMin });
+            autoDowntimes.push({ type: "downtime", startTs: chronoActuals[i - 1].end, endTs: chronoActuals[i].actual, durationMin: gapMin });
             totalDowntimeMin += gapMin;
           }
         }
       }
-      combined.push(sessionRows[i]);
     }
 
+    const combined: ScheduleRow[] = [...sessionRows];
+
+    const allDtRows: DowntimeRow[] = [...autoDowntimes];
     for (const md of dayManualDt) {
       const dtRow: DowntimeRow = {
         type: "downtime",
@@ -533,24 +539,37 @@ export default function SchedulePage() {
         manualId: md.id,
       };
       totalDowntimeMin += md.durationMin;
+      allDtRows.push(dtRow);
+    }
 
-      let inserted = false;
+    for (const dtRow of allDtRows) {
+      let dtStartTime: Date | null = null;
+      if (dtRow.startTs.includes("/")) {
+        dtStartTime = parseTs(dtRow.startTs);
+      } else {
+        const [hh, mm] = dtRow.startTs.split(":").map(Number);
+        if (!isNaN(hh)) {
+          const h = hh >= 1 && hh <= 5 ? hh + 12 : hh;
+          dtStartTime = new Date(2000, 0, 1, h, mm || 0);
+        }
+      }
+      if (!dtStartTime) {
+        combined.push(dtRow);
+        continue;
+      }
+
+      let bestIdx = combined.length;
       for (let i = 0; i < combined.length; i++) {
         const row = combined[i];
         if (row.type === "session" && !row.isPlanned && row.actual) {
           const rowStart = parseTs(row.actual);
-          if (rowStart) {
-            const [hh, mm] = md.startTime.split(":").map(Number);
-            const dtH = hh >= 1 && hh <= 6 ? hh + 12 : hh;
-            if (dtH < rowStart.getHours() || (dtH === rowStart.getHours() && (mm || 0) < rowStart.getMinutes())) {
-              combined.splice(i, 0, dtRow);
-              inserted = true;
-              break;
-            }
+          if (rowStart && rowStart > dtStartTime) {
+            bestIdx = i;
+            break;
           }
         }
       }
-      if (!inserted) combined.push(dtRow);
+      combined.splice(bestIdx, 0, dtRow);
     }
 
     return { rows: combined, downtimeMin: totalDowntimeMin, hasActualData, projectedEnd };
