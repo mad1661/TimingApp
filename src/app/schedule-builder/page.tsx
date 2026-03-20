@@ -187,7 +187,7 @@ function prevRoundInfo(
   return null;
 }
 
-function parseActualTime(ts: string, pmShift: boolean = false): { h: number; m: number } | null {
+function parseActualTime(ts: string, racingStartHour: number = 8): { h: number; m: number } | null {
   try {
     const parts = ts.split(" ");
     const timePart = parts[1];
@@ -197,15 +197,15 @@ function parseActualTime(ts: string, pmShift: boolean = false): { h: number; m: 
     let h = parseInt(hh, 10);
     if (ampm === "PM" && h !== 12) h += 12;
     else if (ampm === "AM" && h === 12) h = 0;
-    else if (!ampm && pmShift && h >= 1 && h <= 6) h += 12;
+    else if (!ampm && h >= 1 && h < racingStartHour) h += 12;
     return { h, m: parseInt(mm, 10) };
   } catch {
     return null;
   }
 }
 
-function fmtActualTime(ts: string, pmShift: boolean = false): string {
-  const parsed = parseActualTime(ts, pmShift);
+function fmtActualTime(ts: string, racingStartHour: number = 8): string {
+  const parsed = parseActualTime(ts, racingStartHour);
   if (!parsed) return ts;
   return fmtTime(parsed.h, parsed.m);
 }
@@ -246,7 +246,7 @@ function ScheduleBuilderInner() {
   const [copied, setCopied] = useState(false);
   const [actuals, setActuals] = useState<ScheduleActual[]>([]);
   const [otherDayEntries, setOtherDayEntries] = useState<PlanEntry[]>([]);
-  const [pmShift, setPmShift] = useState(true);
+  const racingStartHour = live.config?.racingStartHour ?? 8;
 
   const dragIdx = useRef<number | null>(null);
   const dragOverIdx = useRef<number | null>(null);
@@ -511,9 +511,9 @@ function ScheduleBuilderInner() {
 
     for (const entry of entries) {
       if (entry.status === "completed" && entry.actualEnd) {
-        const actEnd = parseActualTime(entry.actualEnd, pmShift);
+        const actEnd = parseActualTime(entry.actualEnd, racingStartHour);
         if (actEnd) {
-          const actStart = entry.actualStart ? parseActualTime(entry.actualStart, pmShift) : null;
+          const actStart = entry.actualStart ? parseActualTime(entry.actualStart, racingStartHour) : null;
           const startHM = actStart ? { h: actStart.h, m: actStart.m } : minutesToHM(curMin);
           times.push({
             startH: startHM.h,
@@ -610,12 +610,6 @@ function ScheduleBuilderInner() {
             />
             <span className="text-xs text-gray-500">min</span>
           </div>
-          <button
-            onClick={() => setPmShift(!pmShift)}
-            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${pmShift ? "bg-nhra-accent/20 border-nhra-accent text-nhra-accent" : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"}`}
-          >
-            1-6 → {pmShift ? "PM" : "AM"}
-          </button>
           <button onClick={savePlan} disabled={saving} className="px-5 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50 text-sm">
             {saving ? "Saving..." : saved ? "Saved!" : "Save"}
           </button>
@@ -789,10 +783,10 @@ function ScheduleBuilderInner() {
                       {fmtDurSec(entry.plannedDurationSec)}
                     </td>
                     <td className="p-3 text-center font-mono text-green-400 text-xs whitespace-nowrap">
-                      {entry.actualStart ? fmtActualTime(entry.actualStart, pmShift) : ""}
+                      {entry.actualStart ? fmtActualTime(entry.actualStart, racingStartHour) : ""}
                     </td>
                     <td className="p-3 text-center font-mono text-green-400/70 text-xs whitespace-nowrap">
-                      {entry.actualEnd ? fmtActualTime(entry.actualEnd, pmShift) : ""}
+                      {entry.actualEnd ? fmtActualTime(entry.actualEnd, racingStartHour) : ""}
                     </td>
                     <td className="p-3 text-center">
                       {!isCompleted ? (

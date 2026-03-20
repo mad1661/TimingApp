@@ -667,7 +667,7 @@ export interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function parseTsToDate(ts: string): Date | null {
+function parseTsToDate(ts: string, racingStartHour: number = 8): Date | null {
   try {
     const parts = ts.split(" ");
     const datePart = parts[0];
@@ -679,7 +679,7 @@ function parseTsToDate(ts: string): Date | null {
 
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
-    else if (!ampm && hour >= 1 && hour <= 6) hour += 12;
+    else if (!ampm && hour >= 1 && hour < racingStartHour) hour += 12;
 
     return new Date(
       parseInt(year),

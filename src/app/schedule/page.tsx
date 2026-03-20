@@ -14,7 +14,7 @@ interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function parseTs(ts: string, pmShift: boolean = true): Date | null {
+function parseTs(ts: string, racingStartHour: number = 8): Date | null {
   try {
     const parts = ts.split(" ");
     const datePart = parts[0];
@@ -25,33 +25,33 @@ function parseTs(ts: string, pmShift: boolean = true): Date | null {
     let hour = parseInt(hh, 10);
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
-    else if (!ampm && pmShift && hour >= 1 && hour <= 6) hour += 12;
+    else if (!ampm && hour >= 1 && hour < racingStartHour) hour += 12;
     return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), hour, parseInt(mm), parseInt(ss || "0"));
   } catch {
     return null;
   }
 }
 
-function sortKey(ts: string): string {
-  const d = parseTs(ts);
+function sortKey(ts: string, rsh: number = 8): string {
+  const d = parseTs(ts, rsh);
   if (!d) return ts;
   return d.toISOString();
 }
 
-function fmtTime12(ts: string): string {
-  const d = parseTs(ts);
+function fmtTime12(ts: string, rsh: number = 8): string {
+  const d = parseTs(ts, rsh);
   if (!d) return ts;
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
 }
 
-function fmtTimeShort(ts: string): string {
-  const d = parseTs(ts);
+function fmtTimeShort(ts: string, rsh: number = 8): string {
+  const d = parseTs(ts, rsh);
   if (!d) return ts;
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 }
 
-function fmtDate(ts: string): string {
-  const d = parseTs(ts);
+function fmtDate(ts: string, rsh: number = 8): string {
+  const d = parseTs(ts, rsh);
   if (!d) return ts;
   return d.toLocaleDateString("en-US", { weekday: "long", month: "2-digit", day: "2-digit", year: "numeric" });
 }
@@ -60,8 +60,8 @@ function fmtDateShort(ts: string): string {
   return ts.split(" ")[0] || ts;
 }
 
-function fmtDateLabel(ts: string): string {
-  const d = parseTs(ts);
+function fmtDateLabel(ts: string, rsh: number = 8): string {
+  const d = parseTs(ts, rsh);
   if (!d) return ts;
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
@@ -255,6 +255,7 @@ interface PlanData {
 
 export default function SchedulePage() {
   const live = useLiveData();
+  const rsh = live.config?.racingStartHour ?? 8;
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [plans, setPlans] = useState<Map<string, PlanData>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -333,7 +334,7 @@ export default function SchedulePage() {
   const buildDayRows = (date: string): { rows: ScheduleRow[]; downtimeMin: number; hasActualData: boolean; projectedEnd: string } => {
     const actualEntries = schedule
       .filter((s) => fmtDateShort(s.firstTimestamp) === date)
-      .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
+      .sort((a, b) => sortKey(a.firstTimestamp, rsh).localeCompare(sortKey(b.firstTimestamp, rsh)));
 
     const dayPlan = plans.get(date) || null;
     const hasPlan = dayPlan !== null;
@@ -453,7 +454,7 @@ export default function SchedulePage() {
     if (lastRow?.projEnd) {
       projectedEnd = lastRow.projEnd;
     } else if (lastRow && !lastRow.isPlanned && lastRow.end) {
-      projectedEnd = fmtTimeShort(lastRow.end);
+      projectedEnd = fmtTimeShort(lastRow.end, rsh);
     }
 
     const dayManualDt = manualDowntimes.filter((md) => md.date && isoToMDY(md.date) === date);
@@ -714,11 +715,11 @@ export default function SchedulePage() {
         const actualSessions = sessions.filter((s) => !s.isPlanned);
         const dayPairs = actualSessions.reduce((s, r) => s + r.pairs, 0);
         const dayRuns = actualSessions.reduce((s, r) => s + r.numCars, 0);
-        const firstTime = actualSessions[0] ? fmtTimeShort(actualSessions[0].actual) : "";
-        const lastTime = actualSessions[actualSessions.length - 1] ? fmtTimeShort(actualSessions[actualSessions.length - 1].end) : "";
+        const firstTime = actualSessions[0] ? fmtTimeShort(actualSessions[0].actual, rsh) : "";
+        const lastTime = actualSessions[actualSessions.length - 1] ? fmtTimeShort(actualSessions[actualSessions.length - 1].end, rsh) : "";
 
-        const firstD = actualSessions[0] ? parseTs(actualSessions[0].actual) : null;
-        const lastD = actualSessions[actualSessions.length - 1] ? parseTs(actualSessions[actualSessions.length - 1].end) : null;
+        const firstD = actualSessions[0] ? parseTs(actualSessions[0].actual, rsh) : null;
+        const lastD = actualSessions[actualSessions.length - 1] ? parseTs(actualSessions[actualSessions.length - 1].end, rsh) : null;
         const totalMin = firstD && lastD ? Math.round((lastD.getTime() - firstD.getTime()) / 60000) : 0;
         const activeMin = Math.max(totalMin - downtimeMin, 1);
         const pairsPerHour = activeMin > 0 ? Math.round((dayPairs / activeMin) * 60 * 10) / 10 : 0;
@@ -733,7 +734,7 @@ export default function SchedulePage() {
                   {date.split("/")[1]}
                 </div>
                 <div>
-                  <p className="text-white font-bold text-lg">{fmtDate(actualSessions[0]?.actual || date)}</p>
+                  <p className="text-white font-bold text-lg">{fmtDate(actualSessions[0]?.actual || date, rsh)}</p>
                   {hasActualData ? (
                     <p className="text-white/70 text-xs">
                       {firstTime} &mdash; {lastTime}
@@ -840,8 +841,8 @@ export default function SchedulePage() {
                       if (row.type === "downtime") {
                         return (
                           <tr key={`dt-${i}`} className={`border-b border-nhra-border/50 ${row.manualId ? "bg-yellow-500/10" : "bg-yellow-500/5"}`}>
-                            <td className="p-2 pl-5 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.startTs) : fmtTime12(row.startTs)}</td>
-                            <td className="p-2 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.endTs) : fmtTime12(row.endTs)}</td>
+                            <td className="p-2 pl-5 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.startTs) : fmtTime12(row.startTs, rsh)}</td>
+                            <td className="p-2 font-mono text-yellow-500/70 whitespace-nowrap text-xs">{row.manualId ? fmtHM24(row.endTs) : fmtTime12(row.endTs, rsh)}</td>
                             <td colSpan={3} className="p-2 text-center">
                               <span className="inline-flex items-center gap-2 text-yellow-500 text-xs font-medium">
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -884,8 +885,8 @@ export default function SchedulePage() {
 
                       return (
                         <tr key={i} className="border-b border-nhra-border/50 hover:bg-nhra-border/20 transition-colors">
-                          <td className="p-3 pl-5 font-mono text-green-400 font-medium whitespace-nowrap">{fmtTime12(row.actual)}</td>
-                          <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime12(row.end)}</td>
+                          <td className="p-3 pl-5 font-mono text-green-400 font-medium whitespace-nowrap">{fmtTime12(row.actual, rsh)}</td>
+                          <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime12(row.end, rsh)}</td>
                           <td className="p-3 text-white font-medium">
                             <Link href={`/runs?category=${encodeURIComponent(row.category)}`} className="hover:text-nhra-accent transition-colors">
                               {row.category}

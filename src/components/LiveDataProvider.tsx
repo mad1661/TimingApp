@@ -12,6 +12,7 @@ export interface LiveConfig {
   eventName: string;
   intervalSeconds: number;
   dateFilter?: string;
+  racingStartHour?: number;
 }
 
 interface LiveDataState {

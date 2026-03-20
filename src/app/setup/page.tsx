@@ -51,6 +51,7 @@ export default function SetupPage() {
   const [datesLoading, setDatesLoading] = useState(false);
 
   const [intervalSeconds, setIntervalSeconds] = useState(60);
+  const [racingStartHour, setRacingStartHour] = useState(8);
   const [purging, setPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
 
@@ -62,6 +63,7 @@ export default function SetupPage() {
       setEventType(live.config.eventType);
       setIntervalSeconds(live.config.intervalSeconds);
       if (live.config.dateFilter) setSelectedDate(live.config.dateFilter);
+      if (live.config.racingStartHour != null) setRacingStartHour(live.config.racingStartHour);
       setLoggedIn(true);
     }
   }, [live.config]);
@@ -156,6 +158,7 @@ export default function SetupPage() {
       eventName: selectedEvent.displayName,
       intervalSeconds,
       dateFilter: selectedDate || undefined,
+      racingStartHour,
     };
     live.setConfig(config);
     live.start();
@@ -456,6 +459,25 @@ export default function SetupPage() {
                   {opt.label}
                 </button>
               ))}
+            </div>
+
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-white mb-2">Racing Starts At</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                getresults uses 12-hour time without AM/PM. Set what hour racing starts so times display correctly.
+                Hours before this are treated as PM.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {[6, 7, 8, 9, 10].map((h) => (
+                  <button key={h} onClick={() => setRacingStartHour(h)}
+                    className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${racingStartHour === h ? "bg-nhra-accent text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}>
+                    {h} AM
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-600 mt-2">
+                Currently: hours {racingStartHour > 1 ? `1–${racingStartHour - 1}` : "none"} → PM, hours {racingStartHour}–12 → AM/noon
+              </p>
             </div>
 
             <button onClick={handleLockIn} disabled={!selectedEvent}
