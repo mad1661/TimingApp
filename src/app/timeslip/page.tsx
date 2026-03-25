@@ -46,15 +46,18 @@ export default function TimeslipPage() {
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const justSelectedRef = useRef(false);
 
   const eventQS = live.config?.eventCode
     ? `&event_code=${encodeURIComponent(live.config.eventCode)}&season=${encodeURIComponent(live.config.season || "")}`
     : "";
 
   const searchRacers = useCallback(async (q: string) => {
+    if (justSelectedRef.current) { justSelectedRef.current = false; return; }
     if (q.length < 1) { setSuggestions([]); return; }
     try {
-      const res = await fetch(`/api/stats?type=racers&search=${encodeURIComponent(q)}${eventQS}`);
+      const qs = searchMode === "car" ? "" : eventQS;
+      const res = await fetch(`/api/stats?type=racers&search=${encodeURIComponent(q)}${qs}`);
       const data = await res.json();
       if (data.racerDetails) {
         setSuggestions(data.racerDetails);
@@ -63,7 +66,7 @@ export default function TimeslipPage() {
       }
       setShowSuggestions(true);
     } catch { setSuggestions([]); }
-  }, [eventQS]);
+  }, [eventQS, searchMode]);
 
   useEffect(() => {
     const timer = setTimeout(() => searchRacers(search), 300);
@@ -81,6 +84,7 @@ export default function TimeslipPage() {
   }, []);
 
   async function loadRacerRuns(name: string, displayText?: string) {
+    justSelectedRef.current = true;
     setSelectedRacer(name);
     setSearch(displayText || name);
     setShowSuggestions(false);
@@ -95,13 +99,14 @@ export default function TimeslipPage() {
   }
 
   async function loadCarNumberRuns(carNumber: string) {
+    justSelectedRef.current = true;
     setSelectedRacer(`#${carNumber}`);
     setSearch(carNumber);
     setShowSuggestions(false);
     setLoading(true);
     setSelectedRun(null);
     try {
-      const res = await fetch(`/api/stats?type=car_runs&car_number=${encodeURIComponent(carNumber)}${eventQS}`);
+      const res = await fetch(`/api/stats?type=car_runs&car_number=${encodeURIComponent(carNumber)}`);
       const data = await res.json();
       setRuns(data.runs || []);
     } catch { setRuns([]); }
