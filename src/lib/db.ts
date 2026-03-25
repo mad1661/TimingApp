@@ -1258,8 +1258,11 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
   const sameRace = withData.filter(
     (r) => r.category === latestRun.category && r.round === latestRun.round
   );
+  // Use wider tolerance (3s) to capture all lanes in 4-wide races where
+  // lanes 1&2 and 3&4 may have timestamps several seconds apart
+  const FOUR_WIDE_TOLERANCE = 3;
   const raceTs = sameRace.map((r) => r.timestamp!);
-  const tsGroups = buildTimestampGroups(raceTs);
+  const tsGroups = buildTimestampGroups(raceTs, FOUR_WIDE_TOLERANCE);
   const latestCanonical = tsGroups.get(latestRun.timestamp!) || latestRun.timestamp!;
   return sameRace
     .filter((r) => (tsGroups.get(r.timestamp!) || r.timestamp!) === latestCanonical)
