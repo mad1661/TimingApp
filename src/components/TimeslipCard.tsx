@@ -60,8 +60,9 @@ function resultBadge(run: TimeslipRun): { text: string; bg: string; fg: string }
 
 function resultRowBg(run: TimeslipRun): string {
   const r = run.result?.trim().toUpperCase();
-  if (r === "W" || (!r && run.is_winner)) return "bg-green-50";
-  if (r === "R") return "bg-blue-50";
+  if (r === "W" || (!r && run.is_winner)) return "bg-green-100";
+  if (r === "R") return "bg-blue-100";
+  if (r === "3" || r === "4") return "bg-gray-50";
   return "bg-white";
 }
 

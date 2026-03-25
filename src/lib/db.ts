@@ -1252,9 +1252,16 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
   if (withData.length === 0) return [];
 
   const sorted = [...withData].sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
-  const allTs = withData.map((r) => r.timestamp!);
-  const tsGroups = buildTimestampGroups(allTs);
-  const latestTs = sorted[0].timestamp!;
-  const latestCanonical = tsGroups.get(latestTs) || latestTs;
-  return sorted.filter((r) => (tsGroups.get(r.timestamp!) || r.timestamp!) === latestCanonical);
+  const latestRun = sorted[0];
+
+  // Filter to same category+round as the latest run to avoid cross-category contamination
+  const sameRace = withData.filter(
+    (r) => r.category === latestRun.category && r.round === latestRun.round
+  );
+  const raceTs = sameRace.map((r) => r.timestamp!);
+  const tsGroups = buildTimestampGroups(raceTs);
+  const latestCanonical = tsGroups.get(latestRun.timestamp!) || latestRun.timestamp!;
+  return sameRace
+    .filter((r) => (tsGroups.get(r.timestamp!) || r.timestamp!) === latestCanonical)
+    .sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
 }
