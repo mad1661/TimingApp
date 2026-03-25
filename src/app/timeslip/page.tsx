@@ -232,12 +232,14 @@ export default function TimeslipPage() {
               <h2 className="text-lg font-semibold text-white">
                 {selectedRacer} &mdash; {runs.length} runs
               </h2>
-              <Link
-                href={`/racer/${encodeURIComponent(selectedRacer)}`}
-                className="text-xs text-nhra-accent hover:underline"
-              >
-                View full profile
-              </Link>
+              {!selectedRacer?.startsWith("#") && (
+                <Link
+                  href={`/racer/${encodeURIComponent(selectedRacer)}`}
+                  className="text-xs text-nhra-accent hover:underline"
+                >
+                  View full profile
+                </Link>
+              )}
             </div>
 
             {loading ? (
@@ -252,6 +254,7 @@ export default function TimeslipPage() {
                   <thead>
                     <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
                       <th className="text-left p-2">Date</th>
+                      {selectedRacer?.startsWith("#") && <th className="text-left p-2">Racer</th>}
                       <th className="text-left p-2">Event</th>
                       <th className="text-left p-2">Cat</th>
                       <th className="text-left p-2">Rnd</th>
@@ -275,6 +278,7 @@ export default function TimeslipPage() {
                         }`}
                       >
                         <td className="p-2 text-gray-300 whitespace-nowrap text-xs">{run.timestamp?.split(" ")[0] ?? "-"}</td>
+                        {selectedRacer?.startsWith("#") && <td className="p-2 text-white text-xs whitespace-nowrap">{run.name || "-"}</td>}
                         <td className="p-2 text-white whitespace-nowrap text-xs">{run.event_name || "-"}</td>
                         <td className="p-2 text-gray-300 text-xs">{run.category}</td>
                         <td className="p-2 text-gray-300">{run.round}</td>
