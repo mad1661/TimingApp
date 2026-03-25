@@ -378,15 +378,18 @@ function RunsPageInner() {
                   const borderClass = isLastInPair ? "border-b-2 border-nhra-border" : "border-b border-nhra-border/30";
                   const ignoredStyle = isIgnored ? "opacity-40 line-through" : "";
 
+                  const res = run.result?.trim().toUpperCase();
+                  const resultBg = isIgnored ? "bg-yellow-900/10" : (res === "W" || (!res && run.is_winner)) ? "bg-green-500/10" : res === "R" ? "bg-blue-500/10" : "";
+
                   rows.push(
-                    <tr key={run.id || `${run._dedup_key || i}`} className={`${borderClass} hover:bg-nhra-border/20 transition-colors ${pairBg} ${isIgnored ? "bg-yellow-900/10" : ""}`}>
+                    <tr key={run.id || `${run._dedup_key || i}`} className={`${borderClass} hover:bg-nhra-border/20 transition-colors ${pairBg} ${resultBg}`}>
                       <td className={`p-3 whitespace-nowrap font-mono text-xs text-gray-500 ${ignoredStyle}`}>
                         {isFirstInPair ? fmtRunTime(run.timestamp) : ""}
                       </td>
                       <td className={`p-3 whitespace-nowrap ${ignoredStyle}`}>
                         <div className="flex items-center gap-2">
                           {isInPair && (
-                            <span className={`w-1 h-6 rounded-full shrink-0 ${run.is_winner ? "bg-green-500" : run.result === "R" ? "bg-blue-500" : "bg-gray-700"}`} />
+                            <span className={`w-1 h-6 rounded-full shrink-0 ${(res === "W" || (!res && run.is_winner)) ? "bg-green-500" : res === "R" ? "bg-blue-500" : "bg-gray-700"}`} />
                           )}
                           <div>
                             {run.name ? (

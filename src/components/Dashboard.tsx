@@ -342,8 +342,11 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stats!.recentRuns.map((run, i) => (
-                    <tr key={i} className="border-b border-nhra-border/50 hover:bg-nhra-border/20 transition-colors">
+                  {stats!.recentRuns.map((run, i) => {
+                    const res = run.result?.trim().toUpperCase();
+                    const rowBg = (res === "W" || (!res && run.is_winner)) ? "bg-green-500/10" : res === "R" ? "bg-blue-500/10" : "";
+                    return (
+                    <tr key={i} className={`border-b border-nhra-border/50 hover:bg-nhra-border/20 transition-colors ${rowBg}`}>
                       <td className="p-3 pl-5">
                         <Link href={`/racer/${encodeURIComponent(run.name || "")}`} className="text-white hover:text-nhra-accent font-medium">
                           {run.name}
@@ -359,7 +362,8 @@ export default function Dashboard() {
                         <ResultBadgeDark run={run} />
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
