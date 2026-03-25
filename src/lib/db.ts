@@ -440,6 +440,14 @@ export async function getRacerRuns(name: string, eventCode: string, season: stri
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
+export async function getCarNumberRuns(carNumber: string, eventCode: string, season: string): Promise<RunRow[]> {
+  const runs = await getEventRuns(eventCode, season);
+  tagRunTimestamps(runs);
+  return runs
+    .filter((r) => r.car_number && r.car_number.toLowerCase() === carNumber.toLowerCase())
+    .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
+}
+
 export interface DashboardStats {
   totalRuns: number;
   uniqueRacers: number;
