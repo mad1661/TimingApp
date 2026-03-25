@@ -198,6 +198,7 @@ export function parseRunsFromHtml(
       mov: parseNum(getText(15)),
       is_winner: getText(16) === "W" ? 1 : 0,
       is_dq: getText(17) !== "" && getText(17) !== null ? 1 : 0,
+      result: cleanText(getText(16)),
       place: cleanText(getText(18)),
       category: cleanText(getText(19)),
       lane: cleanText(getText(20)),

@@ -105,6 +105,7 @@ export function parseCsvToRuns(
       mov: (mapped.mov as number) ?? null,
       is_winner: isWinnerCol.trim() === "W" ? 1 : 0,
       is_dq: isDqCol.trim() !== "" ? 1 : 0,
+      result: isWinnerCol.trim() || null,
       place: (mapped.place as string) || null,
       category: (mapped.category as string) || null,
       lane: (mapped.lane as string) || null,

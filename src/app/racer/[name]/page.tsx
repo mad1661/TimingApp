@@ -15,6 +15,7 @@ interface Opponent {
   ft1320: number | null;
   mph_1320: number | null;
   is_winner: number;
+  result?: string | null;
   lane: string | null;
   dial_in: number | null;
 }
@@ -29,6 +30,7 @@ interface RunRow {
   ft1320: number | null;
   mph_1320: number | null;
   is_winner: number;
+  result?: string | null;
   category: string | null;
   lane: string | null;
   dial_in: number | null;
@@ -379,7 +381,7 @@ export default function RacerPage() {
                     <th className="text-right p-3">MPH</th>
                     <th className="text-center p-3">Result</th>
                     <th className="text-right p-3">Dial</th>
-                    <th className="text-left p-3 pr-5">Opponent</th>
+                    <th className="text-left p-3 pr-5">Opponents</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -407,21 +409,32 @@ export default function RacerPage() {
                         </td>
                         <td className="p-3 text-right font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
                         <td className="p-3 text-center">
-                          {run.is_winner ? <span className="text-green-400 font-bold text-xs">W</span> : <span className="text-gray-600">L</span>}
+                          {(() => {
+                            const res = run.result?.trim().toUpperCase();
+                            if (res === "W" || (!res && run.is_winner)) return <span className="text-green-400 font-bold text-xs">W</span>;
+                            if (res === "R") return <span className="text-blue-400 font-bold text-xs">R</span>;
+                            if (res === "3") return <span className="text-gray-400 font-bold text-xs">3</span>;
+                            if (res === "4") return <span className="text-gray-500 font-bold text-xs">4</span>;
+                            return <span className="text-gray-600">L</span>;
+                          })()}
                         </td>
                         <td className="p-3 text-right font-mono text-gray-400">{run.dial_in?.toFixed(2) ?? "-"}</td>
                         <td className="p-3 pr-5 whitespace-nowrap">
-                          {opp ? (
-                            <div>
-                              <Link
-                                href={`/racer/${encodeURIComponent(opp.name || "")}`}
-                                className="text-gray-300 hover:text-nhra-accent text-xs"
-                              >
-                                {opp.name}
-                              </Link>
-                              <span className="text-gray-600 text-xs ml-1.5">
-                                {opp.ft1320?.toFixed(3) ?? "-"}
-                              </span>
+                          {run.opponents && run.opponents.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {run.opponents.map((opp, oi) => (
+                                <div key={oi}>
+                                  <Link
+                                    href={`/racer/${encodeURIComponent(opp.name || "")}`}
+                                    className="text-gray-300 hover:text-nhra-accent text-xs"
+                                  >
+                                    {opp.name}
+                                  </Link>
+                                  <span className="text-gray-600 text-xs ml-1.5">
+                                    {opp.ft1320?.toFixed(3) ?? "-"}
+                                  </span>
+                                </div>
+                              ))}
                             </div>
                           ) : (
                             <span className="text-gray-600 text-xs">Solo / BYE</span>

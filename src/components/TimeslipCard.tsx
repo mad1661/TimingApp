@@ -18,6 +18,7 @@ export interface TimeslipRun {
   mov: number | null;
   is_winner: number;
   is_dq: number;
+  result?: string | null;
   category: string | null;
   lane: string | null;
   dial_in: number | null;
@@ -27,8 +28,12 @@ export interface TimeslipRun {
 }
 
 interface TimeslipCardProps {
-  left: TimeslipRun;
-  right: TimeslipRun | null;
+  /** For 2-wide: left runner */
+  left?: TimeslipRun;
+  /** For 2-wide: right runner (null for bye/solo) */
+  right?: TimeslipRun | null;
+  /** For 4-wide (or any width): array of all runners sorted by lane */
+  runners?: TimeslipRun[];
   eventTitle?: string;
 }
 
@@ -42,20 +47,38 @@ function fmtMph(val: number | null | undefined): string {
   return val.toFixed(2);
 }
 
-function TimingRow({
+/** Get the display label for a result (W/R/3/4) */
+function resultBadge(run: TimeslipRun): { text: string; bg: string; fg: string } | null {
+  const r = run.result?.trim().toUpperCase();
+  if (r === "W") return { text: "WIN", bg: "bg-green-600", fg: "text-white" };
+  if (r === "R") return { text: "R/U", bg: "bg-blue-600", fg: "text-white" };
+  if (r === "3") return { text: "3RD", bg: "bg-gray-500", fg: "text-white" };
+  if (r === "4") return { text: "4TH", bg: "bg-gray-500", fg: "text-white" };
+  if (run.is_winner) return { text: "WIN", bg: "bg-green-600", fg: "text-white" };
+  return null;
+}
+
+function resultRowBg(run: TimeslipRun): string {
+  const r = run.result?.trim().toUpperCase();
+  if (r === "W" || (!r && run.is_winner)) return "bg-green-50";
+  if (r === "R") return "bg-blue-50";
+  return "bg-white";
+}
+
+// --------------- 2-Wide Layout ---------------
+
+function TimingRow2Wide({
   label,
-  leftVal,
-  rightVal,
+  vals,
   bold,
   highlight,
-  sub,
+  subs,
 }: {
   label: string;
-  leftVal: string;
-  rightVal: string;
+  vals: string[];
   bold?: boolean;
   highlight?: boolean;
-  sub?: { left: string; right: string };
+  subs?: string[];
 }) {
   const valClass = bold ? "font-black" : "font-bold";
   const textSize = highlight ? "text-xl" : "text-sm";
@@ -63,8 +86,8 @@ function TimingRow({
   return (
     <div className={`flex items-center ${highlight ? "py-2.5 bg-gray-50 -mx-1 px-1 rounded" : "py-1.5"} border-b border-dashed border-gray-300 last:border-0`}>
       <div className="flex-1 text-right pr-3">
-        <span className={`${valClass} ${textSize} font-mono`}>{leftVal}</span>
-        {sub && <div className="text-[10px] text-gray-500 font-mono">{sub.left}</div>}
+        <span className={`${valClass} ${textSize} font-mono`}>{vals[0]}</span>
+        {subs && <div className="text-[10px] text-gray-500 font-mono">{subs[0]}</div>}
       </div>
       <div className="w-24 text-center flex-shrink-0">
         <span className={`text-[10px] uppercase tracking-wider text-gray-500 ${highlight ? "font-bold text-gray-700" : ""}`}>
@@ -72,16 +95,20 @@ function TimingRow({
         </span>
       </div>
       <div className="flex-1 text-left pl-3">
-        <span className={`${valClass} ${textSize} font-mono ${!rightVal || rightVal.startsWith("-") ? "text-gray-300" : ""}`}>{rightVal}</span>
-        {sub && <div className="text-[10px] text-gray-500 font-mono">{sub.right}</div>}
+        <span className={`${valClass} ${textSize} font-mono ${!vals[1] || vals[1].startsWith("-") ? "text-gray-300" : ""}`}>{vals[1]}</span>
+        {subs && <div className="text-[10px] text-gray-500 font-mono">{subs[1]}</div>}
       </div>
     </div>
   );
 }
 
-export default function TimeslipCard({ left, right, eventTitle }: TimeslipCardProps) {
+function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventTitle?: string }) {
+  const left = runners[0];
+  const right = runners[1] ?? null;
   const date = left.timestamp?.split(" ")[0] ?? "";
   const time = left.timestamp?.split(" ")[1] ?? "";
+  const leftBadge = resultBadge(left);
+  const rightBadge = right ? resultBadge(right) : null;
 
   return (
     <div className="timeslip-card w-full max-w-[520px] bg-white text-black font-mono text-sm border-2 border-gray-800 rounded print:border print:rounded-none print:shadow-none">
@@ -97,34 +124,27 @@ export default function TimeslipCard({ left, right, eventTitle }: TimeslipCardPr
 
       {/* Racer names header */}
       <div className="flex items-stretch border-b-2 border-gray-800">
-        {/* Left racer */}
-        <div className={`flex-1 px-3 py-2.5 text-center ${left.is_winner ? "bg-green-50" : "bg-white"}`}>
+        <div className={`flex-1 px-3 py-2.5 text-center ${resultRowBg(left)}`}>
           <div className="text-sm font-black tracking-wide truncate">{left.name || "—"}</div>
           <div className="flex items-center justify-center gap-2 mt-0.5">
             <span className="text-xs text-nhra-accent font-bold">#{left.car_number || "-"}</span>
             <span className="text-[10px] text-gray-400">{left.lane || ""}</span>
-            {left.is_winner ? (
-              <span className="text-[9px] font-bold bg-green-600 text-white px-1.5 py-0.5 rounded">WIN</span>
-            ) : null}
+            {leftBadge && <span className={`text-[9px] font-bold ${leftBadge.bg} ${leftBadge.fg} px-1.5 py-0.5 rounded`}>{leftBadge.text}</span>}
           </div>
         </div>
-        {/* Center divider */}
         <div className="w-px bg-gray-800" />
         <div className="w-24 flex-shrink-0 bg-gray-800 flex items-center justify-center">
           <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">VS</span>
         </div>
         <div className="w-px bg-gray-800" />
-        {/* Right racer */}
-        <div className={`flex-1 px-3 py-2.5 text-center ${right?.is_winner ? "bg-green-50" : "bg-white"}`}>
+        <div className={`flex-1 px-3 py-2.5 text-center ${right ? resultRowBg(right) : "bg-white"}`}>
           {right ? (
             <>
               <div className="text-sm font-black tracking-wide truncate">{right.name || "—"}</div>
               <div className="flex items-center justify-center gap-2 mt-0.5">
                 <span className="text-xs text-nhra-accent font-bold">#{right.car_number || "-"}</span>
                 <span className="text-[10px] text-gray-400">{right.lane || ""}</span>
-                {right.is_winner ? (
-                  <span className="text-[9px] font-bold bg-green-600 text-white px-1.5 py-0.5 rounded">WIN</span>
-                ) : null}
+                {rightBadge && <span className={`text-[9px] font-bold ${rightBadge.bg} ${rightBadge.fg} px-1.5 py-0.5 rounded`}>{rightBadge.text}</span>}
               </div>
             </>
           ) : (
@@ -148,42 +168,12 @@ export default function TimeslipCard({ left, right, eventTitle }: TimeslipCardPr
 
       {/* Timing rows */}
       <div className="px-3 py-1">
-        <TimingRow
-          label="R/T"
-          leftVal={fmt(left.rt)}
-          rightVal={fmt(right?.rt)}
-          bold
-        />
-        <TimingRow
-          label="60'"
-          leftVal={fmt(left.ft60)}
-          rightVal={fmt(right?.ft60)}
-        />
-        <TimingRow
-          label="330'"
-          leftVal={fmt(left.ft330)}
-          rightVal={fmt(right?.ft330)}
-        />
-        <TimingRow
-          label="660' (⅛ mi)"
-          leftVal={fmt(left.ft660)}
-          rightVal={fmt(right?.ft660)}
-          sub={{ left: `${fmtMph(left.mph_660)} mph`, right: `${fmtMph(right?.mph_660)} mph` }}
-        />
-        <TimingRow
-          label="1000'"
-          leftVal={fmt(left.ft1000)}
-          rightVal={fmt(right?.ft1000)}
-          sub={{ left: `${fmtMph(left.mph_1000)} mph`, right: `${fmtMph(right?.mph_1000)} mph` }}
-        />
-        <TimingRow
-          label="ET (¼ mi)"
-          leftVal={fmt(left.ft1320)}
-          rightVal={fmt(right?.ft1320)}
-          bold
-          highlight
-          sub={{ left: `${fmtMph(left.mph_1320)} mph`, right: `${fmtMph(right?.mph_1320)} mph` }}
-        />
+        <TimingRow2Wide label="R/T" vals={[fmt(left.rt), fmt(right?.rt)]} bold />
+        <TimingRow2Wide label="60'" vals={[fmt(left.ft60), fmt(right?.ft60)]} />
+        <TimingRow2Wide label="330'" vals={[fmt(left.ft330), fmt(right?.ft330)]} />
+        <TimingRow2Wide label="660' (⅛ mi)" vals={[fmt(left.ft660), fmt(right?.ft660)]} subs={[`${fmtMph(left.mph_660)} mph`, `${fmtMph(right?.mph_660)} mph`]} />
+        <TimingRow2Wide label="1000'" vals={[fmt(left.ft1000), fmt(right?.ft1000)]} subs={[`${fmtMph(left.mph_1000)} mph`, `${fmtMph(right?.mph_1000)} mph`]} />
+        <TimingRow2Wide label="ET (¼ mi)" vals={[fmt(left.ft1320), fmt(right?.ft1320)]} bold highlight subs={[`${fmtMph(left.mph_1320)} mph`, `${fmtMph(right?.mph_1320)} mph`]} />
       </div>
 
       {/* MOV */}
@@ -205,4 +195,128 @@ export default function TimeslipCard({ left, right, eventTitle }: TimeslipCardPr
       </div>
     </div>
   );
+}
+
+// --------------- 4-Wide Layout ---------------
+
+function TimingRow4Wide({
+  label,
+  runners,
+  bold,
+  highlight,
+  subs,
+}: {
+  label: string;
+  runners: { val: string; sub?: string }[];
+  bold?: boolean;
+  highlight?: boolean;
+  subs?: boolean;
+}) {
+  const valClass = bold ? "font-black" : "font-bold";
+  const textSize = highlight ? "text-lg sm:text-xl" : "text-xs sm:text-sm";
+
+  return (
+    <div className={`flex items-center ${highlight ? "py-2 bg-gray-50 -mx-1 px-1 rounded" : "py-1"} border-b border-dashed border-gray-300 last:border-0`}>
+      {runners.map((r, i) => (
+        <div key={i} className={`flex-1 text-center ${i > 0 ? "border-l border-gray-200" : ""}`}>
+          <span className={`${valClass} ${textSize} font-mono`}>{r.val}</span>
+          {subs && r.sub && <div className="text-[9px] text-gray-500 font-mono">{r.sub}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventTitle?: string }) {
+  const first = runners[0];
+  const date = first.timestamp?.split(" ")[0] ?? "";
+  const time = first.timestamp?.split(" ")[1] ?? "";
+
+  return (
+    <div className="timeslip-card w-full max-w-[700px] bg-white text-black font-mono text-sm border-2 border-gray-800 rounded print:border print:rounded-none print:shadow-none">
+      {/* Header */}
+      <div className="bg-gray-900 text-white px-4 py-3 text-center">
+        <div className="text-base font-bold tracking-wider">
+          {eventTitle || first.event_name || "NHRA EVENT"}
+        </div>
+        <div className="text-[10px] text-gray-400 mt-0.5">
+          {date} &bull; {first.season} &bull; Round {first.round || "-"} &bull; {first.category || "-"} &bull; 4-WIDE
+        </div>
+      </div>
+
+      {/* Racer names header — 4 columns */}
+      <div className="grid grid-cols-4 border-b-2 border-gray-800">
+        {runners.map((run, i) => {
+          const badge = resultBadge(run);
+          return (
+            <div key={i} className={`px-2 py-2 text-center ${resultRowBg(run)} ${i > 0 ? "border-l border-gray-800" : ""}`}>
+              <div className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Lane {run.lane || (i + 1)}</div>
+              <div className="text-xs sm:text-sm font-black tracking-wide truncate">{run.name || "—"}</div>
+              <div className="flex items-center justify-center gap-1 mt-0.5 flex-wrap">
+                <span className="text-[10px] text-nhra-accent font-bold">#{run.car_number || "-"}</span>
+                {badge && <span className={`text-[8px] font-bold ${badge.bg} ${badge.fg} px-1 py-0.5 rounded`}>{badge.text}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Dial-In row */}
+      <div className="grid grid-cols-4 border-b border-gray-300 bg-gray-50">
+        {runners.map((run, i) => (
+          <div key={i} className={`text-center py-1.5 ${i > 0 ? "border-l border-gray-200" : ""}`}>
+            <div className="text-[9px] text-gray-500 uppercase">Dial-In</div>
+            <span className="text-xs font-bold font-mono">{run.dial_in != null ? fmt(run.dial_in, 2) : "N/A"}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Timing rows */}
+      <div className="px-2 py-1">
+        <TimingRow4Wide label="R/T" runners={runners.map((r) => ({ val: fmt(r.rt) }))} bold />
+        <TimingRow4Wide label="60'" runners={runners.map((r) => ({ val: fmt(r.ft60) }))} />
+        <TimingRow4Wide label="330'" runners={runners.map((r) => ({ val: fmt(r.ft330) }))} />
+        <TimingRow4Wide label="660'" runners={runners.map((r) => ({ val: fmt(r.ft660), sub: `${fmtMph(r.mph_660)} mph` }))} subs />
+        <TimingRow4Wide label="1000'" runners={runners.map((r) => ({ val: fmt(r.ft1000), sub: `${fmtMph(r.mph_1000)} mph` }))} subs />
+        <TimingRow4Wide label="ET (¼ mi)" runners={runners.map((r) => ({ val: fmt(r.ft1320), sub: `${fmtMph(r.mph_1320)} mph` }))} bold highlight subs />
+      </div>
+
+      {/* MOV */}
+      {first.mov != null && (
+        <div className="border-t border-gray-300 px-3 py-1.5 flex justify-center">
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider">Margin of Victory: </span>
+          <span className="text-xs font-bold font-mono ml-1">{fmt(first.mov, 4)}</span>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="bg-gray-900 text-white px-4 py-2 text-center text-[10px]">
+        <div className="text-gray-400">
+          {time && `${time}`}
+          {first.class_index && ` | Class: ${first.class_index}`}
+          {first.event_code && ` | Event: ${first.event_code}`}
+        </div>
+        <div className="font-bold tracking-widest mt-0.5 text-xs">Timing Data</div>
+      </div>
+    </div>
+  );
+}
+
+// --------------- Main Component ---------------
+
+export default function TimeslipCard({ left, right, runners, eventTitle }: TimeslipCardProps) {
+  // Normalize to runners array
+  const allRunners: TimeslipRun[] = runners
+    ? runners
+    : left
+      ? right ? [left, right] : [left]
+      : [];
+
+  if (allRunners.length === 0) return null;
+
+  if (allRunners.length > 2) {
+    return <Timeslip4Wide runners={allRunners} eventTitle={eventTitle} />;
+  }
+
+  return <Timeslip2Wide runners={allRunners} eventTitle={eventTitle} />;
 }

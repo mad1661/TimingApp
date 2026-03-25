@@ -765,7 +765,7 @@ function ScheduleBuilderInner() {
                       ) : null}
                       {entry.isBreak ? <span className="text-yellow-400">{entry.className}</span> : entry.className}
                       {isCompleted && !entry.isBreak && entry.actualPairs != null && entry.actualPairs < entry.pairs && (
-                        <span className="ml-2 text-orange-400 text-xs font-normal">({entry.pairs - entry.actualPairs} pairs remaining)</span>
+                        <span className="ml-2 text-orange-400 text-xs font-normal">({entry.pairs - entry.actualPairs} groups remaining)</span>
                       )}
                     </td>
                     <td className="p-3 text-center">
@@ -951,7 +951,7 @@ function ScheduleBuilderInner() {
                       {hint && <span className="text-blue-400/60 ml-2 text-xs">{hint}</span>}
                     </div>
                     <span className="text-gray-500 text-xs font-mono">
-                      {rc.isRacing ? fmtDurSec(rc.perPairSec) + "/pair" : fmtDurSec(rc.perPairSec)}
+                      {rc.isRacing ? fmtDurSec(rc.perPairSec) + "/group" : fmtDurSec(rc.perPairSec)}
                     </span>
                   </button>
                 );

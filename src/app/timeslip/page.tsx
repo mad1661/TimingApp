@@ -21,6 +21,7 @@ interface OpponentData {
   mov: number | null;
   is_winner: number;
   is_dq: number;
+  result?: string | null;
   lane: string | null;
   dial_in: number | null;
 }
@@ -117,34 +118,46 @@ export default function TimeslipPage() {
     window.print();
   }
 
-  function buildOpponentRun(run: RunRow): TimeslipRun | null {
-    const opp = run.opponents?.[0];
-    if (!opp) return null;
-    return {
-      timestamp: run.timestamp,
-      round: run.round,
-      car_number: opp.car_number,
-      name: opp.name,
-      class_index: run.class_index,
-      rt: opp.rt,
-      ft60: opp.ft60,
-      ft330: opp.ft330,
-      ft660: opp.ft660,
-      mph_660: opp.mph_660,
-      ft1000: opp.ft1000,
-      mph_1000: opp.mph_1000,
-      ft1320: opp.ft1320,
-      mph_1320: opp.mph_1320,
-      mov: opp.mov,
-      is_winner: opp.is_winner,
-      is_dq: opp.is_dq,
-      category: run.category,
-      lane: opp.lane,
-      dial_in: opp.dial_in,
-      event_name: run.event_name,
-      event_code: run.event_code,
-      season: run.season,
-    };
+  function buildAllRunners(run: RunRow): TimeslipRun[] {
+    const runners: TimeslipRun[] = [run];
+    for (const opp of run.opponents || []) {
+      runners.push({
+        timestamp: run.timestamp,
+        round: run.round,
+        car_number: opp.car_number,
+        name: opp.name,
+        class_index: run.class_index,
+        rt: opp.rt,
+        ft60: opp.ft60,
+        ft330: opp.ft330,
+        ft660: opp.ft660,
+        mph_660: opp.mph_660,
+        ft1000: opp.ft1000,
+        mph_1000: opp.mph_1000,
+        ft1320: opp.ft1320,
+        mph_1320: opp.mph_1320,
+        mov: opp.mov,
+        is_winner: opp.is_winner,
+        is_dq: opp.is_dq,
+        result: opp.result ?? null,
+        category: run.category,
+        lane: opp.lane,
+        dial_in: opp.dial_in,
+        event_name: run.event_name,
+        event_code: run.event_code,
+        season: run.season,
+      });
+    }
+    // Sort by lane: L first, R last, or numerically
+    return runners.sort((a, b) => {
+      const la = a.lane || "";
+      const lb = b.lane || "";
+      if (la === "L") return -1;
+      if (lb === "L") return 1;
+      if (la === "R") return 1;
+      if (lb === "R") return -1;
+      return la.localeCompare(lb);
+    });
   }
 
   const filteredSuggestions = searchMode === "car"
@@ -267,7 +280,7 @@ export default function TimeslipPage() {
                       <th className="text-right p-2">ET</th>
                       <th className="text-right p-2">MPH</th>
                       <th className="text-center p-2">W</th>
-                      <th className="text-left p-2">Opponent</th>
+                      <th className="text-left p-2">Opponents</th>
                       <th className="p-2"></th>
                     </tr>
                   </thead>
@@ -291,13 +304,27 @@ export default function TimeslipPage() {
                         <td className="p-2 text-right font-mono text-white font-medium">{run.ft1320?.toFixed(3) ?? "-"}</td>
                         <td className="p-2 text-right font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
                         <td className="p-2 text-center">
-                          {run.is_winner ? <span className="text-green-400 font-bold text-xs">W</span> : <span className="text-gray-600">-</span>}
+                          {(() => {
+                            const r = run.result?.trim().toUpperCase();
+                            if (r === "W" || (!r && run.is_winner)) return <span className="text-green-400 font-bold text-xs">W</span>;
+                            if (r === "R") return <span className="text-blue-400 font-bold text-xs">R</span>;
+                            if (r === "3") return <span className="text-gray-400 font-bold text-xs">3</span>;
+                            if (r === "4") return <span className="text-gray-500 font-bold text-xs">4</span>;
+                            return <span className="text-gray-600">-</span>;
+                          })()}
                         </td>
                         <td className="p-2 text-gray-400 text-xs whitespace-nowrap">
-                          {run.opponents?.[0]?.name ? (
-                            <Link href={`/racer/${encodeURIComponent(run.opponents[0].name)}`} className="hover:text-nhra-accent transition-colors">
-                              {run.opponents[0].name}
-                            </Link>
+                          {run.opponents && run.opponents.length > 0 ? (
+                            run.opponents.map((opp, oi) => (
+                              <span key={oi}>
+                                {oi > 0 && <span className="text-gray-600">, </span>}
+                                {opp.name ? (
+                                  <Link href={`/racer/${encodeURIComponent(opp.name)}`} className="hover:text-nhra-accent transition-colors">
+                                    {opp.name}
+                                  </Link>
+                                ) : "—"}
+                              </span>
+                            ))
                           ) : "—"}
                         </td>
                         <td className="p-2">
@@ -325,7 +352,7 @@ export default function TimeslipPage() {
               Print Timeslip
             </button>
             <span className="text-sm text-gray-500">
-              {selectedRun.name} vs {selectedRun.opponents?.[0]?.name || "Bye"} &mdash; {selectedRun.round} &mdash; {selectedRun.timestamp?.split(" ")[0]}
+              {selectedRun.name} vs {selectedRun.opponents?.map((o) => o.name).filter(Boolean).join(", ") || "Bye"} &mdash; {selectedRun.round} &mdash; {selectedRun.timestamp?.split(" ")[0]}
             </span>
           </div>
         )}
@@ -334,10 +361,7 @@ export default function TimeslipPage() {
       {/* Timeslip Preview / Print Area */}
       {selectedRun && (
         <div className="flex justify-center print:block">
-          <TimeslipCard
-            left={selectedRun}
-            right={buildOpponentRun(selectedRun)}
-          />
+          <TimeslipCard runners={buildAllRunners(selectedRun)} />
         </div>
       )}
 

@@ -546,7 +546,7 @@ function PublicSchedulePage() {
             {projectedEnd && <span>Projected End: {projectedEnd}</span>}
             {actualSessions.length > 0 && (
               <>
-                <span>{dayPairs} pairs</span>
+                <span>{dayPairs} groups</span>
                 <span>{dayRuns} runs</span>
               </>
             )}
@@ -585,9 +585,9 @@ function PublicSchedulePage() {
                   <th className="text-left p-3">Eliminator</th>
                   <th className="text-center p-3 w-20">Round</th>
                   <th className="text-right p-3 w-16"># Cars</th>
-                  <th className="text-right p-3 w-16">Pairs</th>
+                  <th className="text-right p-3 w-16">Groups</th>
                   <th className="text-right p-3 w-20">Duration</th>
-                  <th className="text-right p-3 pr-5 w-20">Per Pair</th>
+                  <th className="text-right p-3 pr-5 w-20">Per Group</th>
                 </tr>
               </thead>
               <tbody>
