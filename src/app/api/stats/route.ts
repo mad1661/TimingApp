@@ -76,7 +76,8 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === "perfect-rt") {
-      const results = await getPerfectReactionTimes(eventCode, season);
+      const roundTypes = params.get("round_types")?.split(",").filter(Boolean) || [];
+      const results = await getPerfectReactionTimes(eventCode, season, roundTypes.length > 0 ? roundTypes : undefined);
       return NextResponse.json({ results });
     }
 

@@ -969,15 +969,23 @@ export interface PerfectRTEntry {
 
 export async function getPerfectReactionTimes(
   eventCode: string,
-  season: string
+  season: string,
+  roundTypes?: string[]
 ): Promise<Record<string, PerfectRTEntry[]>> {
   const allRuns = await getEventRuns(eventCode, season);
   tagRunTimestamps(allRuns);
 
+  const types = new Set(roundTypes && roundTypes.length > 0 ? roundTypes : ["eliminations"]);
+
   const perfects = allRuns.filter((r) => {
-    if (!r.round?.startsWith("E") && r.round !== "F" && r.round?.toLowerCase() !== "final") return false;
-    if (!r.category) return false;
-    if (r.rt == null) return false;
+    if (!r.round || !r.category || r.rt == null) return false;
+
+    const isElim = r.round.startsWith("E") || r.round === "F" || r.round.toLowerCase() === "final";
+    const isQual = r.round.startsWith("Q");
+    const isTT = r.round.startsWith("T");
+
+    if (!((types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT))) return false;
+
     // Perfect RT is exactly 0.000 (within floating point tolerance)
     return Math.abs(r.rt) < 0.0005;
   });
