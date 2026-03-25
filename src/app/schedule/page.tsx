@@ -785,7 +785,7 @@ export default function SchedulePage() {
             <p className="text-2xl font-bold text-white mt-1">{roundCount}</p>
           </div>
           <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wider">Total Pairs</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Total Groups</p>
             <p className="text-2xl font-bold text-white mt-1">{totalPairs.toLocaleString()}</p>
           </div>
           <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
@@ -879,7 +879,7 @@ export default function SchedulePage() {
                   <>
                     <div className="text-right">
                       <p className="font-bold text-lg">{dayPairs}</p>
-                      <p className="text-xs text-white/60">pairs</p>
+                      <p className="text-xs text-white/60">groups</p>
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-lg">{dayRuns}</p>
@@ -895,7 +895,7 @@ export default function SchedulePage() {
                   <>
                     <div className="text-right">
                       <p className="font-bold text-lg">{pairsPerHour}</p>
-                      <p className="text-xs text-white/60">pairs/hr</p>
+                      <p className="text-xs text-white/60">groups/hr</p>
                     </div>
                     {downtimeMin > 0 && (
                       <div className="text-right">
@@ -918,9 +918,9 @@ export default function SchedulePage() {
                       <th className="text-left p-3">Eliminator</th>
                       <th className="text-center p-3 w-20">Round</th>
                       <th className="text-right p-3 w-16"># Cars</th>
-                      <th className="text-right p-3 w-16">Pairs</th>
+                      <th className="text-right p-3 w-16">Groups</th>
                       <th className="text-right p-3 w-20">Duration</th>
-                      <th className="text-right p-3 pr-5 w-20">Per Pair</th>
+                      <th className="text-right p-3 pr-5 w-20">Per Group</th>
                     </tr>
                   </thead>
                   <tbody>

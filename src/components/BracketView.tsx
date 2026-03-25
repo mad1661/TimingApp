@@ -11,6 +11,7 @@ interface RunRow {
   ft1320: number | null;
   mph_1320: number | null;
   is_winner: number;
+  result?: string | null;
   lane: string | null;
   dial_in: number | null;
   mov: number | null;
@@ -44,7 +45,15 @@ export default function BracketView({ runs }: BracketViewProps) {
     }
     const matchups: Matchup[] = Array.from(byTimestamp.values()).map((racers) => ({
       round,
-      racers: racers.sort((a, b) => (a.lane === "L" ? -1 : 1)),
+      racers: racers.sort((a, b) => {
+        const la = a.lane || "";
+        const lb = b.lane || "";
+        if (la === "L") return -1;
+        if (lb === "L") return 1;
+        if (la === "R") return 1;
+        if (lb === "R") return -1;
+        return la.localeCompare(lb);
+      }),
     }));
     matchupsByRound.set(round, matchups);
   }
@@ -62,8 +71,8 @@ export default function BracketView({ runs }: BracketViewProps) {
     <div className="overflow-x-auto">
       {isFourWide && (
         <div className="mb-4 px-4">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-medium rounded-lg">
-            4-Wide Event
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-nhra-red/10 border border-nhra-red/20 text-nhra-red text-xs font-medium rounded-lg">
+            4-Wide Format
           </span>
         </div>
       )}
@@ -107,16 +116,26 @@ function MatchupCard({ matchup }: { matchup: Matchup }) {
 }
 
 function RacerRow({ racer }: { racer: RunRow }) {
-  const isWinner = racer.is_winner === 1;
+  const r = racer.result?.trim().toUpperCase();
+  const isWinner = r === "W" || (!r && racer.is_winner === 1);
+  const isRunnerUp = r === "R";
+  const highlight = isWinner || isRunnerUp;
+  const bgClass = isWinner ? "bg-green-500/5" : isRunnerUp ? "bg-blue-500/5" : "";
+
+  let badge: React.ReactNode = null;
+  if (isWinner) badge = <span className="text-[9px] font-bold bg-green-600 text-white px-1.5 py-0.5 rounded">W</span>;
+  else if (isRunnerUp) badge = <span className="text-[9px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">R</span>;
+  else if (r === "3") badge = <span className="text-[9px] font-bold bg-gray-600 text-white px-1.5 py-0.5 rounded">3</span>;
+  else if (r === "4") badge = <span className="text-[9px] font-bold bg-gray-600 text-white px-1.5 py-0.5 rounded">4</span>;
 
   return (
-    <div className={`px-4 py-3 flex items-center justify-between transition-colors ${isWinner ? "bg-green-500/5" : ""}`}>
+    <div className={`px-4 py-3 flex items-center justify-between transition-colors ${bgClass}`}>
       <div className="flex items-center gap-3 min-w-0">
-        {isWinner && <span className="w-1.5 h-1.5 bg-green-400 rounded-full shrink-0" />}
+        {badge && <div className="shrink-0">{badge}</div>}
         <div className="min-w-0">
           <Link
             href={`/racer/${encodeURIComponent(racer.name || "")}`}
-            className={`text-sm font-medium truncate block hover:text-nhra-accent transition-colors ${isWinner ? "text-white" : "text-gray-400"}`}
+            className={`text-sm font-medium truncate block hover:text-nhra-accent transition-colors ${highlight ? "text-white" : "text-gray-400"}`}
           >
             {racer.name}
           </Link>
@@ -124,7 +143,7 @@ function RacerRow({ racer }: { racer: RunRow }) {
         </div>
       </div>
       <div className="text-right shrink-0 ml-3">
-        <p className={`text-sm font-mono ${isWinner ? "text-white font-medium" : "text-gray-400"}`}>
+        <p className={`text-sm font-mono ${highlight ? "text-white font-medium" : "text-gray-400"}`}>
           {racer.ft1320?.toFixed(3) ?? "-"}
         </p>
         <p className="text-xs text-gray-600 font-mono">

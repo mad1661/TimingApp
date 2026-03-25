@@ -22,6 +22,7 @@ interface RunRow {
   mov: number | null;
   is_winner: number;
   is_dq: number;
+  result: string | null;
   category: string | null;
   event_name: string | null;
   event_code: string | null;
@@ -32,6 +33,15 @@ interface RunRow {
   class_index: string | null;
   lane: string | null;
   dial_in: number | null;
+}
+
+function ResultBadgeDark({ run }: { run: { is_winner: number; result?: string | null } }) {
+  const r = run.result?.trim().toUpperCase();
+  if (r === "W" || (!r && run.is_winner)) return <span className="inline-block px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded">W</span>;
+  if (r === "R") return <span className="inline-block px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-medium rounded">R</span>;
+  if (r === "3") return <span className="inline-block px-2 py-0.5 bg-gray-500/20 text-gray-400 text-xs font-medium rounded">3</span>;
+  if (r === "4") return <span className="inline-block px-2 py-0.5 bg-gray-500/20 text-gray-400 text-xs font-medium rounded">4</span>;
+  return <span className="text-gray-500 text-xs">-</span>;
 }
 
 interface DashboardStats {
@@ -64,6 +74,7 @@ function toTimeslipRun(r: RunRow): TimeslipRun {
     mov: r.mov ?? null,
     is_winner: r.is_winner ?? 0,
     is_dq: r.is_dq ?? 0,
+    result: r.result ?? null,
     category: r.category,
     lane: r.lane,
     dial_in: r.dial_in,
@@ -119,21 +130,21 @@ export default function Dashboard() {
 
   const empty = !stats || !stats.totalRuns;
 
-  // Build timeslip from latest pair
-  let latestLeft: TimeslipRun | null = null;
-  let latestRight: TimeslipRun | null = null;
-  if (latestPair.length > 0) {
-    // Put left lane first, right lane second
-    const leftLane = latestPair.find((r) => r.lane === "L");
-    const rightLane = latestPair.find((r) => r.lane === "R");
-    if (leftLane && rightLane) {
-      latestLeft = toTimeslipRun(leftLane);
-      latestRight = toTimeslipRun(rightLane);
-    } else {
-      latestLeft = toTimeslipRun(latestPair[0]);
-      latestRight = latestPair.length > 1 ? toTimeslipRun(latestPair[1]) : null;
-    }
-  }
+  // Build timeslip runners from latest group (2-wide or 4-wide)
+  const latestRunners: TimeslipRun[] = latestPair.length > 0
+    ? [...latestPair]
+        .sort((a, b) => {
+          // Sort by lane: L before R, or numerically (1,2,3,4)
+          const la = a.lane || "";
+          const lb = b.lane || "";
+          if (la === "L") return -1;
+          if (lb === "L") return 1;
+          if (la === "R") return 1;
+          if (lb === "R") return -1;
+          return la.localeCompare(lb);
+        })
+        .map(toTimeslipRun)
+    : [];
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -295,15 +306,18 @@ export default function Dashboard() {
           </div>
 
           {/* Last Run Completed - Timeslip */}
-          {latestLeft && (
+          {latestRunners.length > 0 && (
             <div className="mb-8">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse" />
                 <h2 className="text-lg font-semibold text-white">Last Run Completed</h2>
-                <span className="text-xs text-gray-500">{latestLeft.category} &mdash; Round {latestLeft.round}</span>
+                <span className="text-xs text-gray-500">
+                  {latestRunners[0].category} &mdash; Round {latestRunners[0].round}
+                  {latestRunners.length > 2 && " \u2022 4-Wide"}
+                </span>
               </div>
               <div className="flex justify-center overflow-x-auto">
-                <TimeslipCard left={latestLeft} right={latestRight} />
+                <TimeslipCard runners={latestRunners} />
               </div>
             </div>
           )}
@@ -342,11 +356,7 @@ export default function Dashboard() {
                       <td className="p-3 text-right text-white font-mono">{run.ft1320?.toFixed(3) ?? "-"}</td>
                       <td className="p-3 text-right text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
                       <td className="p-3 text-center pr-5">
-                        {run.is_winner ? (
-                          <span className="inline-block px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded">W</span>
-                        ) : (
-                          <span className="text-gray-500 text-xs">-</span>
-                        )}
+                        <ResultBadgeDark run={run} />
                       </td>
                     </tr>
                   ))}

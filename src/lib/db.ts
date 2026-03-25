@@ -22,6 +22,7 @@ export interface RunRow {
   mov: number | null;
   is_winner: number;
   is_dq: number;
+  result: string | null;
   place: string | null;
   category: string | null;
   lane: string | null;
@@ -238,7 +239,7 @@ export async function insertRuns(
         const changed = run.rt !== existing.rt || run.ft1320 !== existing.ft1320 ||
           run.ft660 !== existing.ft660 || run.ft60 !== existing.ft60 ||
           run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner ||
-          (!existing.name && run.name);
+          run.result !== existing.result || (!existing.name && run.name);
         if (!changed) continue;
       }
 

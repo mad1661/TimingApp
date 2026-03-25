@@ -25,6 +25,7 @@ interface RunRow {
   mov: number | null;
   is_winner: number;
   is_dq: number;
+  result: string | null;
   category: string | null;
   lane: string | null;
   dial_in: number | null;
@@ -221,7 +222,7 @@ function RunsPageInner() {
       csvRows.push([
         r.timestamp, r.round, r.qual_pos, r.car_number, `"${r.name || ""}"`, r.class_index,
         r.rt, r.ft60, r.ft330, r.ft660, r.mph_660, r.ft1000, r.mph_1000, r.ft1320, r.mph_1320,
-        r.mov, r.is_winner ? "W" : "", r.category, r.lane, r.dial_in,
+        r.mov, r.result || (r.is_winner ? "W" : ""), r.category, r.lane, r.dial_in,
       ].join(","));
     }
     const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
@@ -375,7 +376,7 @@ function RunsPageInner() {
                       <td className={`p-3 whitespace-nowrap ${ignoredStyle}`}>
                         <div className="flex items-center gap-2">
                           {isInPair && (
-                            <span className={`w-1 h-6 rounded-full shrink-0 ${run.is_winner ? "bg-green-500" : "bg-gray-700"}`} />
+                            <span className={`w-1 h-6 rounded-full shrink-0 ${run.is_winner ? "bg-green-500" : run.result === "R" ? "bg-blue-500" : "bg-gray-700"}`} />
                           )}
                           <div>
                             {run.name ? (
@@ -401,7 +402,14 @@ function RunsPageInner() {
                       <td className={`p-3 text-right font-mono text-white font-medium ${ignoredStyle}`}>{run.ft1320?.toFixed(3) ?? "-"}</td>
                       <td className={`p-3 text-right font-mono text-gray-300 ${ignoredStyle}`}>{run.mph_1320?.toFixed(2) ?? "-"}</td>
                       <td className={`p-3 text-center ${ignoredStyle}`}>
-                        {run.is_winner ? <span className="text-green-400 font-bold text-xs">W</span> : <span className="text-gray-600">-</span>}
+                        {(() => {
+                          const r = run.result?.trim().toUpperCase();
+                          if (r === "W" || (!r && run.is_winner)) return <span className="text-green-400 font-bold text-xs">W</span>;
+                          if (r === "R") return <span className="text-blue-400 font-bold text-xs">R</span>;
+                          if (r === "3") return <span className="text-gray-400 font-bold text-xs">3</span>;
+                          if (r === "4") return <span className="text-gray-500 font-bold text-xs">4</span>;
+                          return <span className="text-gray-600">-</span>;
+                        })()}
                       </td>
                       <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.dial_in?.toFixed(2) ?? "-"}</td>
                       <td className={`p-3 text-gray-400 ${ignoredStyle}`}>{run.lane}</td>
