@@ -74,7 +74,7 @@ function toTimeslipRun(r: RunRow): TimeslipRun {
     mov: r.mov ?? null,
     is_winner: r.is_winner ?? 0,
     is_dq: r.is_dq ?? 0,
-    result: (r as Record<string, unknown>).result as string | null ?? null,
+    result: r.result ?? null,
     category: r.category,
     lane: r.lane,
     dial_in: r.dial_in,
