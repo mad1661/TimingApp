@@ -35,7 +35,7 @@ export function parseTsToDate(ts: string): Date | null {
  * to a canonical "group" timestamp. Timestamps within `toleranceSec` seconds
  * of each other are merged into one group.
  */
-const QUAD_TS_TOLERANCE_SEC = 1;
+const QUAD_TS_TOLERANCE_SEC = 3;
 
 export function buildTimestampGroups(timestamps: string[], toleranceSec: number = QUAD_TS_TOLERANCE_SEC): Map<string, string> {
   const mapping = new Map<string, string>();
