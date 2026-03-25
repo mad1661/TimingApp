@@ -84,7 +84,7 @@ export default function TimeslipCard({ left, right, eventTitle }: TimeslipCardPr
   const time = left.timestamp?.split(" ")[1] ?? "";
 
   return (
-    <div className="timeslip-card w-[520px] bg-white text-black font-mono text-sm border-2 border-gray-800 rounded print:border print:rounded-none print:shadow-none">
+    <div className="timeslip-card w-full max-w-[520px] bg-white text-black font-mono text-sm border-2 border-gray-800 rounded print:border print:rounded-none print:shadow-none">
       {/* Header */}
       <div className="bg-gray-900 text-white px-4 py-3 text-center">
         <div className="text-base font-bold tracking-wider">

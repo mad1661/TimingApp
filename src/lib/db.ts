@@ -514,8 +514,9 @@ export async function getDashboardStats(eventCode: string, season: string): Prom
     if (r.mph_1320 && r.mph_1320 > 0 && (!fastestSpeed || r.mph_1320 > fastestSpeed.mph_1320!)) fastestSpeed = r;
   }
 
+  tagRunTimestamps(validRuns);
   const recentRuns = [...validRuns]
-    .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
+    .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")))
     .slice(0, 20);
 
   return {
