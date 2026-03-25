@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { buildTimestampGroups } from "@/lib/timestamp-utils";
 
 interface RunRow {
   id?: string;
@@ -354,14 +355,23 @@ function RunsPageInner() {
                 const rows: React.ReactNode[] = [];
                 let pairIdx = 0;
 
+                // Build tolerance-based timestamp groups for visual pairing
+                const allTs = displayRuns.map((r) => r.timestamp).filter(Boolean) as string[];
+                const tsGroupMap = buildTimestampGroups(allTs);
+                const canonicalTs = (r: RunRow) => {
+                  const ts = r.timestamp;
+                  return ts ? (tsGroupMap.get(ts) || ts) : null;
+                };
+
                 for (let i = 0; i < displayRuns.length; i++) {
                   const run = displayRuns[i];
                   const isIgnored = !!(run._dedup_key && ignoredKeys.has(run._dedup_key));
-                  const prevTs = i > 0 ? displayRuns[i - 1].timestamp : null;
-                  const nextTs = i < displayRuns.length - 1 ? displayRuns[i + 1]?.timestamp : null;
-                  const isFirstInPair = run.timestamp !== prevTs;
-                  const isLastInPair = run.timestamp !== nextTs;
-                  const isInPair = run.timestamp === prevTs || run.timestamp === nextTs;
+                  const runCanonical = canonicalTs(run);
+                  const prevCanonical = i > 0 ? canonicalTs(displayRuns[i - 1]) : null;
+                  const nextCanonical = i < displayRuns.length - 1 ? canonicalTs(displayRuns[i + 1]) : null;
+                  const isFirstInPair = runCanonical !== prevCanonical;
+                  const isLastInPair = runCanonical !== nextCanonical;
+                  const isInPair = runCanonical === prevCanonical || runCanonical === nextCanonical;
 
                   if (isFirstInPair && isInPair) pairIdx++;
                   const pairBg = isInPair && pairIdx % 2 === 0 ? "bg-nhra-border/10" : "";

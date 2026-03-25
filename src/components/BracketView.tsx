@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { groupRunsByTimestamp } from "@/lib/timestamp-utils";
 
 interface RunRow {
   timestamp: string | null;
@@ -36,13 +37,7 @@ export default function BracketView({ runs }: BracketViewProps) {
   const matchupsByRound = new Map<string, Matchup[]>();
   for (const round of rounds) {
     const roundRuns = runs.filter((r) => r.round === round);
-    const byTimestamp = new Map<string, RunRow[]>();
-    for (const run of roundRuns) {
-      const ts = run.timestamp || "unknown";
-      const group = byTimestamp.get(ts) || [];
-      group.push(run);
-      byTimestamp.set(ts, group);
-    }
+    const byTimestamp = groupRunsByTimestamp(roundRuns);
     const matchups: Matchup[] = Array.from(byTimestamp.values()).map((racers) => ({
       round,
       racers: racers.sort((a, b) => {
@@ -58,14 +53,9 @@ export default function BracketView({ runs }: BracketViewProps) {
     matchupsByRound.set(round, matchups);
   }
 
-  const isFourWide = runs.some((_, __, arr) => {
-    const tsGroups = new Map<string, number>();
-    arr.forEach((r) => {
-      const ts = r.timestamp || "";
-      tsGroups.set(ts, (tsGroups.get(ts) || 0) + 1);
-    });
-    return Array.from(tsGroups.values()).some((count) => count > 2);
-  });
+  const isFourWide = Array.from(matchupsByRound.values()).some((matchups) =>
+    matchups.some((m) => m.racers.length > 2)
+  );
 
   return (
     <div className="overflow-x-auto">

@@ -1,4 +1,5 @@
 import { getDb } from "./firebase-admin";
+import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
 
 // --------------- Types ---------------
 
@@ -842,15 +843,27 @@ export async function getFetchLog(): Promise<{ id: string; event_code: string; s
 }
 
 export async function getOpponentsForRuns(runs: RunRow[], eventCode: string, season: string): Promise<Map<string, RunRow[]>> {
-  const timestamps = new Set(runs.map((r) => r.timestamp).filter(Boolean) as string[]);
-  if (timestamps.size === 0) return new Map();
+  const targetTimestamps = new Set(runs.map((r) => r.timestamp).filter(Boolean) as string[]);
+  if (targetTimestamps.size === 0) return new Map();
+
+  const allEventRuns = await getEventRuns(eventCode, season);
+  const allTimestamps = allEventRuns.map((r) => r.timestamp).filter(Boolean) as string[];
+  const tsGroups = buildTimestampGroups(allTimestamps);
+
+  // Find which canonical groups our target runs belong to
+  const targetGroups = new Set<string>();
+  for (const ts of targetTimestamps) {
+    targetGroups.add(tsGroups.get(ts) || ts);
+  }
 
   const opponents = new Map<string, RunRow[]>();
-  for (const run of await getEventRuns(eventCode, season)) {
-    if (run.timestamp && timestamps.has(run.timestamp)) {
-      const arr = opponents.get(run.timestamp) || [];
+  for (const run of allEventRuns) {
+    if (!run.timestamp) continue;
+    const canonical = tsGroups.get(run.timestamp) || run.timestamp;
+    if (targetGroups.has(canonical)) {
+      const arr = opponents.get(canonical) || [];
       arr.push(run);
-      opponents.set(run.timestamp, arr);
+      opponents.set(canonical, arr);
     }
   }
   return opponents;
@@ -866,31 +879,7 @@ export interface ScheduleEntry {
   durationMinutes: number;
 }
 
-function parseTsToDate(ts: string): Date | null {
-  try {
-    const parts = ts.split(" ");
-    const datePart = parts[0];
-    const timePart = parts[1];
-    const ampm = parts[2]?.toUpperCase();
-    const [month, day, year] = datePart.split("/");
-    const [hh, mm, ss] = timePart.split(":");
-    let hour = parseInt(hh, 10);
-
-    if (ampm === "PM" && hour !== 12) hour += 12;
-    else if (ampm === "AM" && hour === 12) hour = 0;
-
-    return new Date(
-      parseInt(year),
-      parseInt(month) - 1,
-      parseInt(day),
-      hour,
-      parseInt(mm),
-      parseInt(ss || "0")
-    );
-  } catch {
-    return null;
-  }
-}
+const parseTsToDate = parseTsToDateShared;
 
 function tsSortKey(ts: string): string {
   const d = parseTsToDate(ts);
@@ -980,20 +969,33 @@ export async function getScheduleData(eventCode: string, season: string, pmStart
     ? allRuns.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key))
     : allRuns;
 
-  const grouped = new Map<string, { timestamps: Map<string, Set<string>>; }>();
-
+  // Build timestamp groups per category/round so nearby timestamps are merged
+  const runsByKey = new Map<string, RunRow[]>();
   eventRuns.forEach((run) => {
     if (!run.category || !run.round || !run.timestamp) return;
     const key = `${run.category}|||${run.round}`;
-    const entry = grouped.get(key) || { timestamps: new Map<string, Set<string>>() };
-    const uniqueRunKey =
-      run._dedup_key ||
-      `${run.timestamp}|${run.car_number || ""}|${run.lane || ""}|${run.name || ""}|${run.category}|${run.round}`;
-    const tsRuns = entry.timestamps.get(run.timestamp) || new Set<string>();
-    tsRuns.add(uniqueRunKey);
-    entry.timestamps.set(run.timestamp, tsRuns);
-    grouped.set(key, entry);
+    const arr = runsByKey.get(key) || [];
+    arr.push(run);
+    runsByKey.set(key, arr);
   });
+
+  const grouped = new Map<string, { timestamps: Map<string, Set<string>>; }>();
+
+  for (const [key, keyRuns] of runsByKey) {
+    const tsGroups = buildTimestampGroups(keyRuns.map((r) => r.timestamp!));
+    const entry: { timestamps: Map<string, Set<string>> } = { timestamps: new Map() };
+
+    for (const run of keyRuns) {
+      const canonical = tsGroups.get(run.timestamp!) || run.timestamp!;
+      const uniqueRunKey =
+        run._dedup_key ||
+        `${run.timestamp}|${run.car_number || ""}|${run.lane || ""}|${run.name || ""}|${run.category}|${run.round}`;
+      const tsRuns = entry.timestamps.get(canonical) || new Set<string>();
+      tsRuns.add(uniqueRunKey);
+      entry.timestamps.set(canonical, tsRuns);
+    }
+    grouped.set(key, entry);
+  }
 
   const entries: ScheduleEntry[] = [];
 
@@ -1250,6 +1252,9 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
   if (withData.length === 0) return [];
 
   const sorted = [...withData].sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
-  const latestTs = sorted[0].timestamp;
-  return sorted.filter((r) => r.timestamp === latestTs);
+  const allTs = withData.map((r) => r.timestamp!);
+  const tsGroups = buildTimestampGroups(allTs);
+  const latestTs = sorted[0].timestamp!;
+  const latestCanonical = tsGroups.get(latestTs) || latestTs;
+  return sorted.filter((r) => (tsGroups.get(r.timestamp!) || r.timestamp!) === latestCanonical);
 }
