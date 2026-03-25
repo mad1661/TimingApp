@@ -520,6 +520,123 @@ export async function getCategoryStats(eventCode: string, season: string): Promi
     .sort((a, b) => a.category.localeCompare(b.category));
 }
 
+export interface HeadsUpCategoryStat {
+  category: string;
+  type: "headsup";
+  count: number;
+  bestET: number | null;
+  bestSpeed: number | null;
+  best60ft: number | null;
+  best330: number | null;
+  best660: number | null;
+  best660mph: number | null;
+  best1000: number | null;
+  avgRT: number | null;
+  bestRT: number | null;
+}
+
+export interface BracketCategoryStat {
+  category: string;
+  type: "bracket";
+  count: number;
+  avgRT: number | null;
+  bestRT: number | null;
+  avgPackage: number | null;
+  bestPackage: number | null;
+  avgDialDeviation: number | null;
+  etStdDev: number | null;
+  breakoutRate: number | null;
+  breakoutCount: number;
+  winCount: number;
+  lossCount: number;
+  bestET: number | null;
+  bestSpeed: number | null;
+}
+
+export type DetailedCategoryStat = HeadsUpCategoryStat | BracketCategoryStat;
+
+export async function getDetailedCategoryStats(eventCode: string, season: string): Promise<DetailedCategoryStat[]> {
+  const byCategory = new Map<string, RunRow[]>();
+  const runs = await getEventRuns(eventCode, season);
+
+  runs.forEach((run) => {
+    if (!run.category) return;
+    const arr = byCategory.get(run.category) || [];
+    arr.push(run);
+    byCategory.set(run.category, arr);
+  });
+
+  return Array.from(byCategory.entries())
+    .map(([category, catRuns]): DetailedCategoryStat => {
+      // Determine if bracket category: majority of elimination runs have dial_in set
+      const elimRuns = catRuns.filter((r) => r.round && r.round.startsWith("E"));
+      const dialCount = elimRuns.filter((r) => r.dial_in !== null && r.dial_in > 0).length;
+      const isBracket = elimRuns.length > 0 && dialCount / elimRuns.length > 0.5;
+
+      const ets = catRuns.map((r) => r.ft1320).filter((v): v is number => v !== null && v > 0);
+      const rts = catRuns.map((r) => r.rt).filter((v): v is number => v !== null && v > 0);
+      const speeds = catRuns.map((r) => r.mph_1320).filter((v): v is number => v !== null && v > 0);
+
+      if (isBracket) {
+        // Package = RT + (ET - dial_in), only for runs with valid data
+        const packageRuns = catRuns.filter(
+          (r) => r.rt !== null && r.rt > 0 && r.ft1320 !== null && r.ft1320 > 0 && r.dial_in !== null && r.dial_in > 0
+        );
+        const packages = packageRuns.map((r) => r.rt! + (r.ft1320! - r.dial_in!));
+        const dialDeviations = packageRuns.map((r) => r.ft1320! - r.dial_in!);
+        const breakouts = packageRuns.filter((r) => r.ft1320! < r.dial_in!);
+
+        // ET standard deviation
+        let etStdDev: number | null = null;
+        if (ets.length > 1) {
+          const mean = ets.reduce((a, b) => a + b, 0) / ets.length;
+          const variance = ets.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (ets.length - 1);
+          etStdDev = Math.sqrt(variance);
+        }
+
+        return {
+          category,
+          type: "bracket",
+          count: catRuns.length,
+          avgRT: rts.length > 0 ? rts.reduce((a, b) => a + b, 0) / rts.length : null,
+          bestRT: rts.length > 0 ? Math.min(...rts) : null,
+          avgPackage: packages.length > 0 ? packages.reduce((a, b) => a + b, 0) / packages.length : null,
+          bestPackage: packages.length > 0 ? Math.min(...packages) : null,
+          avgDialDeviation: dialDeviations.length > 0 ? dialDeviations.reduce((a, b) => a + b, 0) / dialDeviations.length : null,
+          etStdDev,
+          breakoutRate: packageRuns.length > 0 ? breakouts.length / packageRuns.length : null,
+          breakoutCount: breakouts.length,
+          winCount: catRuns.filter((r) => r.is_winner === 1).length,
+          lossCount: catRuns.filter((r) => r.is_winner === 0 && r.round && r.round.startsWith("E")).length,
+          bestET: ets.length > 0 ? Math.min(...ets) : null,
+          bestSpeed: speeds.length > 0 ? Math.max(...speeds) : null,
+        };
+      } else {
+        const ft60s = catRuns.map((r) => r.ft60).filter((v): v is number => v !== null && v > 0);
+        const ft330s = catRuns.map((r) => r.ft330).filter((v): v is number => v !== null && v > 0);
+        const ft660s = catRuns.map((r) => r.ft660).filter((v): v is number => v !== null && v > 0);
+        const mph660s = catRuns.map((r) => r.mph_660).filter((v): v is number => v !== null && v > 0);
+        const ft1000s = catRuns.map((r) => r.ft1000).filter((v): v is number => v !== null && v > 0);
+
+        return {
+          category,
+          type: "headsup",
+          count: catRuns.length,
+          bestET: ets.length > 0 ? Math.min(...ets) : null,
+          bestSpeed: speeds.length > 0 ? Math.max(...speeds) : null,
+          best60ft: ft60s.length > 0 ? Math.min(...ft60s) : null,
+          best330: ft330s.length > 0 ? Math.min(...ft330s) : null,
+          best660: ft660s.length > 0 ? Math.min(...ft660s) : null,
+          best660mph: mph660s.length > 0 ? Math.max(...mph660s) : null,
+          best1000: ft1000s.length > 0 ? Math.min(...ft1000s) : null,
+          avgRT: rts.length > 0 ? rts.reduce((a, b) => a + b, 0) / rts.length : null,
+          bestRT: rts.length > 0 ? Math.min(...rts) : null,
+        };
+      }
+    })
+    .sort((a, b) => a.category.localeCompare(b.category));
+}
+
 export async function getEliminationRuns(eventCode: string, season: string, category: string): Promise<RunRow[]> {
   const allRuns = await getEventRuns(eventCode, season);
   tagRunTimestamps(allRuns);
