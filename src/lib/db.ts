@@ -887,6 +887,75 @@ export async function getScheduleData(eventCode: string, season: string, pmStart
   return entries;
 }
 
+export interface BestLosingPackageEntry {
+  name: string;
+  car_number: string;
+  category: string;
+  round: string;
+  rt: number;
+  ft1320: number;
+  dial_in: number;
+  diff: number;      // ET - dial_in (how close to dial)
+  package: number;    // RT + diff
+  timestamp: string;
+}
+
+export async function getBestLosingPackage(
+  eventCode: string,
+  season: string,
+  rounds: string[],
+  categories: string[]
+): Promise<Record<string, BestLosingPackageEntry[]>> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  const roundSet = new Set(rounds);
+  const categorySet = new Set(categories);
+
+  // Filter to elimination losers with valid data
+  const losers = allRuns.filter((r) => {
+    if (!r.round || !roundSet.has(r.round)) return false;
+    if (!r.category || !categorySet.has(r.category)) return false;
+    if (r.is_winner === 1) return false;
+    if (!r.rt || r.rt <= 0) return false;
+    if (!r.ft1320 || r.ft1320 <= 0) return false;
+    if (!r.dial_in || r.dial_in <= 0) return false;
+    // Exclude breakouts (ran faster than dial-in)
+    if (r.ft1320 < r.dial_in) return false;
+    return true;
+  });
+
+  const result: Record<string, BestLosingPackageEntry[]> = {};
+
+  for (const cat of categories) {
+    const catLosers = losers
+      .filter((r) => r.category === cat)
+      .map((r) => {
+        const diff = r.ft1320! - r.dial_in!;
+        return {
+          name: r.name || "Unknown",
+          car_number: r.car_number || "",
+          category: cat,
+          round: r.round!,
+          rt: r.rt!,
+          ft1320: r.ft1320!,
+          dial_in: r.dial_in!,
+          diff: Math.round(diff * 10000) / 10000,
+          package: Math.round((r.rt! + diff) * 10000) / 10000,
+          timestamp: r.timestamp || "",
+        };
+      })
+      .sort((a, b) => a.package - b.package)
+      .slice(0, 5);
+
+    if (catLosers.length > 0) {
+      result[cat] = catLosers;
+    }
+  }
+
+  return result;
+}
+
 export async function getLatestPair(eventCode: string, season: string): Promise<RunRow[]> {
   const runs = await getEventRuns(eventCode, season);
   tagRunTimestamps(runs);
