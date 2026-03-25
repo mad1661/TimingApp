@@ -842,9 +842,9 @@ export async function getFetchLog(): Promise<{ id: string; event_code: string; s
   }
 }
 
-export async function getOpponentsForRuns(runs: RunRow[], eventCode: string, season: string): Promise<Map<string, RunRow[]>> {
+export async function getOpponentsForRuns(runs: RunRow[], eventCode: string, season: string): Promise<{ opponents: Map<string, RunRow[]>; tsGroups: Map<string, string> }> {
   const targetTimestamps = new Set(runs.map((r) => r.timestamp).filter(Boolean) as string[]);
-  if (targetTimestamps.size === 0) return new Map();
+  if (targetTimestamps.size === 0) return { opponents: new Map(), tsGroups: new Map() };
 
   const allEventRuns = await getEventRuns(eventCode, season);
   const allTimestamps = allEventRuns.map((r) => r.timestamp).filter(Boolean) as string[];
@@ -866,7 +866,7 @@ export async function getOpponentsForRuns(runs: RunRow[], eventCode: string, sea
       opponents.set(canonical, arr);
     }
   }
-  return opponents;
+  return { opponents, tsGroups };
 }
 
 export interface ScheduleEntry {
