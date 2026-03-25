@@ -28,6 +28,7 @@ export default function PerfectRTPage() {
   const [selectedSeason, setSelectedSeason] = useState("");
   const [filtersLoading, setFiltersLoading] = useState(true);
 
+  const [roundTypes, setRoundTypes] = useState<Set<string>>(new Set(["eliminations"]));
   const [results, setResults] = useState<Record<string, PerfectRTEntry[]>>({});
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -61,12 +62,25 @@ export default function PerfectRTPage() {
     }
   }
 
+  function toggleRoundType(type: string) {
+    setRoundTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        if (next.size > 1) next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  }
+
   async function search() {
     if (!selectedEvent || !selectedSeason) return;
     setLoading(true);
     try {
+      const rtParam = Array.from(roundTypes).join(",");
       const res = await fetch(
-        `/api/stats?type=perfect-rt&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}`
+        `/api/stats?type=perfect-rt&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&round_types=${encodeURIComponent(rtParam)}`
       );
       const data = await res.json();
       setResults(data.results || {});
@@ -84,7 +98,7 @@ export default function PerfectRTPage() {
     <div className="max-w-5xl mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white mb-2">Perfect Reaction Time</h1>
-        <p className="text-gray-400">Racers who hit a perfect 0.000 RT in elimination rounds</p>
+        <p className="text-gray-400">Racers who hit a perfect 0.000 RT</p>
       </div>
 
       {/* Event Selector */}
@@ -104,6 +118,30 @@ export default function PerfectRTPage() {
             </option>
           ))}
         </select>
+      </div>
+
+      {/* Round Type Selector */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
+        <label className="block text-sm text-gray-400 mb-3">Round Types</label>
+        <div className="flex flex-wrap gap-3">
+          {([
+            { key: "eliminations", label: "Eliminations" },
+            { key: "qualifying", label: "Qualifying" },
+            { key: "time_trials", label: "Time Trials" },
+          ] as const).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => toggleRoundType(key)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors border ${
+                roundTypes.has(key)
+                  ? "bg-green-600/20 border-green-500/50 text-green-400"
+                  : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Search Button */}
@@ -132,7 +170,7 @@ export default function PerfectRTPage() {
       {searched && !loading && totalCount === 0 && (
         <div className="bg-nhra-card border-2 border-gray-600/30 rounded-xl px-6 py-10 text-center">
           <p className="text-gray-400 font-bold text-lg mb-1">No Perfect Lights</p>
-          <p className="text-gray-500 text-sm">Nobody hit a 0.000 RT in eliminations at this event</p>
+          <p className="text-gray-500 text-sm">Nobody hit a 0.000 RT in the selected round types at this event</p>
         </div>
       )}
 
@@ -181,7 +219,7 @@ export default function PerfectRTPage() {
                           0.000
                         </span>
                         <p className="text-xs text-gray-500 mt-1">
-                          {entry.round === "F" ? "Final" : entry.round.replace("E", "Round ")}
+                          {entry.round === "F" ? "Final" : entry.round.startsWith("E") ? entry.round.replace("E", "Round ") : entry.round.startsWith("Q") ? `Qualifying ${entry.round.slice(1)}` : entry.round.startsWith("T") ? `Time Trial ${entry.round.slice(1)}` : entry.round}
                         </p>
                       </div>
                       {entry.ft1320 && entry.ft1320 > 0 && (
@@ -190,13 +228,15 @@ export default function PerfectRTPage() {
                           <p className="text-xs text-gray-500">ET</p>
                         </div>
                       )}
-                      <span className={`inline-block px-2 py-0.5 text-xs font-bold rounded ${
-                        entry.is_winner === 1
-                          ? "bg-green-500/15 text-green-400"
-                          : "bg-red-500/15 text-red-400"
-                      }`}>
-                        {entry.is_winner === 1 ? "WIN" : "LOSS"}
-                      </span>
+                      {(entry.round.startsWith("E") || entry.round === "F" || entry.round.toLowerCase() === "final") && (
+                        <span className={`inline-block px-2 py-0.5 text-xs font-bold rounded ${
+                          entry.is_winner === 1
+                            ? "bg-green-500/15 text-green-400"
+                            : "bg-red-500/15 text-red-400"
+                        }`}>
+                          {entry.is_winner === 1 ? "WIN" : "LOSS"}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -208,7 +248,7 @@ export default function PerfectRTPage() {
 
       {!searched && !loading && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl p-12 text-center text-gray-500">
-          Select an event and search to find perfect reaction times in eliminations
+          Select an event and round types, then search to find perfect reaction times
         </div>
       )}
     </div>
