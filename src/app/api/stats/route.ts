@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, searchRacers, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getPerfectReactionTimes, getDeadOnRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getPerfectReactionTimes, getDeadOnRuns } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -7,6 +7,28 @@ export async function GET(request: NextRequest) {
     const type = params.get("type") || "dashboard";
     const eventCode = params.get("event_code") || "";
     const season = params.get("season") || "";
+
+    // car_runs can work across all events (no event_code required)
+    if (type === "car_runs") {
+      const carNumber = params.get("car_number");
+      if (!carNumber) return NextResponse.json({ error: "car_number parameter required" }, { status: 400 });
+      const runs = eventCode && season
+        ? await getCarNumberRuns(carNumber, eventCode, season)
+        : await getCarNumberRunsAllEvents(carNumber);
+      return NextResponse.json({ car_number: carNumber, runs, totalRuns: runs.length });
+    }
+
+    // racers search can work across all events when no event specified
+    if (type === "racers") {
+      const search = params.get("search") || "";
+      if (search.length >= 1) {
+        const results = eventCode && season
+          ? await searchRacers(search, eventCode, season)
+          : await searchRacersAllEvents(search);
+        return NextResponse.json({ racers: results.map((r) => r.name), racerDetails: results });
+      }
+      return NextResponse.json({ racers: [] });
+    }
 
     if (!eventCode || !season) {
       return NextResponse.json({ error: "event_code and season are required" }, { status: 400 });
@@ -38,28 +60,6 @@ export async function GET(request: NextRequest) {
         return { ...run, opponents: opponents.map((o) => ({ name: o.name, car_number: o.car_number, rt: o.rt, ft60: o.ft60, ft330: o.ft330, ft660: o.ft660, mph_660: o.mph_660, ft1000: o.ft1000, mph_1000: o.mph_1000, ft1320: o.ft1320, mph_1320: o.mph_1320, mov: o.mov, is_winner: o.is_winner, is_dq: o.is_dq, lane: o.lane, dial_in: o.dial_in })) };
       });
       return NextResponse.json({ name, runs: runsWithOpponents, totalRuns: runs.length });
-    }
-
-    if (type === "car_runs") {
-      const carNumber = params.get("car_number");
-      if (!carNumber) return NextResponse.json({ error: "car_number parameter required" }, { status: 400 });
-      const runs = await getCarNumberRuns(carNumber, eventCode, season);
-      const opponentMap = await getOpponentsForRuns(runs, eventCode, season);
-      const runsWithOpponents = runs.map((run) => {
-        const paired = opponentMap.get(run.timestamp || "") || [];
-        const opponents = paired.filter((p) => p.name !== run.name);
-        return { ...run, opponents: opponents.map((o) => ({ name: o.name, car_number: o.car_number, rt: o.rt, ft60: o.ft60, ft330: o.ft330, ft660: o.ft660, mph_660: o.mph_660, ft1000: o.ft1000, mph_1000: o.mph_1000, ft1320: o.ft1320, mph_1320: o.mph_1320, mov: o.mov, is_winner: o.is_winner, is_dq: o.is_dq, lane: o.lane, dial_in: o.dial_in })) };
-      });
-      return NextResponse.json({ car_number: carNumber, runs: runsWithOpponents, totalRuns: runs.length });
-    }
-
-    if (type === "racers") {
-      const search = params.get("search") || "";
-      if (search.length >= 1) {
-        const results = await searchRacers(search, eventCode, season);
-        return NextResponse.json({ racers: results.map((r) => r.name), racerDetails: results });
-      }
-      return NextResponse.json({ racers: [] });
     }
 
     if (type === "schedule") {

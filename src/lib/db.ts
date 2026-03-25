@@ -432,6 +432,30 @@ export async function searchRacers(search: string, eventCode: string, season: st
     .slice(0, 50);
 }
 
+export async function searchRacersAllEvents(search: string): Promise<{ name: string; car_number: string }[]> {
+  const s = search.toLowerCase();
+  const seen = new Map<string, string>();
+  const events = await getEvents();
+  for (const ev of events) {
+    for (const r of await getEventRuns(ev.event_code, ev.season)) {
+      if (!r.name) continue;
+      if (r.name.toLowerCase().includes(s) || (r.car_number && r.car_number.toLowerCase().includes(s))) {
+        const key = `${r.name}|||${r.car_number || ""}`;
+        if (!seen.has(key)) {
+          seen.set(key, "");
+        }
+      }
+    }
+  }
+  return Array.from(seen.keys())
+    .map((key) => {
+      const [name, car_number] = key.split("|||");
+      return { name, car_number };
+    })
+    .sort((a, b) => a.car_number.localeCompare(b.car_number) || a.name.localeCompare(b.name))
+    .slice(0, 50);
+}
+
 export async function getRacerRuns(name: string, eventCode: string, season: string): Promise<RunRow[]> {
   const runs = await getEventRuns(eventCode, season);
   tagRunTimestamps(runs);
@@ -446,6 +470,21 @@ export async function getCarNumberRuns(carNumber: string, eventCode: string, sea
   return runs
     .filter((r) => r.car_number && r.car_number.toLowerCase() === carNumber.toLowerCase())
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
+}
+
+export async function getCarNumberRunsAllEvents(carNumber: string): Promise<RunRow[]> {
+  const events = await getEvents();
+  const allRuns: RunRow[] = [];
+  for (const ev of events) {
+    const runs = await getEventRuns(ev.event_code, ev.season);
+    tagRunTimestamps(runs);
+    for (const r of runs) {
+      if (r.car_number && r.car_number.toLowerCase() === carNumber.toLowerCase()) {
+        allRuns.push(r);
+      }
+    }
+  }
+  return allRuns.sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
 export interface DashboardStats {
