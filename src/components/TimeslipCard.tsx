@@ -250,7 +250,7 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
           const badge = resultBadge(run);
           return (
             <div key={i} className={`px-2 py-2 text-center ${resultRowBg(run)} ${i > 0 ? "border-l border-gray-800" : ""}`}>
-              <div className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Lane {run.lane || (i + 1)}</div>
+              <div className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Lane {i === 0 ? 1 : i === 1 ? 2 : i === 2 ? 3 : 4}</div>
               <div className="text-xs sm:text-sm font-black tracking-wide truncate">{run.name || "—"}</div>
               <div className="flex items-center justify-center gap-1 mt-0.5 flex-wrap">
                 <span className="text-[10px] text-nhra-accent font-bold">#{run.car_number || "-"}</span>
