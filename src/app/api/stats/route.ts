@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getRacerRuns, searchRacers, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getRacerRuns, searchRacers, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getPerfectReactionTimes, getDeadOnRuns } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -63,6 +63,26 @@ export async function GET(request: NextRequest) {
     if (type === "didnotrace") {
       const results = await getDidNotRace(eventCode, season);
       return NextResponse.json({ didNotRace: results });
+    }
+
+    if (type === "best-losing-package") {
+      const rounds = params.get("rounds")?.split(",").filter(Boolean) || [];
+      const categories = params.get("categories")?.split(",").filter(Boolean) || [];
+      if (rounds.length === 0 || categories.length === 0) {
+        return NextResponse.json({ error: "rounds and categories are required" }, { status: 400 });
+      }
+      const results = await getBestLosingPackage(eventCode, season, rounds, categories);
+      return NextResponse.json({ results });
+    }
+
+    if (type === "perfect-rt") {
+      const results = await getPerfectReactionTimes(eventCode, season);
+      return NextResponse.json({ results });
+    }
+
+    if (type === "dead-on") {
+      const results = await getDeadOnRuns(eventCode, season);
+      return NextResponse.json({ results });
     }
 
     if (type === "brackets") {

@@ -887,6 +887,179 @@ export async function getScheduleData(eventCode: string, season: string, pmStart
   return entries;
 }
 
+export interface BestLosingPackageEntry {
+  name: string;
+  car_number: string;
+  category: string;
+  round: string;
+  rt: number;
+  ft1320: number;
+  dial_in: number;
+  diff: number;      // ET - dial_in (how close to dial)
+  package: number;    // RT + diff
+  timestamp: string;
+}
+
+export async function getBestLosingPackage(
+  eventCode: string,
+  season: string,
+  rounds: string[],
+  categories: string[]
+): Promise<Record<string, BestLosingPackageEntry[]>> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  const roundSet = new Set(rounds);
+  const categorySet = new Set(categories);
+
+  // Filter to elimination losers with valid data
+  const losers = allRuns.filter((r) => {
+    if (!r.round || !roundSet.has(r.round)) return false;
+    if (!r.category || !categorySet.has(r.category)) return false;
+    if (r.is_winner === 1) return false;
+    if (!r.rt || r.rt <= 0) return false;
+    if (!r.ft1320 || r.ft1320 <= 0) return false;
+    if (!r.dial_in || r.dial_in <= 0) return false;
+    // Exclude breakouts (ran faster than dial-in)
+    if (r.ft1320 < r.dial_in) return false;
+    return true;
+  });
+
+  const result: Record<string, BestLosingPackageEntry[]> = {};
+
+  for (const cat of categories) {
+    const catLosers = losers
+      .filter((r) => r.category === cat)
+      .map((r) => {
+        const diff = r.ft1320! - r.dial_in!;
+        return {
+          name: r.name || "Unknown",
+          car_number: r.car_number || "",
+          category: cat,
+          round: r.round!,
+          rt: r.rt!,
+          ft1320: r.ft1320!,
+          dial_in: r.dial_in!,
+          diff: Math.round(diff * 10000) / 10000,
+          package: Math.round((r.rt! + diff) * 10000) / 10000,
+          timestamp: r.timestamp || "",
+        };
+      })
+      .sort((a, b) => a.package - b.package)
+      .slice(0, 5);
+
+    if (catLosers.length > 0) {
+      result[cat] = catLosers;
+    }
+  }
+
+  return result;
+}
+
+export interface PerfectRTEntry {
+  name: string;
+  car_number: string;
+  category: string;
+  round: string;
+  rt: number;
+  ft1320: number | null;
+  is_winner: number;
+  timestamp: string;
+}
+
+export async function getPerfectReactionTimes(
+  eventCode: string,
+  season: string
+): Promise<Record<string, PerfectRTEntry[]>> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  const perfects = allRuns.filter((r) => {
+    if (!r.round?.startsWith("E") && r.round !== "F" && r.round?.toLowerCase() !== "final") return false;
+    if (!r.category) return false;
+    if (r.rt == null) return false;
+    // Perfect RT is exactly 0.000 (within floating point tolerance)
+    return Math.abs(r.rt) < 0.0005;
+  });
+
+  const result: Record<string, PerfectRTEntry[]> = {};
+
+  for (const r of perfects) {
+    const cat = r.category!;
+    const entry: PerfectRTEntry = {
+      name: r.name || "Unknown",
+      car_number: r.car_number || "",
+      category: cat,
+      round: r.round!,
+      rt: r.rt!,
+      ft1320: r.ft1320,
+      is_winner: r.is_winner,
+      timestamp: r.timestamp || "",
+    };
+    (result[cat] ??= []).push(entry);
+  }
+
+  // Sort each category by round
+  for (const cat of Object.keys(result)) {
+    result[cat].sort((a, b) => a.round.localeCompare(b.round) || a.timestamp.localeCompare(b.timestamp));
+  }
+
+  return result;
+}
+
+export interface DeadOnEntry {
+  name: string;
+  car_number: string;
+  category: string;
+  round: string;
+  rt: number | null;
+  ft1320: number;
+  dial_in: number;
+  is_winner: number;
+  timestamp: string;
+}
+
+export async function getDeadOnRuns(
+  eventCode: string,
+  season: string
+): Promise<Record<string, DeadOnEntry[]>> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  const deadOns = allRuns.filter((r) => {
+    if (!r.round?.startsWith("E") && r.round !== "F" && r.round?.toLowerCase() !== "final") return false;
+    if (!r.category) return false;
+    if (!r.ft1320 || r.ft1320 <= 0) return false;
+    if (!r.dial_in || r.dial_in <= 0) return false;
+    // Dead on = ET matches dial-in to the thousandth
+    return Math.round(r.ft1320 * 1000) === Math.round(r.dial_in * 1000);
+  });
+
+  const result: Record<string, DeadOnEntry[]> = {};
+
+  for (const r of deadOns) {
+    const cat = r.category!;
+    const entry: DeadOnEntry = {
+      name: r.name || "Unknown",
+      car_number: r.car_number || "",
+      category: cat,
+      round: r.round!,
+      rt: r.rt,
+      ft1320: r.ft1320!,
+      dial_in: r.dial_in!,
+      is_winner: r.is_winner,
+      timestamp: r.timestamp || "",
+    };
+    (result[cat] ??= []).push(entry);
+  }
+
+  for (const cat of Object.keys(result)) {
+    result[cat].sort((a, b) => a.round.localeCompare(b.round) || a.timestamp.localeCompare(b.timestamp));
+  }
+
+  return result;
+}
+
 export async function getLatestPair(eventCode: string, season: string): Promise<RunRow[]> {
   const runs = await getEventRuns(eventCode, season);
   tagRunTimestamps(runs);
