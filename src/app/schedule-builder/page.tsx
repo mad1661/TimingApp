@@ -17,6 +17,7 @@ interface PlanEntry {
   isBreak: boolean;
   fixedTime: string;
   fieldSize: number;
+  groupSize: number; // 2 = pairs, 4 = quads
   status: "planned" | "completed";
   actualStart: string | null;
   actualEnd: string | null;
@@ -82,8 +83,8 @@ function fmtDurSec(sec: number): string {
   return `${mins}m${String(s).padStart(2, "0")}s`;
 }
 
-function calcPairs(cars: number): number {
-  return cars > 0 ? Math.ceil(cars / 2) : 1;
+function calcGroups(cars: number, groupSize: number = 2): number {
+  return cars > 0 ? Math.ceil(cars / groupSize) : 1;
 }
 
 function normalizeRound(r: string): string {
@@ -303,6 +304,7 @@ function ScheduleBuilderInner() {
           ...e,
           fixedTime: e.fixedTime || "",
           fieldSize: e.fieldSize || 0,
+          groupSize: e.groupSize || 2,
         }));
         setEntries(loaded);
         setStartTime(foundPlan.startTime || "8:00 AM");
@@ -319,7 +321,7 @@ function ScheduleBuilderInner() {
         if (p.date && p.entries && p.entries.length > 0) {
           dates.add(p.date);
           if (p.date !== planDate) {
-            for (const e of p.entries) other.push({ ...e, fixedTime: e.fixedTime || "", fieldSize: e.fieldSize || 0 });
+            for (const e of p.entries) other.push({ ...e, fixedTime: e.fixedTime || "", fieldSize: e.fieldSize || 0, groupSize: e.groupSize || 2 });
           }
         }
       }
@@ -417,10 +419,12 @@ function ScheduleBuilderInner() {
     let pairs = 0;
     const fs = rc.fieldSize || 0;
 
+    const gs = 2; // default group size (2 = pairs, 4 = quads)
+
     if (prev) {
       round = nextRound(prev.round);
       cars = carsForNextRound(prev.cars, prev.round, round, fs);
-      pairs = calcPairs(cars);
+      pairs = calcGroups(cars, gs);
     }
 
     if (isBreak) {
@@ -441,6 +445,7 @@ function ScheduleBuilderInner() {
       isBreak,
       fixedTime: "",
       fieldSize: fs,
+      groupSize: gs,
       status: "planned",
       actualStart: null,
       actualEnd: null,
@@ -466,6 +471,7 @@ function ScheduleBuilderInner() {
         isBreak: true,
         fixedTime: "",
         fieldSize: 0,
+        groupSize: 2,
         status: "planned",
         actualStart: null,
         actualEnd: null,
@@ -480,7 +486,11 @@ function ScheduleBuilderInner() {
         if (e.id !== id || e.status === "completed") return e;
         const merged = { ...e, ...updates };
         if ("cars" in updates && !merged.isBreak) {
-          merged.pairs = calcPairs(merged.cars);
+          merged.pairs = calcGroups(merged.cars, merged.groupSize || 2);
+          merged.plannedDurationSec = merged.pairs * merged.perPairSec;
+        }
+        if ("groupSize" in updates && !merged.isBreak) {
+          merged.pairs = calcGroups(merged.cars, merged.groupSize || 2);
           merged.plannedDurationSec = merged.pairs * merged.perPairSec;
         }
         if ("pairs" in updates && merged.isBreak) {
@@ -491,7 +501,7 @@ function ScheduleBuilderInner() {
           if (pi && merged.cars === 0) {
             const autoCars = carsForNextRound(pi.cars, pi.round, merged.round, merged.fieldSize);
             merged.cars = autoCars;
-            merged.pairs = calcPairs(autoCars);
+            merged.pairs = calcGroups(autoCars, merged.groupSize || 2);
             merged.plannedDurationSec = merged.pairs * merged.perPairSec;
           }
         }
@@ -588,6 +598,8 @@ function ScheduleBuilderInner() {
 
   const totalDurSec = entries.reduce((s, e) => s + e.plannedDurationSec, 0);
   const projEnd = projectedTimes.length > 0 ? projectedTimes[projectedTimes.length - 1] : null;
+  const hasQuads = entries.some((e) => !e.isBreak && (e.groupSize || 2) === 4);
+  const groupLabel = hasQuads ? "Prs/Qds" : "Prs";
 
   const filteredClasses = pickerSearch
     ? RACE_CLASSES.filter(
@@ -696,7 +708,8 @@ function ScheduleBuilderInner() {
                 <th className="p-3 text-center w-16">Round</th>
                 <th className="p-3 text-right w-16">Cars</th>
                 <th className="p-3 text-center w-14">Bump</th>
-                <th className="p-3 text-right w-14">Prs</th>
+                <th className="p-3 text-center w-14">Type</th>
+                <th className="p-3 text-right w-14">{groupLabel}</th>
                 <th className="p-3 text-right w-20">Duration</th>
                 <th className="p-3 text-center" colSpan={2}><span className="text-green-400">Actual</span></th>
                 <th className="p-3 w-10"></th>
@@ -712,6 +725,7 @@ function ScheduleBuilderInner() {
                 <th className="p-1"></th>
                 <th className="p-1"></th>
                 <th className="p-1"></th>
+                <th className="p-1"></th>
                 <th className="p-1 text-center">Start</th>
                 <th className="p-1 text-center">End</th>
                 <th className="p-1"></th>
@@ -719,7 +733,7 @@ function ScheduleBuilderInner() {
             </thead>
             <tbody>
               {entries.length === 0 && (
-                <tr><td colSpan={13} className="p-12 text-center text-gray-500">No entries yet. Click &quot;Add Class&quot; or &quot;Add Break&quot; to start building.</td></tr>
+                <tr><td colSpan={14} className="p-12 text-center text-gray-500">No entries yet. Click &quot;Add Class&quot; or &quot;Add Break&quot; to start building.</td></tr>
               )}
               {entries.map((entry, idx) => {
                 const pt = projectedTimes[idx];
@@ -765,7 +779,7 @@ function ScheduleBuilderInner() {
                       ) : null}
                       {entry.isBreak ? <span className="text-yellow-400">{entry.className}</span> : entry.className}
                       {isCompleted && !entry.isBreak && entry.actualPairs != null && entry.actualPairs < entry.pairs && (
-                        <span className="ml-2 text-orange-400 text-xs font-normal">({entry.pairs - entry.actualPairs} groups remaining)</span>
+                        <span className="ml-2 text-orange-400 text-xs font-normal">({entry.pairs - entry.actualPairs} {(entry.groupSize || 2) === 4 ? "quads" : "pairs"} remaining)</span>
                       )}
                     </td>
                     <td className="p-3 text-center">
@@ -825,6 +839,26 @@ function ScheduleBuilderInner() {
                         <span className="text-gray-500">—</span>
                       )}
                     </td>
+                    <td className="p-3 text-center">
+                      {!entry.isBreak ? (
+                        isCompleted ? (
+                          <span className="text-gray-500 text-xs">{(entry.groupSize || 2) === 4 ? "Quad" : "Pair"}</span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              const newGs = (entry.groupSize || 2) === 2 ? 4 : 2;
+                              updateEntry(entry.id, { groupSize: newGs });
+                            }}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors ${(entry.groupSize || 2) === 4 ? "bg-purple-600/30 text-purple-300 border border-purple-500/40" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}
+                            title="Toggle between Pairs (2-wide) and Quads (4-wide)"
+                          >
+                            {(entry.groupSize || 2) === 4 ? "Quad" : "Pair"}
+                          </button>
+                        )
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </td>
                     <td className="p-3 text-right font-mono text-gray-300">
                       {entry.isBreak ? (entry.pairs > 1 ? entry.pairs : "—") : entry.pairs || "—"}
                     </td>
@@ -848,10 +882,11 @@ function ScheduleBuilderInner() {
                         <div className="flex items-center gap-2 justify-center">
                           <button
                             onClick={() => {
-                              const remaining = (entry.pairs - (entry.actualPairs || 0)) * 2;
+                              const gs = entry.groupSize || 2;
+                              const remaining = (entry.pairs - (entry.actualPairs || 0)) * gs;
                               const rc = RACE_CLASSES.find((c) => c.code === entry.classCode || c.name === entry.className);
                               const perPair = rc?.perPairSec || entry.perPairSec;
-                              const remPairs = calcPairs(remaining);
+                              const remPairs = calcGroups(remaining, gs);
                               setEntries((prev) => {
                                 const updated = prev.map((e) => e.id === entry.id ? { ...e, pairs: entry.actualPairs! } : e);
                                 return [...updated, {
@@ -866,6 +901,7 @@ function ScheduleBuilderInner() {
                                   isBreak: false,
                                   fixedTime: "",
                                   fieldSize: entry.fieldSize || 0,
+                                  groupSize: gs,
                                   status: "planned",
                                   actualStart: null,
                                   actualEnd: null,
@@ -951,7 +987,7 @@ function ScheduleBuilderInner() {
                       {hint && <span className="text-blue-400/60 ml-2 text-xs">{hint}</span>}
                     </div>
                     <span className="text-gray-500 text-xs font-mono">
-                      {rc.isRacing ? fmtDurSec(rc.perPairSec) + "/group" : fmtDurSec(rc.perPairSec)}
+                      {rc.isRacing ? fmtDurSec(rc.perPairSec) + "/pair" : fmtDurSec(rc.perPairSec)}
                     </span>
                   </button>
                 );
