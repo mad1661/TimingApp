@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
       queryRuns({
         category: params.get("category") || undefined,
         name: params.get("name") || undefined,
+        car_number: params.get("car_number") || undefined,
         event_code: eventCode,
         season: season,
         round: params.get("round") || undefined,

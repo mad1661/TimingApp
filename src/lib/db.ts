@@ -317,6 +317,7 @@ export async function logFetch(eventCode: string, season: string, eventType: str
 export interface RunsQuery {
   category?: string;
   name?: string;
+  car_number?: string;
   event_code: string;
   season: string;
   round?: string;
@@ -334,6 +335,9 @@ export async function queryRuns(q: RunsQuery): Promise<{ runs: RunRow[]; total: 
   if (q.category) runs = runs.filter((r) => r.category === q.category);
   if (q.round) runs = runs.filter((r) => r.round === q.round);
   if (q.class_index) runs = runs.filter((r) => r.class_index === q.class_index);
+  if (q.car_number) {
+    runs = runs.filter((r) => r.car_number === q.car_number);
+  }
   if (q.name) {
     const search = q.name.toLowerCase();
     runs = runs.filter((r) => r.name?.toLowerCase().includes(search));
@@ -413,14 +417,18 @@ export async function searchRacers(search: string, eventCode: string, season: st
   for (const r of await getEventRuns(eventCode, season)) {
     if (!r.name) continue;
     if (r.name.toLowerCase().includes(s) || (r.car_number && r.car_number.toLowerCase().includes(s))) {
-      if (!seen.has(r.name)) {
-        seen.set(r.name, r.car_number || "");
+      const key = `${r.name}|||${r.car_number || ""}`;
+      if (!seen.has(key)) {
+        seen.set(key, "");
       }
     }
   }
-  return Array.from(seen.entries())
-    .map(([name, car_number]) => ({ name, car_number }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+  return Array.from(seen.keys())
+    .map((key) => {
+      const [name, car_number] = key.split("|||");
+      return { name, car_number };
+    })
+    .sort((a, b) => a.car_number.localeCompare(b.car_number) || a.name.localeCompare(b.name))
     .slice(0, 50);
 }
 
