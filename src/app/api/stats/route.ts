@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getRacerRuns, getCarNumberRuns, searchRacers, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getPerfectReactionTimes, getDeadOnRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, searchRacers, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getPerfectReactionTimes, getDeadOnRuns } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,6 +19,11 @@ export async function GET(request: NextRequest) {
 
     if (type === "categories") {
       const stats = await getCategoryStats(eventCode, season);
+      return NextResponse.json({ categories: stats });
+    }
+
+    if (type === "detailed_categories") {
+      const stats = await getDetailedCategoryStats(eventCode, season);
       return NextResponse.json({ categories: stats });
     }
 

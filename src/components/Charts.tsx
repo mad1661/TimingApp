@@ -23,7 +23,7 @@ export function ChartContainer({ title, children, height = 300 }: ChartContainer
 }
 
 interface CategoryBarChartProps {
-  data: { category: string; bestET: number | null; avgRT: number | null; bestSpeed: number | null; count: number }[];
+  data: ({ category: string; count: number } & Record<string, number | null | string>)[];
   dataKey: string;
   label: string;
   color?: string;
