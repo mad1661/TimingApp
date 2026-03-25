@@ -38,7 +38,7 @@ interface RacerSuggestion {
 export default function TimeslipPage() {
   const live = useLiveData();
   const [search, setSearch] = useState("");
-  const [searchMode, setSearchMode] = useState<"name" | "car">("name");
+  const [searchMode, setSearchMode] = useState<"name" | "car">("car");
   const [suggestions, setSuggestions] = useState<RacerSuggestion[]>([]);
   const [selectedRacer, setSelectedRacer] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
