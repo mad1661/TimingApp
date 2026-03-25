@@ -271,9 +271,9 @@ export default function TimeslipPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
+                      <th className="p-2"></th>
                       <th className="text-left p-2">Date</th>
                       {selectedRacer?.startsWith("#") && <th className="text-left p-2">Racer</th>}
-                      <th className="text-left p-2">Event</th>
                       <th className="text-left p-2">Cat</th>
                       <th className="text-left p-2">Rnd</th>
                       <th className="text-right p-2">RT</th>
@@ -281,7 +281,7 @@ export default function TimeslipPage() {
                       <th className="text-right p-2">MPH</th>
                       <th className="text-center p-2">W</th>
                       <th className="text-left p-2">Opponents</th>
-                      <th className="p-2"></th>
+                      <th className="text-right p-2">Event</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -295,9 +295,11 @@ export default function TimeslipPage() {
                             : "hover:bg-nhra-border/20"
                         }`}
                       >
+                        <td className="p-2">
+                          <button className="text-xs text-nhra-accent hover:underline">Select</button>
+                        </td>
                         <td className="p-2 text-gray-300 whitespace-nowrap text-xs">{run.timestamp?.split(" ")[0] ?? "-"}</td>
                         {selectedRacer?.startsWith("#") && <td className="p-2 text-white text-xs whitespace-nowrap">{run.name || "-"}</td>}
-                        <td className="p-2 text-white whitespace-nowrap text-xs">{run.event_name || "-"}</td>
                         <td className="p-2 text-gray-300 text-xs">{run.category}</td>
                         <td className="p-2 text-gray-300">{run.round}</td>
                         <td className="p-2 text-right font-mono text-gray-300">{run.rt?.toFixed(3) ?? "-"}</td>
@@ -327,9 +329,7 @@ export default function TimeslipPage() {
                             ))
                           ) : "—"}
                         </td>
-                        <td className="p-2">
-                          <button className="text-xs text-nhra-accent hover:underline">Select</button>
-                        </td>
+                        <td className="p-2 text-white whitespace-nowrap text-xs text-right">{run.event_name || "-"}</td>
                       </tr>
                     ))}
                   </tbody>
