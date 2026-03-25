@@ -23,6 +23,7 @@ interface RunRow {
   category: string | null;
   lane: string | null;
   dial_in: number | null;
+  event_name: string | null;
 }
 
 type SearchMode = "number" | "name";
@@ -264,7 +265,8 @@ export default function SearchPage() {
                     <th className="text-right p-3">ET</th>
                     <th className="text-right p-3">MPH</th>
                     <th className="text-center p-3">W</th>
-                    <th className="text-right p-3 pr-5">Dial</th>
+                    <th className="text-right p-3">Dial</th>
+                    <th className="text-left p-3 pr-5">Event</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -290,7 +292,8 @@ export default function SearchPage() {
                       <td className="p-3 text-center">
                         {run.is_winner ? <span className="text-green-400 font-bold text-xs">W</span> : <span className="text-gray-600">-</span>}
                       </td>
-                      <td className="p-3 text-right font-mono text-gray-400 pr-5">{run.dial_in?.toFixed(2) ?? "-"}</td>
+                      <td className="p-3 text-right font-mono text-gray-400">{run.dial_in?.toFixed(2) ?? "-"}</td>
+                      <td className="p-3 text-gray-400 text-xs pr-5 whitespace-nowrap">{run.event_name || "-"}</td>
                     </tr>
                   ))}
                 </tbody>
