@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { StatCard, HighlightCard } from "@/components/StatsCards";
+import TimeslipCard from "@/components/TimeslipCard";
+import type { TimeslipRun } from "@/components/TimeslipCard";
 import { useLiveData } from "@/components/LiveDataProvider";
 
 interface RunRow {
@@ -12,15 +14,24 @@ interface RunRow {
   mph_1320: number | null;
   rt: number | null;
   ft60: number | null;
+  ft330: number | null;
+  ft660: number | null;
+  mph_660: number | null;
+  ft1000: number | null;
+  mph_1000: number | null;
+  mov: number | null;
+  is_winner: number;
+  is_dq: number;
   category: string | null;
   event_name: string | null;
+  event_code: string | null;
+  season: string | null;
   round: string | null;
   car_number: string | null;
   timestamp: string | null;
   class_index: string | null;
   lane: string | null;
   dial_in: number | null;
-  is_winner: number;
 }
 
 interface DashboardStats {
@@ -32,6 +43,34 @@ interface DashboardStats {
   bestRT: RunRow | null;
   fastestSpeed: RunRow | null;
   recentRuns: RunRow[];
+}
+
+function toTimeslipRun(r: RunRow): TimeslipRun {
+  return {
+    timestamp: r.timestamp,
+    round: r.round,
+    car_number: r.car_number,
+    name: r.name,
+    class_index: r.class_index,
+    rt: r.rt,
+    ft60: r.ft60,
+    ft330: r.ft330 ?? null,
+    ft660: r.ft660 ?? null,
+    mph_660: r.mph_660 ?? null,
+    ft1000: r.ft1000 ?? null,
+    mph_1000: r.mph_1000 ?? null,
+    ft1320: r.ft1320,
+    mph_1320: r.mph_1320,
+    mov: r.mov ?? null,
+    is_winner: r.is_winner ?? 0,
+    is_dq: r.is_dq ?? 0,
+    category: r.category,
+    lane: r.lane,
+    dial_in: r.dial_in,
+    event_name: r.event_name,
+    event_code: r.event_code ?? null,
+    season: r.season ?? null,
+  };
 }
 
 export default function Dashboard() {
@@ -79,6 +118,22 @@ export default function Dashboard() {
   }
 
   const empty = !stats || !stats.totalRuns;
+
+  // Build timeslip from latest pair
+  let latestLeft: TimeslipRun | null = null;
+  let latestRight: TimeslipRun | null = null;
+  if (latestPair.length > 0) {
+    // Put left lane first, right lane second
+    const leftLane = latestPair.find((r) => r.lane === "L");
+    const rightLane = latestPair.find((r) => r.lane === "R");
+    if (leftLane && rightLane) {
+      latestLeft = toTimeslipRun(leftLane);
+      latestRight = toTimeslipRun(rightLane);
+    } else {
+      latestLeft = toTimeslipRun(latestPair[0]);
+      latestRight = latestPair.length > 1 ? toTimeslipRun(latestPair[1]) : null;
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -239,59 +294,16 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Live Timing - Latest Pair */}
-          {latestPair.length > 0 && (
-            <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
-              <div className="p-5 border-b border-nhra-border flex items-center gap-3">
+          {/* Last Run Completed - Timeslip */}
+          {latestLeft && (
+            <div className="mb-8">
+              <div className="flex items-center gap-3 mb-4">
                 <span className="w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse" />
-                <h2 className="text-lg font-semibold text-white">Latest Pair Down the Track</h2>
-                <span className="ml-auto text-xs text-gray-500">{latestPair[0]?.category} &mdash; {latestPair[0]?.round}</span>
+                <h2 className="text-lg font-semibold text-white">Last Run Completed</h2>
+                <span className="text-xs text-gray-500">{latestLeft.category} &mdash; Round {latestLeft.round}</span>
               </div>
-              <div className={`grid ${latestPair.length >= 4 ? "grid-cols-2 md:grid-cols-4" : latestPair.length >= 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"} divide-x divide-nhra-border`}>
-                {latestPair.map((run, idx) => {
-                  const isWinner = !!run.is_winner;
-                  return (
-                    <div key={idx} className={`p-5 ${isWinner ? "bg-green-500/5" : ""}`}>
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <Link href={`/racer/${encodeURIComponent(run.name || "")}`} className="text-white font-bold text-lg hover:text-nhra-accent transition-colors">
-                            {run.name}
-                          </Link>
-                          <p className="text-xs text-gray-500">
-                            <span className="text-nhra-accent font-bold">#{run.car_number}</span> &middot; {run.lane === "L" ? "Left Lane" : run.lane === "R" ? "Right Lane" : run.lane || ""}
-                          </p>
-                        </div>
-                        {isWinner && (
-                          <span className="px-2.5 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-lg">WIN</span>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-xs text-gray-500 uppercase">R/T</span>
-                          <span className="font-mono text-white font-bold">{run.rt?.toFixed(3) ?? "-"}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-xs text-gray-500 uppercase">60&apos;</span>
-                          <span className="font-mono text-gray-300">{run.ft60?.toFixed(3) ?? "-"}</span>
-                        </div>
-                        <div className="flex justify-between bg-nhra-darker -mx-5 px-5 py-2">
-                          <span className="text-xs text-gray-400 uppercase font-bold">E.T.</span>
-                          <span className="font-mono text-white text-xl font-black">{run.ft1320?.toFixed(3) ?? "-"}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-xs text-gray-500 uppercase">MPH</span>
-                          <span className="font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</span>
-                        </div>
-                        {run.dial_in != null && run.dial_in > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-xs text-gray-500 uppercase">Dial-In</span>
-                            <span className="font-mono text-yellow-400">{run.dial_in?.toFixed(3)}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="flex justify-center overflow-x-auto">
+                <TimeslipCard left={latestLeft} right={latestRight} />
               </div>
             </div>
           )}
