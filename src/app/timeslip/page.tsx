@@ -80,14 +80,28 @@ export default function TimeslipPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  async function loadRacerRuns(name: string) {
+  async function loadRacerRuns(name: string, displayText?: string) {
     setSelectedRacer(name);
-    setSearch(name);
+    setSearch(displayText || name);
     setShowSuggestions(false);
     setLoading(true);
     setSelectedRun(null);
     try {
       const res = await fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}${eventQS}`);
+      const data = await res.json();
+      setRuns(data.runs || []);
+    } catch { setRuns([]); }
+    setLoading(false);
+  }
+
+  async function loadCarNumberRuns(carNumber: string) {
+    setSelectedRacer(`#${carNumber}`);
+    setSearch(carNumber);
+    setShowSuggestions(false);
+    setLoading(true);
+    setSelectedRun(null);
+    try {
+      const res = await fetch(`/api/stats?type=car_runs&car_number=${encodeURIComponent(carNumber)}${eventQS}`);
       const data = await res.json();
       setRuns(data.runs || []);
     } catch { setRuns([]); }
@@ -132,6 +146,11 @@ export default function TimeslipPage() {
     ? suggestions.filter((s) => s.car_number && s.car_number.toLowerCase().includes(search.toLowerCase()))
     : suggestions;
 
+  // Get unique car numbers for the "show all" options in car mode
+  const uniqueCarNumbers = searchMode === "car"
+    ? [...new Set(filteredSuggestions.map((s) => s.car_number).filter(Boolean))]
+    : [];
+
   return (
     <div className="max-w-6xl mx-auto">
       {/* Screen-only header and controls */}
@@ -168,7 +187,30 @@ export default function TimeslipPage() {
             />
             {showSuggestions && filteredSuggestions.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-nhra-card border border-nhra-border rounded-lg shadow-xl z-20 max-h-64 overflow-y-auto">
-                {filteredSuggestions.map((s) => (
+                {searchMode === "car" && uniqueCarNumbers.map((cn) => {
+                  const driversForCar = filteredSuggestions.filter((s) => s.car_number === cn);
+                  return (
+                    <div key={`car-group-${cn}`}>
+                      <button
+                        onClick={() => loadCarNumberRuns(cn)}
+                        className="w-full text-left px-4 py-3 text-white hover:bg-nhra-red/20 transition-colors text-sm border-b border-nhra-border/30 flex justify-between items-center bg-nhra-darker/50"
+                      >
+                        <span className="font-bold">#{cn}</span>
+                        <span className="text-gray-400 text-xs">All runs ({driversForCar.length} {driversForCar.length === 1 ? "driver" : "drivers"})</span>
+                      </button>
+                      {driversForCar.length > 1 && driversForCar.map((s) => (
+                        <button
+                          key={`${s.name}-${s.car_number}`}
+                          onClick={() => loadRacerRuns(s.name, `#${s.car_number} — ${s.name}`)}
+                          className="w-full text-left px-4 py-3 pl-8 text-white hover:bg-nhra-border/30 transition-colors text-sm border-b border-nhra-border/30 last:border-0 flex justify-between items-center"
+                        >
+                          <span className="text-gray-300">{s.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
+                {searchMode === "name" && filteredSuggestions.map((s) => (
                   <button
                     key={`${s.name}-${s.car_number}`}
                     onClick={() => loadRacerRuns(s.name)}
