@@ -1248,14 +1248,17 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
   const runs = await getEventRuns(eventCode, season);
   tagRunTimestamps(runs);
 
-  const withData = runs.filter((r) => r.timestamp && (r.rt != null || r.ft1320 != null || r.ft660 != null));
+  const withTimestamp = runs.filter((r) => r.timestamp);
+  const withData = withTimestamp.filter((r) => r.rt != null || r.ft1320 != null || r.ft660 != null);
   if (withData.length === 0) return [];
 
+  // Find the latest run that has timing data
   const sorted = [...withData].sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
   const latestRun = sorted[0];
 
-  // Filter to same category+round as the latest run to avoid cross-category contamination
-  const sameRace = withData.filter(
+  // Include ALL runs with a timestamp in the same category+round (even those without timing data,
+  // e.g. in 4-wide races where some lanes may not have RT/ET yet)
+  const sameRace = withTimestamp.filter(
     (r) => r.category === latestRun.category && r.round === latestRun.round
   );
   // Use wider tolerance (3s) to capture all lanes in 4-wide races where
