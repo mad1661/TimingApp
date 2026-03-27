@@ -469,19 +469,27 @@ export async function getRacerRuns(name: string, eventCode: string, season: stri
 export async function getCarNumberRuns(carNumber: string, eventCode: string, season: string): Promise<RunRow[]> {
   const runs = await getEventRuns(eventCode, season);
   tagRunTimestamps(runs);
+  const cn = carNumber.trim().toLowerCase();
   return runs
-    .filter((r) => r.car_number && r.car_number.toLowerCase() === carNumber.toLowerCase())
+    .filter((r) => {
+      if (!r.car_number) return false;
+      const stored = r.car_number.trim().toLowerCase();
+      return stored === cn || stored.includes(cn) || cn.includes(stored);
+    })
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
 export async function getCarNumberRunsAllEvents(carNumber: string): Promise<RunRow[]> {
   const events = await getEvents();
   const allRuns: RunRow[] = [];
+  const cn = carNumber.trim().toLowerCase();
   for (const ev of events) {
     const runs = await getEventRuns(ev.event_code, ev.season);
     tagRunTimestamps(runs);
     for (const r of runs) {
-      if (r.car_number && r.car_number.toLowerCase() === carNumber.toLowerCase()) {
+      if (!r.car_number) continue;
+      const stored = r.car_number.trim().toLowerCase();
+      if (stored === cn || stored.includes(cn) || cn.includes(stored)) {
         allRuns.push(r);
       }
     }

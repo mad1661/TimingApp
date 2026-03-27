@@ -197,7 +197,19 @@ export default function TimeslipPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onFocus={() => filteredSuggestions.length > 0 && setShowSuggestions(true)}
-              placeholder={searchMode === "name" ? "Type racer name..." : "Type car number..."}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && search.trim()) {
+                  if (searchMode === "car") {
+                    loadCarNumberRuns(search.trim());
+                  } else {
+                    // In name mode, select first suggestion or search directly
+                    if (filteredSuggestions.length > 0) {
+                      loadRacerRuns(filteredSuggestions[0].name);
+                    }
+                  }
+                }
+              }}
+              placeholder={searchMode === "name" ? "Type racer name..." : "Type car number (press Enter to search)..."}
               className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent text-lg"
             />
             {showSuggestions && filteredSuggestions.length > 0 && (
