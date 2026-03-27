@@ -299,9 +299,9 @@ export default function BestLosingPackagePage() {
                   const eventLabel = selectedEventName || selectedEvent;
                   const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
                   const header = `Best Losing Package - ${eventLabel}`;
-                  const colHeader = `${pad("Racer", 28)}${pad("Category", 18)}${pad("Car Number", 14)}Membership`;
+                  const colHeader = `${pad("Racer", 28)}${pad("Category", 18)}${pad("Car Number", 14)}${pad("Package", 12)}Membership`;
                   const rows = blpWinners.map((w) =>
-                    `${pad(w.name, 28)}${pad(w.category, 18)}${pad("#" + w.car_number, 14)}—`
+                    `${pad(w.name, 28)}${pad(w.category, 18)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}—`
                   );
                   const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
                   navigator.clipboard.writeText(text);
@@ -323,6 +323,7 @@ export default function BestLosingPackagePage() {
                   <th className="px-6 py-3 text-left">Racer</th>
                   <th className="px-4 py-3 text-left">Category</th>
                   <th className="px-4 py-3 text-left">Car Number</th>
+                  <th className="px-4 py-3 text-left">Package</th>
                   <th className="px-4 py-3 text-left">Membership</th>
                 </tr>
               </thead>
@@ -339,6 +340,7 @@ export default function BestLosingPackagePage() {
                     </td>
                     <td className="px-4 py-3 text-white">{w.category}</td>
                     <td className="px-4 py-3 text-white">#{w.car_number}</td>
+                    <td className="px-4 py-3 text-white font-mono">{w.package.toFixed(4)}</td>
                     <td className="px-4 py-3 text-gray-500">—</td>
                   </tr>
                 ))}
