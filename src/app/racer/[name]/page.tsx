@@ -8,6 +8,33 @@ import { ChartContainer, PerformanceLineChart } from "@/components/Charts";
 import { classifyCategory, formatLabel, relevantMetrics, type RaceFormat } from "@/lib/categories";
 import { useLiveData } from "@/components/LiveDataProvider";
 
+interface TechCard {
+  car_number: string;
+  first_name: string;
+  last_name: string;
+  city: string;
+  state: string;
+  zip: string;
+  occupation: string;
+  license_number: string;
+  home_division: string;
+  owner: string;
+  crew_chief: string;
+  category: string;
+  class_name: string;
+  engine_make: string;
+  engine_year: string;
+  body_type: string;
+  body_year: string;
+  cu_cc: string;
+  hp: string;
+  factored_hp: string;
+  member_number: string;
+  member_expiry: string;
+  bio_lines: string[];
+  event_name?: string;
+}
+
 interface Opponent {
   name: string | null;
   car_number: string | null;
@@ -45,17 +72,31 @@ export default function RacerPage() {
   const live = useLiveData();
   const name = decodeURIComponent(params.name as string);
   const [runs, setRuns] = useState<RunRow[]>([]);
+  const [techCards, setTechCards] = useState<TechCard[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const ec = live.config?.eventCode;
     const s = live.config?.season;
-    if (!ec || !s) { setLoading(false); return; }
-    fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`)
-      .then((r) => r.json())
-      .then((data) => setRuns(data.runs || []))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+
+    const fetchRuns = ec && s
+      ? fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`)
+          .then((r) => r.json())
+          .then((data) => setRuns(data.runs || []))
+          .catch(console.error)
+      : Promise.resolve();
+
+    const nameParts = name.split(" ");
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+    const fetchTechCards = firstName && lastName
+      ? fetch(`/api/tech-cards?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}`)
+          .then((r) => r.json())
+          .then((data) => setTechCards(data.results || []))
+          .catch(console.error)
+      : Promise.resolve();
+
+    Promise.all([fetchRuns, fetchTechCards]).finally(() => setLoading(false));
   }, [name, live.config?.eventCode, live.config?.season]);
 
   if (loading) {
@@ -161,11 +202,97 @@ export default function RacerPage() {
         </p>
       </div>
 
-      {runs.length === 0 ? (
+      {/* Tech Card Info */}
+      {techCards.length > 0 && (
+        <div className="mb-8 space-y-4">
+          {techCards.map((tc, i) => (
+            <div key={i} className="bg-nhra-card border border-nhra-border rounded-xl p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <h3 className="text-lg font-semibold text-white">Tech Card</h3>
+                <span className="text-nhra-accent font-bold text-sm">#{tc.car_number}</span>
+                <span className="text-gray-400 text-sm">{tc.category}{tc.class_name ? ` - ${tc.class_name}` : ""}</span>
+                {tc.member_number && (
+                  <span className="ml-auto text-xs text-gray-500 bg-nhra-darker px-2 py-1 rounded">Member #{tc.member_number}</span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                {(tc.city || tc.state) && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Location</p>
+                    <p className="text-gray-300">{[tc.city, tc.state].filter(Boolean).join(", ")}</p>
+                  </div>
+                )}
+                {tc.engine_make && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Engine</p>
+                    <p className="text-gray-300">{tc.engine_make}{tc.engine_year ? ` (${tc.engine_year})` : ""}</p>
+                  </div>
+                )}
+                {tc.body_type && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Body</p>
+                    <p className="text-gray-300">{tc.body_type}{tc.body_year ? ` (${tc.body_year})` : ""}</p>
+                  </div>
+                )}
+                {tc.hp && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Horsepower</p>
+                    <p className="text-gray-300">{tc.hp}{tc.factored_hp ? ` (factored: ${tc.factored_hp})` : ""}</p>
+                  </div>
+                )}
+                {tc.cu_cc && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">CU/CC</p>
+                    <p className="text-gray-300">{tc.cu_cc}</p>
+                  </div>
+                )}
+                {tc.owner && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Owner</p>
+                    <p className="text-gray-300">{tc.owner}</p>
+                  </div>
+                )}
+                {tc.crew_chief && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Crew Chief</p>
+                    <p className="text-gray-300">{tc.crew_chief}</p>
+                  </div>
+                )}
+                {tc.home_division && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">Home Division</p>
+                    <p className="text-gray-300">{tc.home_division}</p>
+                  </div>
+                )}
+                {tc.license_number && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase">License #</p>
+                    <p className="text-gray-300">{tc.license_number}</p>
+                  </div>
+                )}
+              </div>
+              {tc.bio_lines && tc.bio_lines.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-nhra-border/50">
+                  <p className="text-xs text-gray-500 uppercase mb-2">Bio</p>
+                  <div className="text-sm text-gray-400 space-y-1">
+                    {tc.bio_lines.map((line, li) => (
+                      <p key={li}>{line}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {runs.length === 0 && techCards.length === 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl p-12 text-center text-gray-500">
           No runs found for this racer.
         </div>
-      ) : (
+      )}
+
+      {runs.length > 0 && (
         <>
           {/* Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
