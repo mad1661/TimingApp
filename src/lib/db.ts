@@ -1270,3 +1270,85 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
     .filter((r) => (tsGroups.get(r.timestamp!) || r.timestamp!) === latestCanonical)
     .sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
 }
+
+// --------------- Tech Card Data ---------------
+
+export interface TechCardEntry {
+  id?: string;
+  car_number: string;
+  first_name: string;
+  last_name: string;
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  occupation: string;
+  license_number: string;
+  license_expiry: string;
+  home_division: string;
+  owner: string;
+  crew_chief: string;
+  category: string;       // abbreviation: SS, SG, TD, etc.
+  class_name: string;
+  engine_make: string;
+  engine_year: string;
+  body_type: string;
+  body_year: string;
+  cu_cc: string;
+  hp: string;
+  factored_hp: string;
+  member_number: string;
+  member_expiry: string;
+  payee: string;
+  bio_lines: string[];    // line1 through line6
+  submission_date: string;
+  uploaded_at: string;
+  event_name?: string;
+}
+
+export async function saveTechCards(entries: TechCardEntry[]): Promise<{ saved: number; skipped: number }> {
+  const db = getDb();
+  const col = db.collection("tech_cards");
+  let saved = 0;
+  let skipped = 0;
+
+  for (const entry of entries) {
+    if (!entry.car_number && !entry.first_name && !entry.last_name) {
+      skipped++;
+      continue;
+    }
+    // Key by car_number + category for dedup/overwrite
+    const key = `${entry.car_number}_${entry.category}`.replace(/[\/\\]/g, "_");
+    await col.doc(key).set(entry, { merge: true });
+    saved++;
+  }
+
+  return { saved, skipped };
+}
+
+export async function getTechCardByCarNumber(carNumber: string): Promise<TechCardEntry[]> {
+  const db = getDb();
+  const snap = await db.collection("tech_cards").where("car_number", "==", carNumber).get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as TechCardEntry));
+}
+
+export async function getTechCardByName(firstName: string, lastName: string): Promise<TechCardEntry[]> {
+  const db = getDb();
+  const snap = await db.collection("tech_cards")
+    .where("first_name", "==", firstName)
+    .where("last_name", "==", lastName)
+    .get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as TechCardEntry));
+}
+
+export async function searchTechCards(query: string): Promise<TechCardEntry[]> {
+  const db = getDb();
+  const snap = await db.collection("tech_cards").get();
+  const q = query.toLowerCase();
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as TechCardEntry))
+    .filter((t) => {
+      const fullName = `${t.first_name} ${t.last_name}`.toLowerCase();
+      return fullName.includes(q) || (t.car_number && t.car_number.toLowerCase().includes(q));
+    });
+}
