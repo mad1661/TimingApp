@@ -209,7 +209,13 @@ export default function BestLosingPackagePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
-                {round}
+                {round === "F" || round.toLowerCase() === "final" ? "Final"
+                  : round.startsWith("C") ? `Class Round ${round.slice(1)}`
+                  : round.startsWith("R") ? `Round ${round.slice(1)}`
+                  : round.startsWith("E") ? `Round ${round.slice(1)}`
+                  : round.startsWith("T") ? `Time Trial ${round.slice(1)}`
+                  : round.startsWith("Q") ? `Qualifying ${round.slice(1)}`
+                  : round}
               </button>
             ))}
           </div>
@@ -404,7 +410,7 @@ export default function BestLosingPackagePage() {
                         <p className="text-xs text-nhra-accent font-bold">#{entry.car_number}</p>
                       </div>
                       <div className="col-span-1 text-right text-gray-400 text-sm">
-                        {entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `CR${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}
+                        {entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}
                       </div>
                       <div className="col-span-2 text-right text-white font-mono text-sm">
                         {entry.rt.toFixed(4)}
@@ -470,7 +476,7 @@ export default function BestLosingPackagePage() {
                         </div>
                         <div>
                           <span className="text-gray-500">Round</span>
-                          <p className="text-gray-400">{entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `CR${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}</p>
+                          <p className="text-gray-400">{entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}</p>
                         </div>
                       </div>
                     </div>
