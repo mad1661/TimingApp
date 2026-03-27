@@ -1093,11 +1093,11 @@ export async function getBestLosingPackage(
     if (!r.round || !roundSet.has(r.round)) return false;
     if (!r.category || !categorySet.has(r.category)) return false;
     if (r.is_winner === 1) return false;
-    if (r.rt == null || r.rt < 0) return false;
+    if (r.rt === null || r.rt === undefined || r.rt < 0) return false;
     if (!r.ft1320 || r.ft1320 <= 0) return false;
     // Use dial_in if available, otherwise try parsing class_index as a number
-    const dialValue = (r.dial_in && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : NaN);
-    if (!dialValue || isNaN(dialValue) || dialValue <= 0) return false;
+    const dialValue = (r.dial_in != null && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : NaN);
+    if (isNaN(dialValue) || dialValue <= 0) return false;
     // Exclude breakouts (ran faster than dial-in)
     if (r.ft1320 < dialValue) return false;
     (r as RunRow & { _dialValue?: number })._dialValue = dialValue;
@@ -1110,7 +1110,7 @@ export async function getBestLosingPackage(
     const catLosers = losers
       .filter((r) => r.category === cat)
       .map((r) => {
-        const dialValue = (r as RunRow & { _dialValue?: number })._dialValue || r.dial_in!;
+        const dialValue = (r as RunRow & { _dialValue?: number })._dialValue ?? r.dial_in!;
         const diff = r.ft1320! - dialValue;
         return {
           name: r.name || "Unknown",
