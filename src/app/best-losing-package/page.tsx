@@ -297,10 +297,11 @@ export default function BestLosingPackagePage() {
               <button
                 onClick={() => {
                   const eventLabel = selectedEventName || selectedEvent;
+                  const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
                   const header = `Best Losing Package - ${eventLabel}`;
-                  const colHeader = `Racer\tCategory\tCar Number\tPackage\tMembership`;
+                  const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Package", 12)}Membership`;
                   const rows = blpWinners.map((w) =>
-                    `${w.name}\t${w.category}\t#${w.car_number}\t${w.package.toFixed(4)}\t—`
+                    `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}—`
                   );
                   const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
                   navigator.clipboard.writeText(text);
