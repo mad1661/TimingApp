@@ -293,17 +293,17 @@ export default function BestLosingPackagePage() {
         return (
           <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
             <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
-              <h3 className="text-white font-bold text-lg">Winners and Info</h3>
+              <h3 className="text-white font-bold text-lg">Best Losing Package - {selectedEventName || selectedEvent}</h3>
               <button
                 onClick={() => {
                   const eventLabel = selectedEventName || selectedEvent;
-                  const roundsList = Array.from(selectedRounds).sort().map((r) => r === "F" ? "Final" : r.replace("E", "Round ")).join(", ");
-                  const header = `Best Losing Package Winners\n${eventLabel} ${selectedSeason}\nRounds: ${roundsList}\n`;
-                  const divider = "—".repeat(40);
+                  const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
+                  const header = `Best Losing Package - ${eventLabel}`;
+                  const colHeader = `${pad("Racer", 28)}${pad("Category", 18)}${pad("Car Number", 14)}Membership`;
                   const rows = blpWinners.map((w) =>
-                    `${w.category}\n  ${w.name}  |  Car #${w.car_number}  |  Package: ${w.package.toFixed(4)}\n  RT: ${w.rt.toFixed(4)}  |  ET: ${w.ft1320.toFixed(3)}  |  Dial: ${w.dial_in.toFixed(2)}`
+                    `${pad(w.name, 28)}${pad(w.category, 18)}${pad("#" + w.car_number, 14)}—`
                   );
-                  const text = `${header}\n${divider}\n\n${rows.join("\n\n")}\n\n${divider}\nPackage = RT + (ET - Dial)`;
+                  const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
                   navigator.clipboard.writeText(text);
                   setWinnersCopied(true);
                   setTimeout(() => setWinnersCopied(false), 2000);
@@ -317,40 +317,33 @@ export default function BestLosingPackagePage() {
               </button>
             </div>
 
-            <div className="hidden sm:grid grid-cols-12 gap-2 px-6 py-3 border-b border-nhra-border text-xs text-gray-500 font-medium uppercase tracking-wider">
-              <div className="col-span-3">Category</div>
-              <div className="col-span-3">Name</div>
-              <div className="col-span-2">Car #</div>
-              <div className="col-span-2">Membership #</div>
-              <div className="col-span-2 text-right">Package</div>
-            </div>
-
-            <div className="divide-y divide-nhra-border">
-              {blpWinners.map((w) => (
-                <div key={w.category} className="px-6 py-3">
-                  <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-3 text-white font-medium">{w.category}</div>
-                    <div className="col-span-3">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-nhra-border text-gray-400 text-xs font-bold uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left">Racer</th>
+                  <th className="px-4 py-3 text-left">Category</th>
+                  <th className="px-4 py-3 text-left">Car Number</th>
+                  <th className="px-4 py-3 text-left">Membership</th>
+                </tr>
+              </thead>
+              <tbody>
+                {blpWinners.map((w) => (
+                  <tr key={w.category} className="border-b border-nhra-border/30">
+                    <td className="px-6 py-3">
                       <Link
                         href={`/racer/${encodeURIComponent(w.name)}`}
                         className="text-white font-semibold hover:text-nhra-accent transition-colors"
                       >
                         {w.name}
                       </Link>
-                    </div>
-                    <div className="col-span-2 text-nhra-accent font-bold">#{w.car_number}</div>
-                    <div className="col-span-2 text-gray-500">—</div>
-                    <div className="col-span-2 text-right font-mono text-white font-bold">
-                      {w.package.toFixed(4)}
-                    </div>
-                  </div>
-                  <div className="sm:hidden">
-                    <p className="text-white font-medium">{w.category}</p>
-                    <p className="text-sm text-gray-300">{w.name} &middot; #{w.car_number} &middot; Pkg: {w.package.toFixed(4)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                    </td>
+                    <td className="px-4 py-3 text-white">{w.category}</td>
+                    <td className="px-4 py-3 text-white">#{w.car_number}</td>
+                    <td className="px-4 py-3 text-gray-500">—</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         );
       })()}
