@@ -209,12 +209,7 @@ export default function BestLosingPackagePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
-                {round === "F" || round.toLowerCase() === "final" ? "Final"
-                  : round.startsWith("C") ? `Class Round ${round.slice(1)}`
-                  : round.startsWith("E") ? `Round ${round.slice(1)}`
-                  : round.startsWith("T") ? `Time Trial ${round.slice(1)}`
-                  : round.startsWith("Q") ? `Qualifying ${round.slice(1)}`
-                  : round}
+                {round}
               </button>
             ))}
           </div>
