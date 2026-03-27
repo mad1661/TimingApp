@@ -210,7 +210,7 @@ export default function BestLosingPackagePage() {
                   </svg>
                 )}
                 {round === "F" || round.toLowerCase() === "final" ? "Final"
-                  : round.startsWith("C") ? `Class Round ${round.slice(1)}`
+                  : round.startsWith("C") ? `Class ${round.slice(1)}`
                   : round.startsWith("E") ? `Round ${round.slice(1)}`
                   : round.startsWith("T") ? `Time Trial ${round.slice(1)}`
                   : round.startsWith("Q") ? `Qualifying ${round.slice(1)}`
