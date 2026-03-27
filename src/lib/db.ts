@@ -413,7 +413,7 @@ export async function getEvents(): Promise<EventRow[]> {
   }
 }
 
-export async function searchRacers(search: string, eventCode: string, season: string): Promise<{ name: string; car_number: string }[]> {
+export async function searchRacers(search: string, eventCode: string, season: string): Promise<{ name: string; car_number: string; category: string }[]> {
   const s = search.toLowerCase();
   const seen = new Map<string, string>();
   for (const r of await getEventRuns(eventCode, season)) {
@@ -421,20 +421,20 @@ export async function searchRacers(search: string, eventCode: string, season: st
     if (r.name.toLowerCase().includes(s) || (r.car_number && r.car_number.toLowerCase().includes(s))) {
       const key = `${r.name}|||${r.car_number || ""}`;
       if (!seen.has(key)) {
-        seen.set(key, "");
+        seen.set(key, r.category || "");
       }
     }
   }
-  return Array.from(seen.keys())
-    .map((key) => {
+  return Array.from(seen.entries())
+    .map(([key, category]) => {
       const [name, car_number] = key.split("|||");
-      return { name, car_number };
+      return { name, car_number, category };
     })
     .sort((a, b) => a.car_number.localeCompare(b.car_number) || a.name.localeCompare(b.name))
     .slice(0, 50);
 }
 
-export async function searchRacersAllEvents(search: string): Promise<{ name: string; car_number: string }[]> {
+export async function searchRacersAllEvents(search: string): Promise<{ name: string; car_number: string; category: string }[]> {
   const s = search.toLowerCase();
   const seen = new Map<string, string>();
   const events = await getEvents();
@@ -444,15 +444,15 @@ export async function searchRacersAllEvents(search: string): Promise<{ name: str
       if (r.name.toLowerCase().includes(s) || (r.car_number && r.car_number.toLowerCase().includes(s))) {
         const key = `${r.name}|||${r.car_number || ""}`;
         if (!seen.has(key)) {
-          seen.set(key, "");
+          seen.set(key, r.category || "");
         }
       }
     }
   }
-  return Array.from(seen.keys())
-    .map((key) => {
+  return Array.from(seen.entries())
+    .map(([key, category]) => {
       const [name, car_number] = key.split("|||");
-      return { name, car_number };
+      return { name, car_number, category };
     })
     .sort((a, b) => a.car_number.localeCompare(b.car_number) || a.name.localeCompare(b.name))
     .slice(0, 50);
