@@ -16,6 +16,17 @@ export async function GET(request: NextRequest) {
       const runs = eventCode && season
         ? await getCarNumberRuns(carNumber, eventCode, season)
         : await getCarNumberRunsAllEvents(carNumber);
+      // Attach opponents for timeslip display
+      if (eventCode && season && runs.length > 0) {
+        const { opponents: opponentMap, tsGroups: tsGroupMap } = await getOpponentsForRuns(runs, eventCode, season);
+        const runsWithOpponents = runs.map((run) => {
+          const canonical = run.timestamp ? (tsGroupMap.get(run.timestamp) || run.timestamp) : "";
+          const paired = opponentMap.get(canonical) || [];
+          const opponents = paired.filter((p) => p.car_number !== run.car_number || p.name !== run.name);
+          return { ...run, opponents: opponents.map((o) => ({ name: o.name, car_number: o.car_number, rt: o.rt, ft60: o.ft60, ft330: o.ft330, ft660: o.ft660, mph_660: o.mph_660, ft1000: o.ft1000, mph_1000: o.mph_1000, ft1320: o.ft1320, mph_1320: o.mph_1320, mov: o.mov, is_winner: o.is_winner, is_dq: o.is_dq, result: o.result, lane: o.lane, dial_in: o.dial_in })) };
+        });
+        return NextResponse.json({ car_number: carNumber, runs: runsWithOpponents, totalRuns: runs.length });
+      }
       return NextResponse.json({ car_number: carNumber, runs, totalRuns: runs.length });
     }
 
