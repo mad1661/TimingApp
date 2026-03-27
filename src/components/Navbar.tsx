@@ -52,7 +52,7 @@ export default function Navbar() {
           </Link>
         </div>
 
-        <div className="p-4 space-y-1 flex-1">
+        <div className="p-4 space-y-1 flex-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
             return (
