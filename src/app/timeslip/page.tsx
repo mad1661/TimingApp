@@ -56,6 +56,7 @@ export default function TimeslipPage() {
   const searchRacers = useCallback(async (q: string) => {
     if (justSelectedRef.current) { justSelectedRef.current = false; return; }
     if (q.length < 1) { setSuggestions([]); return; }
+    if (!eventQS) { return; } // Wait for event context before searching
     try {
       const res = await fetch(`/api/stats?type=racers&search=${encodeURIComponent(q)}${eventQS}`);
       const data = await res.json();
@@ -66,7 +67,7 @@ export default function TimeslipPage() {
       }
       setShowSuggestions(true);
     } catch { setSuggestions([]); }
-  }, [eventQS, searchMode]);
+  }, [eventQS]);
 
   useEffect(() => {
     const timer = setTimeout(() => searchRacers(search), 300);
