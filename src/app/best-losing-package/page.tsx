@@ -23,6 +23,18 @@ interface PackageEntry {
   timestamp: string;
 }
 
+interface WinnerEntry {
+  name: string;
+  car_number: string;
+  category: string;
+  round: string;
+  rt: number;
+  ft1320: number;
+  dial_in: number;
+  package: number;
+  timestamp: string;
+}
+
 export default function BestLosingPackagePage() {
   const live = useLiveData();
   const [events, setEvents] = useState<EventOption[]>([]);
@@ -39,8 +51,10 @@ export default function BestLosingPackagePage() {
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
   const [results, setResults] = useState<Record<string, PackageEntry[]>>({});
+  const [winners, setWinners] = useState<WinnerEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [winnersCopied, setWinnersCopied] = useState(false);
 
   // Load events on mount
   useEffect(() => {
@@ -138,11 +152,18 @@ export default function BestLosingPackagePage() {
     try {
       const rounds = Array.from(selectedRounds).join(",");
       const categories = Array.from(selectedCategories).join(",");
-      const res = await fetch(
-        `/api/stats?type=best-losing-package&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&rounds=${encodeURIComponent(rounds)}&categories=${encodeURIComponent(categories)}`
-      );
-      const data = await res.json();
-      setResults(data.results || {});
+      const [blpRes, winRes] = await Promise.all([
+        fetch(
+          `/api/stats?type=best-losing-package&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&rounds=${encodeURIComponent(rounds)}&categories=${encodeURIComponent(categories)}`
+        ),
+        fetch(
+          `/api/stats?type=event-winners&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&categories=${encodeURIComponent(categories)}`
+        ),
+      ]);
+      const blpData = await blpRes.json();
+      const winData = await winRes.json();
+      setResults(blpData.results || {});
+      setWinners(winData.results || []);
       setSearched(true);
     } catch (err) {
       console.error(err);
@@ -287,6 +308,71 @@ export default function BestLosingPackagePage() {
             No losing runs with valid RT, ET, and dial-in found for the selected rounds and classes.
             Heads-up classes (Top Fuel, Funny Car, etc.) typically don&apos;t have dial-ins.
           </p>
+        </div>
+      )}
+
+      {/* Winners Section */}
+      {searched && !loading && winners.length > 0 && (
+        <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
+          <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
+            <h3 className="text-white font-bold text-lg">Winners and Info</h3>
+            <button
+              onClick={() => {
+                const lines = winners.map((w) =>
+                  `${w.category} - ${w.name} - #${w.car_number} - ${w.package > 0 ? w.package.toFixed(4) : "N/A"}`
+                );
+                navigator.clipboard.writeText(lines.join("\n"));
+                setWinnersCopied(true);
+                setTimeout(() => setWinnersCopied(false), 2000);
+              }}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+              {winnersCopied ? "Copied!" : "Copy for Publication"}
+            </button>
+          </div>
+
+          <div className="hidden sm:grid grid-cols-12 gap-2 px-6 py-3 border-b border-nhra-border text-xs text-gray-500 font-medium uppercase tracking-wider">
+            <div className="col-span-3">Category</div>
+            <div className="col-span-3">Name</div>
+            <div className="col-span-2">Car #</div>
+            <div className="col-span-2">Membership #</div>
+            <div className="col-span-2 text-right">Package</div>
+          </div>
+
+          <div className="divide-y divide-nhra-border">
+            {winners.map((w) => (
+              <div key={w.category} className="px-6 py-3">
+                <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-3 text-white font-medium">{w.category}</div>
+                  <div className="col-span-3">
+                    <Link
+                      href={`/racer/${encodeURIComponent(w.name)}`}
+                      className="text-white font-semibold hover:text-nhra-accent transition-colors"
+                    >
+                      {w.name}
+                    </Link>
+                  </div>
+                  <div className="col-span-2 text-nhra-accent font-bold">#{w.car_number}</div>
+                  <div className="col-span-2 text-gray-500">—</div>
+                  <div className="col-span-2 text-right font-mono text-white font-bold">
+                    {w.package > 0 ? w.package.toFixed(4) : "N/A"}
+                  </div>
+                </div>
+                {/* Mobile */}
+                <div className="sm:hidden">
+                  <p className="text-white font-medium">{w.category}</p>
+                  <p className="text-sm text-gray-300">{w.name} &middot; #{w.car_number} &middot; Pkg: {w.package > 0 ? w.package.toFixed(4) : "N/A"}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="px-6 py-3 bg-nhra-darker border-t border-nhra-border text-xs text-gray-500">
+            Copy format: Category - Name - Car # - Package (Membership # not yet available in data)
+          </div>
         </div>
       )}
 

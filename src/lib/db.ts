@@ -1095,9 +1095,12 @@ export async function getBestLosingPackage(
     if (r.is_winner === 1) return false;
     if (!r.rt || r.rt <= 0) return false;
     if (!r.ft1320 || r.ft1320 <= 0) return false;
-    if (!r.dial_in || r.dial_in <= 0) return false;
+    // Use dial_in if available, otherwise try parsing class_index as a number
+    const dialValue = (r.dial_in && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : NaN);
+    if (!dialValue || isNaN(dialValue) || dialValue <= 0) return false;
     // Exclude breakouts (ran faster than dial-in)
-    if (r.ft1320 < r.dial_in) return false;
+    if (r.ft1320 < dialValue) return false;
+    (r as RunRow & { _dialValue?: number })._dialValue = dialValue;
     return true;
   });
 
@@ -1107,7 +1110,8 @@ export async function getBestLosingPackage(
     const catLosers = losers
       .filter((r) => r.category === cat)
       .map((r) => {
-        const diff = r.ft1320! - r.dial_in!;
+        const dialValue = (r as RunRow & { _dialValue?: number })._dialValue || r.dial_in!;
+        const diff = r.ft1320! - dialValue;
         return {
           name: r.name || "Unknown",
           car_number: r.car_number || "",
@@ -1115,7 +1119,7 @@ export async function getBestLosingPackage(
           round: r.round!,
           rt: r.rt!,
           ft1320: r.ft1320!,
-          dial_in: r.dial_in!,
+          dial_in: dialValue,
           diff: Math.round(diff * 10000) / 10000,
           package: Math.round((r.rt! + diff) * 10000) / 10000,
           timestamp: r.timestamp || "",
@@ -1130,6 +1134,65 @@ export async function getBestLosingPackage(
   }
 
   return result;
+}
+
+export interface EventWinnerEntry {
+  name: string;
+  car_number: string;
+  category: string;
+  round: string;
+  rt: number;
+  ft1320: number;
+  dial_in: number;
+  package: number;
+  timestamp: string;
+}
+
+export async function getEventWinners(
+  eventCode: string,
+  season: string,
+  categories: string[]
+): Promise<EventWinnerEntry[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  const categorySet = new Set(categories);
+  // Find the last elimination round winner per category (the event winner)
+  const winnerMap = new Map<string, RunRow>();
+
+  for (const r of allRuns) {
+    if (!r.category || !categorySet.has(r.category)) continue;
+    if (!r.round || !(r.round.startsWith("E") || r.round === "F")) continue;
+    if (r.is_winner !== 1) continue;
+
+    const existing = winnerMap.get(r.category);
+    if (!existing || roundOrder(r.round) > roundOrder(existing.round!)) {
+      winnerMap.set(r.category, r);
+    }
+  }
+
+  return Array.from(winnerMap.values()).map((r) => {
+    const dialValue = (r.dial_in && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : 0);
+    const diff = (r.ft1320 && dialValue > 0) ? r.ft1320 - dialValue : 0;
+    const pkg = (r.rt && r.rt > 0 && diff >= 0) ? r.rt + diff : 0;
+    return {
+      name: r.name || "Unknown",
+      car_number: r.car_number || "",
+      category: r.category!,
+      round: r.round!,
+      rt: r.rt || 0,
+      ft1320: r.ft1320 || 0,
+      dial_in: dialValue,
+      package: Math.round(pkg * 10000) / 10000,
+      timestamp: r.timestamp || "",
+    };
+  }).sort((a, b) => a.category.localeCompare(b.category));
+}
+
+function roundOrder(round: string): number {
+  if (round === "F") return 100;
+  const m = round.match(/^E(\d+)$/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
 export interface PerfectRTEntry {
