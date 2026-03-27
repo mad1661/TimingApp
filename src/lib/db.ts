@@ -1093,7 +1093,7 @@ export async function getBestLosingPackage(
     if (!r.round || !roundSet.has(r.round)) return false;
     if (!r.category || !categorySet.has(r.category)) return false;
     if (r.is_winner === 1) return false;
-    if (!r.rt || r.rt <= 0) return false;
+    if (r.rt == null || r.rt < 0) return false;
     if (!r.ft1320 || r.ft1320 <= 0) return false;
     // Use dial_in if available, otherwise try parsing class_index as a number
     const dialValue = (r.dial_in && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : NaN);
@@ -1174,7 +1174,7 @@ export async function getEventWinners(
   return Array.from(winnerMap.values()).map((r) => {
     const dialValue = (r.dial_in && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : 0);
     const diff = (r.ft1320 && dialValue > 0) ? r.ft1320 - dialValue : 0;
-    const pkg = (r.rt && r.rt > 0 && diff >= 0) ? r.rt + diff : 0;
+    const pkg = (r.rt != null && r.rt >= 0 && diff >= 0) ? r.rt + diff : 0;
     return {
       name: r.name || "Unknown",
       car_number: r.car_number || "",

@@ -301,16 +301,6 @@ export default function BestLosingPackagePage() {
         </div>
       )}
 
-      {searched && !loading && Object.keys(results).length === 0 && (
-        <div className="bg-nhra-card border-2 border-gray-600/30 rounded-xl px-6 py-10 text-center">
-          <p className="text-gray-400 font-bold text-lg mb-1">No Results</p>
-          <p className="text-gray-500 text-sm">
-            No losing runs with valid RT, ET, and dial-in found for the selected rounds and classes.
-            Heads-up classes (Top Fuel, Funny Car, etc.) typically don&apos;t have dial-ins.
-          </p>
-        </div>
-      )}
-
       {/* Winners Section */}
       {searched && !loading && winners.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
@@ -319,7 +309,7 @@ export default function BestLosingPackagePage() {
             <button
               onClick={() => {
                 const lines = winners.map((w) =>
-                  `${w.category} - ${w.name} - #${w.car_number} - ${w.package > 0 ? w.package.toFixed(4) : "N/A"}`
+                  `${w.category} - ${w.name} - #${w.car_number} - ${w.package >= 0 && w.ft1320 > 0 ? w.package.toFixed(4) : "N/A"}`
                 );
                 navigator.clipboard.writeText(lines.join("\n"));
                 setWinnersCopied(true);
@@ -358,13 +348,13 @@ export default function BestLosingPackagePage() {
                   <div className="col-span-2 text-nhra-accent font-bold">#{w.car_number}</div>
                   <div className="col-span-2 text-gray-500">—</div>
                   <div className="col-span-2 text-right font-mono text-white font-bold">
-                    {w.package > 0 ? w.package.toFixed(4) : "N/A"}
+                    {w.package >= 0 && w.ft1320 > 0 ? w.package.toFixed(4) : "N/A"}
                   </div>
                 </div>
                 {/* Mobile */}
                 <div className="sm:hidden">
                   <p className="text-white font-medium">{w.category}</p>
-                  <p className="text-sm text-gray-300">{w.name} &middot; #{w.car_number} &middot; Pkg: {w.package > 0 ? w.package.toFixed(4) : "N/A"}</p>
+                  <p className="text-sm text-gray-300">{w.name} &middot; #{w.car_number} &middot; Pkg: {w.package >= 0 && w.ft1320 > 0 ? w.package.toFixed(4) : "N/A"}</p>
                 </div>
               </div>
             ))}
@@ -373,6 +363,16 @@ export default function BestLosingPackagePage() {
           <div className="px-6 py-3 bg-nhra-darker border-t border-nhra-border text-xs text-gray-500">
             Copy format: Category - Name - Car # - Package (Membership # not yet available in data)
           </div>
+        </div>
+      )}
+
+      {searched && !loading && Object.keys(results).length === 0 && (
+        <div className="bg-nhra-card border-2 border-gray-600/30 rounded-xl px-6 py-10 text-center">
+          <p className="text-gray-400 font-bold text-lg mb-1">No Losing Package Results</p>
+          <p className="text-gray-500 text-sm">
+            No losing runs with valid RT, ET, and dial-in found for the selected rounds and classes.
+            Heads-up classes (Top Fuel, Funny Car, etc.) typically don&apos;t have dial-ins.
+          </p>
         </div>
       )}
 
