@@ -59,9 +59,9 @@ export default function BestLosingPackagePage() {
       .then((data) => {
         if (data.filters) {
           setEvents(data.filters.events || []);
-          // Filter to only elimination rounds
+          // Filter to only elimination rounds (E=elim, C=class elim, F=final)
           const rounds: string[] = (data.filters.rounds || []).filter((r: string) =>
-            r.startsWith("E") || r === "F" || r.toLowerCase() === "final"
+            r.startsWith("E") || r.startsWith("C") || r === "F" || r.toLowerCase() === "final"
           );
           setAvailableRounds(rounds);
           setAvailableCategories(data.filters.categories || []);
@@ -78,7 +78,7 @@ export default function BestLosingPackagePage() {
       const data = await res.json();
       if (data.filters) {
         const rounds: string[] = (data.filters.rounds || []).filter((r: string) =>
-          r.startsWith("E") || r === "F" || r.toLowerCase() === "final"
+          r.startsWith("E") || r.startsWith("C") || r === "F" || r.toLowerCase() === "final"
         );
         setAvailableRounds(rounds);
         setAvailableCategories(data.filters.categories || []);
@@ -216,7 +216,7 @@ export default function BestLosingPackagePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
-                {round === "F" ? "Final" : round.replace("E", "Round ")}
+                {round === "F" ? "Final" : round.startsWith("C") ? `Class ${round.slice(1)}` : round.replace("E", "Round ")}
               </button>
             ))}
           </div>
@@ -411,7 +411,7 @@ export default function BestLosingPackagePage() {
                         <p className="text-xs text-nhra-accent font-bold">#{entry.car_number}</p>
                       </div>
                       <div className="col-span-1 text-right text-gray-400 text-sm">
-                        {entry.round === "F" ? "Final" : entry.round.replace("E", "R")}
+                        {entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : entry.round.replace("E", "R")}
                       </div>
                       <div className="col-span-2 text-right text-white font-mono text-sm">
                         {entry.rt.toFixed(4)}
@@ -477,7 +477,7 @@ export default function BestLosingPackagePage() {
                         </div>
                         <div>
                           <span className="text-gray-500">Round</span>
-                          <p className="text-gray-400">{entry.round === "F" ? "Final" : entry.round.replace("E", "R")}</p>
+                          <p className="text-gray-400">{entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : entry.round.replace("E", "R")}</p>
                         </div>
                       </div>
                     </div>
