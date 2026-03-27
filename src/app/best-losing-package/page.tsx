@@ -59,11 +59,7 @@ export default function BestLosingPackagePage() {
       .then((data) => {
         if (data.filters) {
           setEvents(data.filters.events || []);
-          // Filter to only elimination rounds (E=elim, C=class elim, F=final)
-          const rounds: string[] = (data.filters.rounds || []).filter((r: string) =>
-            r.startsWith("E") || r.startsWith("C") || r === "F" || r.toLowerCase() === "final"
-          );
-          setAvailableRounds(rounds);
+          setAvailableRounds(data.filters.rounds || []);
           setAvailableCategories(data.filters.categories || []);
         }
       })
@@ -77,10 +73,7 @@ export default function BestLosingPackagePage() {
       const res = await fetch(`/api/runs?event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1`);
       const data = await res.json();
       if (data.filters) {
-        const rounds: string[] = (data.filters.rounds || []).filter((r: string) =>
-          r.startsWith("E") || r.startsWith("C") || r === "F" || r.toLowerCase() === "final"
-        );
-        setAvailableRounds(rounds);
+        setAvailableRounds(data.filters.rounds || []);
         setAvailableCategories(data.filters.categories || []);
       }
     } catch (err) {
@@ -189,7 +182,7 @@ export default function BestLosingPackagePage() {
       {availableRounds.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-white">Elimination Rounds</h2>
+            <h2 className="text-lg font-bold text-white">Rounds</h2>
             <div className="flex gap-2">
               <button onClick={selectAllRounds} className="text-xs text-nhra-accent hover:text-white transition-colors">
                 Select All
@@ -216,7 +209,12 @@ export default function BestLosingPackagePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
-                {round === "F" ? "Final" : round.startsWith("C") ? `Class Round ${round.slice(1)}` : `Round ${round.slice(1)}`}
+                {round === "F" || round.toLowerCase() === "final" ? "Final"
+                  : round.startsWith("C") ? `Class Round ${round.slice(1)}`
+                  : round.startsWith("E") ? `Round ${round.slice(1)}`
+                  : round.startsWith("T") ? `Time Trial ${round.slice(1)}`
+                  : round.startsWith("Q") ? `Qualifying ${round.slice(1)}`
+                  : round}
               </button>
             ))}
           </div>
