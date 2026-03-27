@@ -57,8 +57,7 @@ export default function TimeslipPage() {
     if (justSelectedRef.current) { justSelectedRef.current = false; return; }
     if (q.length < 1) { setSuggestions([]); return; }
     try {
-      const qs = searchMode === "car" ? "" : eventQS;
-      const res = await fetch(`/api/stats?type=racers&search=${encodeURIComponent(q)}${qs}`);
+      const res = await fetch(`/api/stats?type=racers&search=${encodeURIComponent(q)}${eventQS}`);
       const data = await res.json();
       if (data.racerDetails) {
         setSuggestions(data.racerDetails);
@@ -107,7 +106,7 @@ export default function TimeslipPage() {
     setLoading(true);
     setSelectedRun(null);
     try {
-      const res = await fetch(`/api/stats?type=car_runs&car_number=${encodeURIComponent(carNumber)}`);
+      const res = await fetch(`/api/stats?type=car_runs&car_number=${encodeURIComponent(carNumber)}${eventQS}`);
       const data = await res.json();
       setRuns(data.runs || []);
     } catch { setRuns([]); }
@@ -160,9 +159,7 @@ export default function TimeslipPage() {
     });
   }
 
-  const filteredSuggestions = searchMode === "car"
-    ? suggestions.filter((s) => s.car_number && s.car_number.toLowerCase().includes(search.toLowerCase()))
-    : suggestions;
+  const filteredSuggestions = suggestions;
 
   // Get unique car numbers for the "show all" options in car mode
   const uniqueCarNumbers = searchMode === "car"
