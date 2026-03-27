@@ -27,6 +27,7 @@ export default function BestLosingPackagePage() {
   const live = useLiveData();
   const [events, setEvents] = useState<EventOption[]>([]);
   const [selectedEvent, setSelectedEvent] = useState("");
+  const [selectedEventName, setSelectedEventName] = useState("");
   const [selectedSeason, setSelectedSeason] = useState("");
   const [filtersLoading, setFiltersLoading] = useState(true);
 
@@ -49,6 +50,7 @@ export default function BestLosingPackagePage() {
     const s = live.config?.season || "";
     if (ec && s) {
       setSelectedEvent(ec);
+      setSelectedEventName(live.config?.eventName || "");
       setSelectedSeason(s);
     }
     const qs = ec && s ? `event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1` : "limit=1";
@@ -90,6 +92,7 @@ export default function BestLosingPackagePage() {
     const event = events.find((e) => `${e.event_code}|${e.season}` === value);
     if (event) {
       setSelectedEvent(event.event_code);
+      setSelectedEventName(event.event_name);
       setSelectedSeason(event.season);
       setSelectedRounds(new Set());
       setSelectedCategories(new Set());
@@ -293,10 +296,15 @@ export default function BestLosingPackagePage() {
               <h3 className="text-white font-bold text-lg">Winners and Info</h3>
               <button
                 onClick={() => {
-                  const lines = blpWinners.map((w) =>
-                    `${w.category} - ${w.name} - #${w.car_number} - ${w.package.toFixed(4)}`
+                  const eventLabel = selectedEventName || selectedEvent;
+                  const roundsList = Array.from(selectedRounds).sort().map((r) => r === "F" ? "Final" : r.replace("E", "Round ")).join(", ");
+                  const header = `Best Losing Package Winners\n${eventLabel} ${selectedSeason}\nRounds: ${roundsList}\n`;
+                  const divider = "—".repeat(40);
+                  const rows = blpWinners.map((w) =>
+                    `${w.category}\n  ${w.name}  |  Car #${w.car_number}  |  Package: ${w.package.toFixed(4)}\n  RT: ${w.rt.toFixed(4)}  |  ET: ${w.ft1320.toFixed(3)}  |  Dial: ${w.dial_in.toFixed(2)}`
                   );
-                  navigator.clipboard.writeText(lines.join("\n"));
+                  const text = `${header}\n${divider}\n\n${rows.join("\n\n")}\n\n${divider}\nPackage = RT + (ET - Dial)`;
+                  navigator.clipboard.writeText(text);
                   setWinnersCopied(true);
                   setTimeout(() => setWinnersCopied(false), 2000);
                 }}
