@@ -40,6 +40,7 @@ export default function BestLosingPackagePage() {
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
   const [results, setResults] = useState<Record<string, PackageEntry[]>>({});
+  const [membership, setMembership] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [winnersCopied, setWinnersCopied] = useState(false);
@@ -140,6 +141,7 @@ export default function BestLosingPackagePage() {
       );
       const data = await res.json();
       setResults(data.results || {});
+      setMembership(data.membership || {});
       setSearched(true);
     } catch (err) {
       console.error(err);
@@ -300,7 +302,7 @@ export default function BestLosingPackagePage() {
                   const header = `Best Losing Package - ${eventLabel}`;
                   const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Package", 12)}Membership`;
                   const rows = blpWinners.map((w) =>
-                    `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}—`
+                    `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}${membership[w.name] || "\u2014"}`
                   );
                   const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
                   navigator.clipboard.writeText(text);
@@ -340,7 +342,7 @@ export default function BestLosingPackagePage() {
                     <td className="px-4 py-3 text-white">{w.category}</td>
                     <td className="px-4 py-3 text-white">#{w.car_number}</td>
                     <td className="px-4 py-3 text-white font-mono">{w.package.toFixed(4)}</td>
-                    <td className="px-4 py-3 text-gray-500">—</td>
+                    <td className="px-4 py-3 text-gray-400">{membership[w.name] || "\u2014"}</td>
                   </tr>
                 ))}
               </tbody>

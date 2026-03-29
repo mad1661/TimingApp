@@ -1447,3 +1447,19 @@ export async function searchTechCards(query: string): Promise<TechCardEntry[]> {
       return fullName.includes(q) || (t.car_number && t.car_number.toLowerCase().includes(q));
     });
 }
+
+// Bulk lookup membership numbers from tech cards for a list of racer names
+export async function bulkLookupMembership(names: string[]): Promise<Map<string, string>> {
+  const db = getDb();
+  const snap = await db.collection("tech_cards").get();
+  const cards = snap.docs.map((d) => d.data() as TechCardEntry);
+  const result = new Map<string, string>();
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    const match = cards.find((c) => `${c.first_name} ${c.last_name}`.toLowerCase() === lower);
+    if (match && match.member_number) {
+      result.set(name, match.member_number);
+    }
+  }
+  return result;
+}
