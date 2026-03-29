@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -92,7 +92,11 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "rounds and categories are required" }, { status: 400 });
       }
       const results = await getBestLosingPackage(eventCode, season, rounds, categories);
-      return NextResponse.json({ results });
+      const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
+      const memberMap = await bulkLookupMembership([...new Set(allNames)]);
+      const memberLookup: Record<string, string> = {};
+      memberMap.forEach((v, k) => { memberLookup[k] = v; });
+      return NextResponse.json({ results, membership: memberLookup });
     }
 
     if (type === "event-winners") {
@@ -107,12 +111,22 @@ export async function GET(request: NextRequest) {
     if (type === "perfect-rt") {
       const roundTypes = params.get("round_types")?.split(",").filter(Boolean) || [];
       const results = await getPerfectReactionTimes(eventCode, season, roundTypes.length > 0 ? roundTypes : undefined);
-      return NextResponse.json({ results });
+      // Lookup membership numbers from tech cards
+      const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
+      const memberMap = await bulkLookupMembership([...new Set(allNames)]);
+      const memberLookup: Record<string, string> = {};
+      memberMap.forEach((v, k) => { memberLookup[k] = v; });
+      return NextResponse.json({ results, membership: memberLookup });
     }
 
     if (type === "dead-on") {
       const results = await getDeadOnRuns(eventCode, season);
-      return NextResponse.json({ results });
+      // Lookup membership numbers from tech cards
+      const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
+      const memberMap = await bulkLookupMembership([...new Set(allNames)]);
+      const memberLookup: Record<string, string> = {};
+      memberMap.forEach((v, k) => { memberLookup[k] = v; });
+      return NextResponse.json({ results, membership: memberLookup });
     }
 
     if (type === "brackets") {

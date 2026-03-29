@@ -40,6 +40,7 @@ export default function BestLosingPackagePage() {
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
   const [results, setResults] = useState<Record<string, PackageEntry[]>>({});
+  const [membership, setMembership] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [winnersCopied, setWinnersCopied] = useState(false);
@@ -59,11 +60,7 @@ export default function BestLosingPackagePage() {
       .then((data) => {
         if (data.filters) {
           setEvents(data.filters.events || []);
-          // Filter to only elimination rounds
-          const rounds: string[] = (data.filters.rounds || []).filter((r: string) =>
-            r.startsWith("E") || r === "F" || r.toLowerCase() === "final"
-          );
-          setAvailableRounds(rounds);
+          setAvailableRounds(data.filters.rounds || []);
           setAvailableCategories(data.filters.categories || []);
         }
       })
@@ -77,10 +74,7 @@ export default function BestLosingPackagePage() {
       const res = await fetch(`/api/runs?event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1`);
       const data = await res.json();
       if (data.filters) {
-        const rounds: string[] = (data.filters.rounds || []).filter((r: string) =>
-          r.startsWith("E") || r === "F" || r.toLowerCase() === "final"
-        );
-        setAvailableRounds(rounds);
+        setAvailableRounds(data.filters.rounds || []);
         setAvailableCategories(data.filters.categories || []);
       }
     } catch (err) {
@@ -147,6 +141,7 @@ export default function BestLosingPackagePage() {
       );
       const data = await res.json();
       setResults(data.results || {});
+      setMembership(data.membership || {});
       setSearched(true);
     } catch (err) {
       console.error(err);
@@ -189,7 +184,7 @@ export default function BestLosingPackagePage() {
       {availableRounds.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-white">Elimination Rounds</h2>
+            <h2 className="text-lg font-bold text-white">Rounds</h2>
             <div className="flex gap-2">
               <button onClick={selectAllRounds} className="text-xs text-nhra-accent hover:text-white transition-colors">
                 Select All
@@ -216,7 +211,13 @@ export default function BestLosingPackagePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
-                {round === "F" ? "Final" : round.replace("E", "Round ")}
+                {round === "F" || round.toLowerCase() === "final" ? "Final"
+                  : round.startsWith("C") ? `Class Round ${round.slice(1)}`
+                  : round.startsWith("R") ? `Round ${round.slice(1)}`
+                  : round.startsWith("E") ? `Round ${round.slice(1)}`
+                  : round.startsWith("T") ? `Time Trial ${round.slice(1)}`
+                  : round.startsWith("Q") ? `Qualifying ${round.slice(1)}`
+                  : round}
               </button>
             ))}
           </div>
@@ -301,7 +302,7 @@ export default function BestLosingPackagePage() {
                   const header = `Best Losing Package - ${eventLabel}`;
                   const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Package", 12)}Membership`;
                   const rows = blpWinners.map((w) =>
-                    `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}—`
+                    `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}${membership[w.name] || "\u2014"}`
                   );
                   const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
                   navigator.clipboard.writeText(text);
@@ -341,7 +342,7 @@ export default function BestLosingPackagePage() {
                     <td className="px-4 py-3 text-white">{w.category}</td>
                     <td className="px-4 py-3 text-white">#{w.car_number}</td>
                     <td className="px-4 py-3 text-white font-mono">{w.package.toFixed(4)}</td>
-                    <td className="px-4 py-3 text-gray-500">—</td>
+                    <td className="px-4 py-3 text-gray-400">{membership[w.name] || "\u2014"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -411,7 +412,7 @@ export default function BestLosingPackagePage() {
                         <p className="text-xs text-nhra-accent font-bold">#{entry.car_number}</p>
                       </div>
                       <div className="col-span-1 text-right text-gray-400 text-sm">
-                        {entry.round === "F" ? "Final" : entry.round.replace("E", "R")}
+                        {entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}
                       </div>
                       <div className="col-span-2 text-right text-white font-mono text-sm">
                         {entry.rt.toFixed(4)}
@@ -477,7 +478,7 @@ export default function BestLosingPackagePage() {
                         </div>
                         <div>
                           <span className="text-gray-500">Round</span>
-                          <p className="text-gray-400">{entry.round === "F" ? "Final" : entry.round.replace("E", "R")}</p>
+                          <p className="text-gray-400">{entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}</p>
                         </div>
                       </div>
                     </div>
