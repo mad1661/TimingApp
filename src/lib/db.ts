@@ -905,17 +905,32 @@ function stripAmPm(ts: string): string {
   return ts.replace(/ (AM|PM)$/i, "");
 }
 
-// Convert raw 12-hour time to a 24-hour sort key for same-day ordering
-// Racing window assumption: starts 8 AM, can go until midnight
-// Hours 8-11 = AM (8-11), Hour 12 = noon (12), Hours 1-7 = PM (13-19)
-// This ONLY handles sorting. Hours 8-11 PM (evening) are handled by
-// the noon-crossing walk — once we pass noon, everything after is PM.
-function raceDaySortKey(ts: string): number {
+// Round progression weight for same-day sorting
+// Within one day, rounds always progress: T1 < T2 < Q1 < R1 < R2 < ... < F
+function roundSortWeight(round: string | null): number {
+  if (!round) return 0;
+  const r = round.toUpperCase();
+  if (r === "F" || r === "FINAL") return 100;
+  const prefix = r.charAt(0);
+  const num = parseInt(r.slice(1), 10) || 0;
+  if (prefix === "T") return num;           // T1=1, T2=2
+  if (prefix === "Q") return 10 + num;      // Q1=11, Q2=12
+  if (prefix === "R" || prefix === "E" || prefix === "C") return 20 + num; // R1=21, R2=22, C1=21
+  return 0;
+}
+
+// Sort key for same-day chronological ordering
+// Primary: time of day (8 AM → noon → 7 PM)
+// Secondary: round progression (R1 before R2 at same hour)
+// This breaks ties when AM and PM runs share the same raw hour
+function raceDaySortKey(ts: string, round: string | null): number {
   const timePart = ts.split(" ")[1];
   if (!timePart) return 0;
   const [hh, mm, ss] = timePart.split(":").map(Number);
+  // Hours 8-11 = morning, 12 = noon, 1-7 = afternoon/evening
   const h24 = hh >= 8 ? hh : hh === 12 ? 12 : hh + 12;
-  return h24 * 3600 + (mm || 0) * 60 + (ss || 0);
+  // Time as primary sort, round weight as tiebreaker within same minute
+  return h24 * 3600 + (mm || 0) * 60 + (ss || 0) + roundSortWeight(round) * 0.001;
 }
 
 function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
@@ -934,12 +949,10 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
-    // Sort: 8,9,10,11 (AM), 12 (noon), 1,2,3,4,5,6,7 (PM)
-    dayRuns.sort((a, b) => raceDaySortKey(a.timestamp!) - raceDaySortKey(b.timestamp!));
+    // Sort by time, with round as tiebreaker
+    dayRuns.sort((a, b) => raceDaySortKey(a.timestamp!, a.round) - raceDaySortKey(b.timestamp!, b.round));
 
-    // Walk through sorted runs and tag AM/PM
-    // Once noon (hour 12) is crossed, everything after is PM for the rest of the day
-    // This correctly handles 6 PM, 7 PM, 8 PM, 9 PM, 10 PM, 11 PM
+    // Walk sorted runs: before hour 12 = AM, hour 12 onward = PM
     let passedNoon = pmStart;
 
     for (const run of dayRuns) {
