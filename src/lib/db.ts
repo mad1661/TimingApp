@@ -918,6 +918,7 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
     if (run.timestamp) run.timestamp = stripAmPm(run.timestamp);
   }
 
+  // Group runs by day, preserving original data order (chronological from NHRA feed)
   const byDay = new Map<string, RunRow[]>();
   for (const run of runs) {
     if (!run.timestamp) continue;
@@ -928,9 +929,11 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
-    dayRuns.sort((a, b) => raceDaySortKey(a.timestamp!) - raceDaySortKey(b.timestamp!));
+    // DO NOT re-sort — preserve original insertion order from NHRA data
+    // which is already chronological
 
     let passedNoon = pmStart;
+    let prevHour = -1;
 
     for (const run of dayRuns) {
       const timePart = run.timestamp!.split(" ")[1];
@@ -938,13 +941,21 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       const h = parseInt(timePart.split(":")[0], 10);
 
       if (h === 12) {
+        // Hour 12 is always noon/PM
         passedNoon = true;
         run.timestamp = run.timestamp + " PM";
       } else if (passedNoon) {
+        // Once past noon, everything is PM for the rest of the day
+        run.timestamp = run.timestamp + " PM";
+      } else if (prevHour >= 10 && h < prevHour && h < 8) {
+        // Hour went from 10+ down to a small number (e.g., 11 → 1)
+        // This means we crossed noon even without seeing hour 12
+        passedNoon = true;
         run.timestamp = run.timestamp + " PM";
       } else {
         run.timestamp = run.timestamp + " AM";
       }
+      prevHour = h;
     }
   }
 }
