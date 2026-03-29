@@ -905,11 +905,42 @@ function stripAmPm(ts: string): string {
   return ts.replace(/ (AM|PM)$/i, "");
 }
 
-function raceDaySortKey(ts: string): number {
+// Estimate round ordering for AM/PM inference
+// Higher round numbers happen later in the day
+function roundSortWeight(round: string | null): number {
+  if (!round) return 0;
+  const r = round.toUpperCase();
+  if (r === "F" || r === "FINAL") return 100;
+  // T = time trial, Q = qualifying (early), R/E/C = elimination (later)
+  const prefix = r.charAt(0);
+  const num = parseInt(r.slice(1), 10) || 0;
+  if (prefix === "T") return num;           // T1=1, T2=2 (earliest)
+  if (prefix === "Q") return 10 + num;      // Q1=11, Q2=12
+  if (prefix === "R" || prefix === "E" || prefix === "C") return 20 + num; // R1=21, R2=22
+  return 0;
+}
+
+// Convert raw 12-hour time + round info to a sort key for chronological ordering
+function raceDaySortKey(ts: string, round: string | null): number {
   const timePart = ts.split(" ")[1];
   if (!timePart) return 0;
   const [hh, mm, ss] = timePart.split(":").map(Number);
-  const h24 = hh === 12 ? 12 : hh >= 6 ? hh : hh + 12;
+  const rw = roundSortWeight(round);
+  let h24: number;
+  if (hh === 12) {
+    h24 = 12; // noon
+  } else if (hh >= 8 && hh <= 11) {
+    // Hours 8-11 are AM for early rounds, PM for late rounds (evening racing)
+    // Late elimination rounds (R4+, semifinals, finals) at these hours = evening
+    if (rw >= 24) {
+      h24 = hh + 12; // 8 PM=20, 9 PM=21, 10 PM=22, 11 PM=23
+    } else {
+      h24 = hh; // 8 AM=8, 9 AM=9, etc.
+    }
+  } else {
+    // Hours 1-7: always PM (afternoon/evening)
+    h24 = hh + 12;
+  }
   return h24 * 3600 + (mm || 0) * 60 + (ss || 0);
 }
 
@@ -918,7 +949,7 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
     if (run.timestamp) run.timestamp = stripAmPm(run.timestamp);
   }
 
-  // Group runs by day, preserving original data order (chronological from NHRA feed)
+  // Group runs by day
   const byDay = new Map<string, RunRow[]>();
   for (const run of runs) {
     if (!run.timestamp) continue;
@@ -929,33 +960,39 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
-    // DO NOT re-sort — preserve original insertion order from NHRA data
-    // which is already chronological
+    // Sort chronologically
+    dayRuns.sort((a, b) => raceDaySortKey(a.timestamp!, a.round) - raceDaySortKey(b.timestamp!, b.round));
 
+    // Determine if racing starts in AM or PM
+    // Look at the earliest raw hour — if it's 8-11, start is AM
     let passedNoon = pmStart;
-    let prevHour = -1;
+    if (!pmStart && dayRuns.length > 0) {
+      const firstTime = dayRuns[0].timestamp!.split(" ")[1];
+      if (firstTime) {
+        const firstH = parseInt(firstTime.split(":")[0], 10);
+        // If first run is at hour 1-7, the whole day starts in PM
+        if (firstH >= 1 && firstH <= 7) passedNoon = true;
+      }
+    }
 
     for (const run of dayRuns) {
       const timePart = run.timestamp!.split(" ")[1];
       if (!timePart) continue;
       const h = parseInt(timePart.split(":")[0], 10);
+      const rw = roundSortWeight(run.round);
 
       if (h === 12) {
-        // Hour 12 is always noon/PM
         passedNoon = true;
         run.timestamp = run.timestamp + " PM";
       } else if (passedNoon) {
-        // Once past noon, everything is PM for the rest of the day
         run.timestamp = run.timestamp + " PM";
-      } else if (prevHour >= 10 && h < prevHour && h < 8) {
-        // Hour went from 10+ down to a small number (e.g., 11 → 1)
-        // This means we crossed noon even without seeing hour 12
+      } else if (h >= 8 && h <= 11 && rw >= 24) {
+        // Late elimination round (R4+, finals) at hour 8-11 = evening PM
         passedNoon = true;
         run.timestamp = run.timestamp + " PM";
       } else {
         run.timestamp = run.timestamp + " AM";
       }
-      prevHour = h;
     }
   }
 }
