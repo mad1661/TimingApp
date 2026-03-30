@@ -1644,11 +1644,12 @@ export async function getQualifyingResults(
   const memberMap = await bulkLookupMembership([...new Set(names)]);
 
   return sorted.map((r, i) => {
-    // For Comp/Stock modes, use class_index as the reference; otherwise prefer dial_in
+    // For Comp/Stock modes, prefer class_index as the reference, fall back to dial_in
     const useClassIndex = mode === "comp_eliminator" || mode === "stock_super_stock";
+    const parsedIndex = r.class_index ? parseFloat(r.class_index) : NaN;
     const dialValue = useClassIndex
-      ? (r.class_index ? parseFloat(r.class_index) : null)
-      : ((r.dial_in != null && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : null));
+      ? (!isNaN(parsedIndex) && parsedIndex > 0 ? parsedIndex : (r.dial_in != null && r.dial_in > 0 ? r.dial_in : null))
+      : ((r.dial_in != null && r.dial_in > 0) ? r.dial_in : (!isNaN(parsedIndex) && parsedIndex > 0 ? parsedIndex : null));
     const diff = (r.ft1320 != null && dialValue != null) ? r.ft1320 - dialValue : null;
     return {
       position: i + 1,
@@ -1718,10 +1719,11 @@ function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" |
 
     case "comp_eliminator":
     case "stock_super_stock": {
-      // Uses class_index (not dial_in). Furthest under index = #1 qualifier.
-      // diff = ET - class_index. Most negative (furthest under) wins.
-      const idxA = a.class_index ? parseFloat(a.class_index) : NaN;
-      const idxB = b.class_index ? parseFloat(b.class_index) : NaN;
+      // Prefer class_index, fall back to dial_in. Furthest under index = #1 qualifier.
+      const parsedIdxA = a.class_index ? parseFloat(a.class_index) : NaN;
+      const parsedIdxB = b.class_index ? parseFloat(b.class_index) : NaN;
+      const idxA = !isNaN(parsedIdxA) && parsedIdxA > 0 ? parsedIdxA : (a.dial_in != null && a.dial_in > 0 ? a.dial_in : NaN);
+      const idxB = !isNaN(parsedIdxB) && parsedIdxB > 0 ? parsedIdxB : (b.dial_in != null && b.dial_in > 0 ? b.dial_in : NaN);
       if (isNaN(idxA) && !isNaN(idxB)) return 1;
       if (!isNaN(idxA) && isNaN(idxB)) return -1;
       if (isNaN(idxA) && isNaN(idxB)) return 0;
