@@ -1618,38 +1618,67 @@ export async function getQualifyingResults(
     return true;
   });
 
-  // For each racer (by car_number), pick their best run according to mode
-  const bestByRacer = new Map<string, RunRow>();
+  // For index-based modes, also look at ALL runs in this category (not just
+  // selected rounds) to find each racer's index, since not every run has
+  // dial_in/class_index populated.
+  const isIndexMode = mode === "comp_eliminator" || mode === "stock_super_stock" || mode === "closest_index_no_breakout" || mode === "closest_index_breakout_ok";
+  const racerIndex = new Map<string, number>();
 
-  for (const run of eligible) {
-    const key = (run.car_number || "").trim();
-    if (!key) continue;
-    const existing = bestByRacer.get(key);
-    if (!existing) {
-      bestByRacer.set(key, run);
-      continue;
-    }
-    if (isBetterQualRun(run, existing, mode, tiebreaker)) {
-      bestByRacer.set(key, run);
+  if (isIndexMode) {
+    // For each car_number, find their index from their most recent run that has one.
+    // The index is fixed per class per event, so the latest run is most reliable.
+    const catRuns = allRuns
+      .filter((r) => r.category === category)
+      .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    for (const r of catRuns) {
+      const key = (r.car_number || "").trim();
+      if (!key || racerIndex.has(key)) continue;
+      const idx = getRunIndex(r);
+      if (idx != null) racerIndex.set(key, idx);
     }
   }
 
-  // Sort all best runs by the qualifying mode
-  const sorted = Array.from(bestByRacer.values()).sort((a, b) => {
-    return compareQualRuns(a, b, mode, tiebreaker);
+  // Group eligible runs by racer (car_number)
+  const runsByRacer = new Map<string, RunRow[]>();
+  for (const run of eligible) {
+    const key = (run.car_number || "").trim();
+    if (!key) continue;
+    const arr = runsByRacer.get(key) || [];
+    arr.push(run);
+    runsByRacer.set(key, arr);
+  }
+
+  // For each racer, pick their best run using the pre-computed index
+  const bestByRacer = new Map<string, RunRow>();
+  for (const [carNum, runs] of runsByRacer) {
+    const idx = racerIndex.get(carNum) ?? null;
+    let best = runs[0];
+    for (let i = 1; i < runs.length; i++) {
+      if (isBetterQualRunWithIndex(runs[i], best, idx, mode, tiebreaker)) {
+        best = runs[i];
+      }
+    }
+    bestByRacer.set(carNum, best);
+  }
+
+  // Sort all best runs by the qualifying mode, using pre-computed indexes
+  const sorted = Array.from(bestByRacer.entries()).sort(([aKey], [bKey]) => {
+    const aRun = bestByRacer.get(aKey)!;
+    const bRun = bestByRacer.get(bKey)!;
+    const aIdx = racerIndex.get(aKey) ?? null;
+    const bIdx = racerIndex.get(bKey) ?? null;
+    return compareQualRunsWithIndex(aRun, bRun, aIdx, bIdx, mode, tiebreaker);
   });
 
   // Look up membership numbers
-  const names = sorted.map((r) => r.name || "").filter(Boolean);
+  const names = sorted.map(([, r]) => r.name || "").filter(Boolean);
   const memberMap = await bulkLookupMembership([...new Set(names)]);
 
-  return sorted.map((r, i) => {
-    // For Comp/Stock modes, prefer class_index as the reference, fall back to dial_in
-    const useClassIndex = mode === "comp_eliminator" || mode === "stock_super_stock";
-    const parsedIndex = r.class_index ? parseFloat(r.class_index) : NaN;
-    const dialValue = useClassIndex
-      ? (!isNaN(parsedIndex) && parsedIndex > 0 ? parsedIndex : (r.dial_in != null && r.dial_in > 0 ? r.dial_in : null))
-      : ((r.dial_in != null && r.dial_in > 0) ? r.dial_in : (!isNaN(parsedIndex) && parsedIndex > 0 ? parsedIndex : null));
+  return sorted.map(([carNum, r], i) => {
+    const idx = racerIndex.get(carNum) ?? null;
+    const dialValue = isIndexMode
+      ? idx
+      : ((r.dial_in != null && r.dial_in > 0) ? r.dial_in : (idx ?? null));
     const diff = (r.ft1320 != null && dialValue != null) ? r.ft1320 - dialValue : null;
     return {
       position: i + 1,
@@ -1668,13 +1697,24 @@ export async function getQualifyingResults(
   });
 }
 
-function isBetterQualRun(candidate: RunRow, existing: RunRow, mode: string, tiebreaker: "mph" | "first_run"): boolean {
-  return compareQualRuns(candidate, existing, mode, tiebreaker) < 0;
+/** Extract numeric index from a run: try dial_in first, then class_index */
+function getRunIndex(r: RunRow): number | null {
+  if (r.dial_in != null && r.dial_in > 0) return r.dial_in;
+  if (r.class_index) {
+    const parsed = parseFloat(r.class_index);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return null;
 }
 
-function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" | "first_run"): number {
-  const dialA = (a.dial_in != null && a.dial_in > 0) ? a.dial_in : (a.class_index ? parseFloat(a.class_index) : NaN);
-  const dialB = (b.dial_in != null && b.dial_in > 0) ? b.dial_in : (b.class_index ? parseFloat(b.class_index) : NaN);
+function isBetterQualRunWithIndex(candidate: RunRow, existing: RunRow, index: number | null, mode: string, tiebreaker: "mph" | "first_run"): boolean {
+  return compareQualRunsWithIndex(candidate, existing, index, index, mode, tiebreaker) < 0;
+}
+
+function compareQualRunsWithIndex(a: RunRow, b: RunRow, idxA: number | null, idxB: number | null, mode: string, tiebreaker: "mph" | "first_run"): number {
+  // For non-index modes, use the original dial logic
+  const dialA = idxA ?? ((a.dial_in != null && a.dial_in > 0) ? a.dial_in : (a.class_index ? parseFloat(a.class_index) : NaN));
+  const dialB = idxB ?? ((b.dial_in != null && b.dial_in > 0) ? b.dial_in : (b.class_index ? parseFloat(b.class_index) : NaN));
 
   switch (mode) {
     case "quickest_et": {
@@ -1710,26 +1750,20 @@ function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" |
       const rtB = b.rt != null ? b.rt : 999;
       const aFoul = rtA < 0;
       const bFoul = rtB < 0;
-      // Red lights (negative RT) go to the bottom, sorted by severity (least negative first)
       if (aFoul && !bFoul) return 1;
       if (!aFoul && bFoul) return -1;
-      if (aFoul && bFoul) return rtB - rtA; // -0.001 before -0.222 (less negative = higher position)
+      if (aFoul && bFoul) return rtB - rtA;
       return rtA - rtB;
     }
 
     case "comp_eliminator":
     case "stock_super_stock": {
-      // Prefer class_index, fall back to dial_in. Furthest under index = #1 qualifier.
-      const parsedIdxA = a.class_index ? parseFloat(a.class_index) : NaN;
-      const parsedIdxB = b.class_index ? parseFloat(b.class_index) : NaN;
-      const idxA = !isNaN(parsedIdxA) && parsedIdxA > 0 ? parsedIdxA : (a.dial_in != null && a.dial_in > 0 ? a.dial_in : NaN);
-      const idxB = !isNaN(parsedIdxB) && parsedIdxB > 0 ? parsedIdxB : (b.dial_in != null && b.dial_in > 0 ? b.dial_in : NaN);
-      if (isNaN(idxA) && !isNaN(idxB)) return 1;
-      if (!isNaN(idxA) && isNaN(idxB)) return -1;
-      if (isNaN(idxA) && isNaN(idxB)) return 0;
-      const diffFromIdxA = (a.ft1320 || 999) - idxA;
-      const diffFromIdxB = (b.ft1320 || 999) - idxB;
-      // Most negative = best (furthest under index)
+      // Furthest under index = #1. diff = ET - index. Most negative wins.
+      if (isNaN(dialA) && !isNaN(dialB)) return 1;
+      if (!isNaN(dialA) && isNaN(dialB)) return -1;
+      if (isNaN(dialA) && isNaN(dialB)) return 0;
+      const diffFromIdxA = (a.ft1320 || 999) - dialA;
+      const diffFromIdxB = (b.ft1320 || 999) - dialB;
       if (Math.abs(diffFromIdxA - diffFromIdxB) > 0.0001) return diffFromIdxA - diffFromIdxB;
       // Tiebreaker: first to post the time (earlier timestamp wins)
       return (a.timestamp || "").localeCompare(b.timestamp || "");
