@@ -178,7 +178,9 @@ function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_
  * Remove timing-system reset entries. When the same car_number + name + round
  * appears more than once and some entries have no finish time (ft1320), the
  * entries without finish data are likely resets and should be removed.
- * Only drops the incomplete entry when a completed entry exists for the same grouping.
+ * Also removes the opponent(s) from the same reset timestamp so the schedule
+ * pair count stays accurate.
+ * Only drops entries when a completed run exists for the same car/name/round.
  */
 function removeResetEntries(runs: RunRow[]): RunRow[] {
   // Group by car_number + name + round + event_code + season
@@ -190,19 +192,38 @@ function removeResetEntries(runs: RunRow[]): RunRow[] {
     arr.push(run);
   }
 
+  // Collect timestamps of reset entries so we can also remove opponents
   const removals = new Set<RunRow>();
+  const resetTimestamps = new Set<string>();
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     const withFinish = group.filter((r) => r.ft1320 != null && r.ft1320 > 0);
     const withoutFinish = group.filter((r) => r.ft1320 == null || r.ft1320 === 0);
     // Only remove incomplete entries if at least one completed entry exists
     if (withFinish.length > 0 && withoutFinish.length > 0) {
-      for (const r of withoutFinish) removals.add(r);
+      for (const r of withoutFinish) {
+        removals.add(r);
+        // Track this timestamp + category + round so we remove the whole pair
+        if (r.timestamp) {
+          resetTimestamps.add(`${r.timestamp}|${r.category}|${r.round}|${r.event_code}|${r.season}`);
+        }
+      }
+    }
+  }
+
+  // Also remove opponents from the same reset timestamp (the other lane)
+  if (resetTimestamps.size > 0) {
+    for (const run of runs) {
+      if (removals.has(run)) continue;
+      const tsKey = `${run.timestamp}|${run.category}|${run.round}|${run.event_code}|${run.season}`;
+      if (resetTimestamps.has(tsKey)) {
+        removals.add(run);
+      }
     }
   }
 
   if (removals.size > 0) {
-    console.log(`[DB] Removed ${removals.size} reset entries (no finish data where completed run exists)`);
+    console.log(`[DB] Removed ${removals.size} reset entries + opponents (no finish data where completed run exists)`);
     return runs.filter((r) => !removals.has(r));
   }
   return runs;
