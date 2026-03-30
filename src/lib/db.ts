@@ -1707,6 +1707,12 @@ function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" |
     case "best_rt": {
       const rtA = a.rt != null ? a.rt : 999;
       const rtB = b.rt != null ? b.rt : 999;
+      const aFoul = rtA < 0;
+      const bFoul = rtB < 0;
+      // Red lights (negative RT) go to the bottom, sorted by severity (least negative first)
+      if (aFoul && !bFoul) return 1;
+      if (!aFoul && bFoul) return -1;
+      if (aFoul && bFoul) return rtB - rtA; // -0.001 before -0.222 (less negative = higher position)
       return rtA - rtB;
     }
 
