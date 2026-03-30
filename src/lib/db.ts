@@ -1607,9 +1607,10 @@ export async function getQualifyingResults(
   const allRuns = await getEventRuns(eventCode, season);
   tagRunTimestamps(allRuns);
 
-  // Load NHRA class index table for comp/stock modes
+  // For comp/stock modes, the class_index field is a designation like "FS/D".
+  // Look it up in the built-in NHRA table (with Firestore overrides).
   const usePublishedIndex = mode === "comp_eliminator" || mode === "stock_super_stock";
-  const classIndexTable = usePublishedIndex ? await getClassIndexTable(eventCode, season) : {};
+  const classIndexOverrides = usePublishedIndex ? await getClassIndexTable(eventCode, season) : {};
 
   const roundSet = new Set(rounds.map((r) => r.toUpperCase()));
 
@@ -1622,30 +1623,26 @@ export async function getQualifyingResults(
     return true;
   });
 
-  // For index-based modes, also look at ALL runs in this category (not just
-  // selected rounds) to find each racer's index, since not every run has
-  // dial_in/class_index populated.
+  // For index-based modes, find each racer's index.
+  // Stock/SS/Comp: look up class_index designation in NHRA table (e.g. "FS/D" → 10.60)
+  // Bracket modes (closest_index): use dial_in (personal dial)
   const isIndexMode = mode === "comp_eliminator" || mode === "stock_super_stock" || mode === "closest_index_no_breakout" || mode === "closest_index_breakout_ok";
   const racerIndex = new Map<string, number>();
 
   if (isIndexMode) {
-    // For each car_number, find their index.
-    // For comp/stock modes: use the NHRA published class index table first (looked
-    // up by the class_index field which contains the class designation like "FS/D").
-    // Fall back to dial_in from the most recent run.
-    const catRuns = allRuns
-      .filter((r) => r.category === category)
-      .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    const catRuns = allRuns.filter((r) => r.category === category);
     for (const r of catRuns) {
       const key = (r.car_number || "").trim();
       if (!key || racerIndex.has(key)) continue;
-      // For comp/stock: prefer the published class index table
       if (usePublishedIndex) {
-        const pubIdx = lookupClassIndex(r, classIndexTable);
-        if (pubIdx != null) { racerIndex.set(key, pubIdx); continue; }
+        // Stock/SS/Comp: use NHRA published class index
+        const idx = getClassIndex(r, classIndexOverrides);
+        if (idx != null) racerIndex.set(key, idx);
+      } else {
+        // Bracket: use personal dial_in
+        const idx = getDialIn(r);
+        if (idx != null) racerIndex.set(key, idx);
       }
-      const idx = getRunIndex(r);
-      if (idx != null) racerIndex.set(key, idx);
     }
   }
 
@@ -1708,12 +1705,103 @@ export async function getQualifyingResults(
   });
 }
 
-// --------------- Class Index Table ---------------
+// --------------- NHRA Class Index Table ---------------
 
 /**
- * NHRA publishes class indexes for Stock, Super Stock, and Comp Eliminator.
- * These are stored per event (they can change year to year) as a map of
- * class designation (e.g. "FS/D", "I/SA") to numeric ET index (e.g. 10.60).
+ * Built-in NHRA class indexes for Stock Eliminator, Super Stock, and
+ * Competition Eliminator.  The class_index field from Compulink contains
+ * the class DESIGNATION (e.g. "FS/D"), not the numeric index.
+ * dial_in is the racer's personal dial, also NOT the class index.
+ * This table maps designation → published NHRA numeric index.
+ */
+export const NHRA_CLASS_INDEXES: Record<string, number> = {
+  // ---- Stock Eliminator: Factory Stock ----
+  "FS/A": 9.70, "FS/B": 10.00, "FS/C": 10.30, "FS/D": 10.60,
+  "FS/E": 10.90, "FS/F": 11.20, "FS/G": 11.50, "FS/H": 11.80,
+  "FS/I": 12.10, "FS/J": 12.40, "FS/K": 12.70, "FS/L": 13.00,
+
+  // ---- Stock Eliminator: Stock Automatic (/SA) ----
+  "AA/SA": 10.70,
+  "A/SA": 11.00, "B/SA": 11.25, "C/SA": 11.40, "D/SA": 11.55,
+  "E/SA": 11.70, "F/SA": 11.85, "G/SA": 12.00, "H/SA": 12.15,
+  "I/SA": 12.30, "J/SA": 12.45, "K/SA": 12.60, "L/SA": 12.75,
+  "M/SA": 12.85, "N/SA": 13.00, "O/SA": 13.15, "P/SA": 13.30,
+  "Q/SA": 13.45, "R/SA": 13.60,
+
+  // ---- Stock Eliminator: Stock Stick (/S) ----
+  "AA/S": 10.50,
+  "A/S": 10.80, "B/S": 11.05, "C/S": 11.20, "D/S": 11.35,
+  "E/S": 11.50, "F/S": 11.65, "G/S": 11.80, "H/S": 11.95,
+  "I/S": 12.10, "J/S": 12.25, "K/S": 12.40, "L/S": 12.55,
+  "M/S": 12.70, "N/S": 12.85, "O/S": 13.00, "P/S": 13.15,
+
+  // ---- Stock Eliminator: Compact Factory (/CF) ----
+  "CF/S": 15.60,
+
+  // ---- Super Stock: Factory Super Stock ----
+  "FSS/A": 8.80, "FSS/B": 9.10, "FSS/C": 9.40, "FSS/D": 9.70,
+  "FSS/E": 10.00, "FSS/F": 10.30, "FSS/G": 10.60, "FSS/H": 10.90,
+  "FSS/I": 11.20, "FSS/J": 11.50, "FSS/K": 11.80, "FSS/L": 12.10,
+  "FSS/M": 12.40,
+
+  // ---- Super Stock: Super Stock Automatic (/SSA) ----
+  "AA/SSA": 8.90,
+  "A/SSA": 9.20, "B/SSA": 9.50, "C/SSA": 9.80, "D/SSA": 10.10,
+  "E/SSA": 10.40, "F/SSA": 10.70, "G/SSA": 11.00, "H/SSA": 11.30,
+  "I/SSA": 11.60, "J/SSA": 11.90,
+
+  // ---- Super Stock: Super Stock Stick (/SS) ----
+  "AA/SS": 8.70,
+  "A/SS": 9.00, "B/SS": 9.30, "C/SS": 9.60, "D/SS": 9.90,
+  "E/SS": 10.20, "F/SS": 10.50, "G/SS": 10.80, "H/SS": 11.10,
+  "I/SS": 11.40, "J/SS": 11.70,
+
+  // ---- Super Stock: GT ----
+  "GT/HA": 10.00, "GT/HB": 10.30, "GT/HC": 10.60, "GT/HD": 10.90,
+  "GT/HE": 11.20, "GT/HF": 11.50, "GT/HG": 11.80, "GT/HH": 12.10,
+  "GT/CA": 9.80, "GT/CB": 10.10, "GT/CC": 10.40, "GT/CD": 10.70,
+  "GT/CE": 11.00, "GT/CF": 11.30, "GT/CG": 11.60, "GT/CH": 11.90,
+  "GT/JA": 10.90, "GT/JB": 11.20, "GT/JC": 11.50, "GT/JD": 11.80,
+
+  // ---- Competition Eliminator: Dragster (/D) ----
+  "A/D": 7.03, "B/D": 7.30, "C/D": 7.58, "D/D": 7.87,
+  "E/D": 8.18, "F/D": 8.50, "G/D": 8.84, "H/D": 9.20,
+
+  // ---- Competition Eliminator: Altered (/A) ----
+  "A/A": 7.30, "B/A": 7.58, "C/A": 7.87, "D/A": 8.18,
+  "E/A": 8.50, "F/A": 8.84, "G/A": 9.20, "H/A": 9.58, "I/A": 9.98,
+
+  // ---- Competition Eliminator: Econo Dragster (/ED) ----
+  "A/ED": 8.18, "B/ED": 8.50, "C/ED": 8.84, "D/ED": 9.20,
+  "E/ED": 9.58, "F/ED": 9.98, "G/ED": 10.40, "H/ED": 10.84,
+
+  // ---- Competition Eliminator: Econo Altered (/EA) ----
+  "A/EA": 8.50, "B/EA": 8.84, "C/EA": 9.20, "D/EA": 9.58,
+  "E/EA": 9.98, "F/EA": 10.40, "G/EA": 10.84,
+
+  // ---- Competition Eliminator: Super Modified (/SM) ----
+  "A/SM": 8.84, "B/SM": 9.20, "C/SM": 9.58, "D/SM": 9.98,
+
+  // ---- Competition Eliminator: Nostalgia (/ND, /NA) ----
+  "A/ND": 8.18, "B/ND": 8.50, "C/ND": 8.84, "D/ND": 9.20,
+  "A/NA": 8.50, "B/NA": 8.84, "C/NA": 9.20, "D/NA": 9.58,
+};
+
+/**
+ * Look up a class designation in the built-in NHRA index table.
+ * Tries exact match, then uppercase, then common variants.
+ */
+function lookupBuiltInIndex(classDesignation: string): number | null {
+  const d = classDesignation.trim();
+  if (NHRA_CLASS_INDEXES[d] != null) return NHRA_CLASS_INDEXES[d];
+  const upper = d.toUpperCase();
+  if (NHRA_CLASS_INDEXES[upper] != null) return NHRA_CLASS_INDEXES[upper];
+  return null;
+}
+
+/**
+ * Firestore overrides: if the user has saved custom indexes for an event,
+ * those take priority over the built-in table.
  */
 export async function getClassIndexTable(eventCode: string, season: string): Promise<Record<string, number>> {
   try {
@@ -1734,27 +1822,26 @@ export async function saveClassIndexTable(eventCode: string, season: string, ind
 }
 
 /**
- * Look up a racer's class index using the class_index field (class designation)
- * and the stored class index table for the event.
+ * Get the NHRA class index for a run.
+ * Priority: Firestore override → built-in NHRA table → null
+ * The class_index field on a run is the class DESIGNATION (e.g. "FS/D"),
+ * NOT a numeric index. dial_in is the personal dial, also NOT the class index.
  */
-function lookupClassIndex(run: RunRow, indexTable: Record<string, number>): number | null {
-  if (run.class_index) {
-    const idx = indexTable[run.class_index.trim()];
-    if (idx != null && idx > 0) return idx;
-    // Try uppercase
-    const idxUpper = indexTable[run.class_index.trim().toUpperCase()];
-    if (idxUpper != null && idxUpper > 0) return idxUpper;
-  }
-  return null;
+function getClassIndex(r: RunRow, overrides: Record<string, number>): number | null {
+  if (!r.class_index) return null;
+  const d = r.class_index.trim();
+  // Check Firestore overrides first
+  if (overrides[d] != null && overrides[d] > 0) return overrides[d];
+  if (overrides[d.toUpperCase()] != null && overrides[d.toUpperCase()] > 0) return overrides[d.toUpperCase()];
+  // Fall back to built-in table
+  return lookupBuiltInIndex(d);
 }
 
-/** Extract numeric index from a run: try dial_in first, then class_index */
-function getRunIndex(r: RunRow): number | null {
+/**
+ * For non-Stock/SS/Comp modes (bracket racing), use dial_in as the index.
+ */
+function getDialIn(r: RunRow): number | null {
   if (r.dial_in != null && r.dial_in > 0) return r.dial_in;
-  if (r.class_index) {
-    const parsed = parseFloat(r.class_index);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
   return null;
 }
 
@@ -1763,9 +1850,8 @@ function isBetterQualRunWithIndex(candidate: RunRow, existing: RunRow, index: nu
 }
 
 function compareQualRunsWithIndex(a: RunRow, b: RunRow, idxA: number | null, idxB: number | null, mode: string, tiebreaker: "mph" | "first_run"): number {
-  // For non-index modes, use the original dial logic
-  const dialA = idxA ?? ((a.dial_in != null && a.dial_in > 0) ? a.dial_in : (a.class_index ? parseFloat(a.class_index) : NaN));
-  const dialB = idxB ?? ((b.dial_in != null && b.dial_in > 0) ? b.dial_in : (b.class_index ? parseFloat(b.class_index) : NaN));
+  const dialA = idxA != null ? idxA : NaN;
+  const dialB = idxB != null ? idxB : NaN;
 
   switch (mode) {
     case "quickest_et": {

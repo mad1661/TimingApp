@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, NHRA_CLASS_INDEXES } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -146,8 +146,10 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === "class-indexes") {
-      const indexes = await getClassIndexTable(eventCode, season);
-      return NextResponse.json({ indexes });
+      const overrides = await getClassIndexTable(eventCode, season);
+      // Merge: built-in defaults + Firestore overrides (overrides win)
+      const merged = { ...NHRA_CLASS_INDEXES, ...overrides };
+      return NextResponse.json({ indexes: merged });
     }
 
     if (type === "class-designations") {
@@ -174,6 +176,7 @@ export async function GET(request: NextRequest) {
       const results = await getQualifyingResults(eventCode, season, category, rounds, mode, tb as "mph" | "first_run");
       return NextResponse.json({ results });
     }
+
 
     if (type === "brackets") {
       const category = params.get("category");
