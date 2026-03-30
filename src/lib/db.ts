@@ -160,7 +160,7 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
   return _cache.get(key)!;
 }
 
-async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
+export async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
   const cache = await ensureEventCache(eventCode, season);
   return cache.runs;
 }
@@ -1607,6 +1607,10 @@ export async function getQualifyingResults(
   const allRuns = await getEventRuns(eventCode, season);
   tagRunTimestamps(allRuns);
 
+  // Load NHRA class index table for comp/stock modes
+  const usePublishedIndex = mode === "comp_eliminator" || mode === "stock_super_stock";
+  const classIndexTable = usePublishedIndex ? await getClassIndexTable(eventCode, season) : {};
+
   const roundSet = new Set(rounds.map((r) => r.toUpperCase()));
 
   // Filter runs for this category and selected rounds
@@ -1625,14 +1629,21 @@ export async function getQualifyingResults(
   const racerIndex = new Map<string, number>();
 
   if (isIndexMode) {
-    // For each car_number, find their index from their most recent run that has one.
-    // The index is fixed per class per event, so the latest run is most reliable.
+    // For each car_number, find their index.
+    // For comp/stock modes: use the NHRA published class index table first (looked
+    // up by the class_index field which contains the class designation like "FS/D").
+    // Fall back to dial_in from the most recent run.
     const catRuns = allRuns
       .filter((r) => r.category === category)
       .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
     for (const r of catRuns) {
       const key = (r.car_number || "").trim();
       if (!key || racerIndex.has(key)) continue;
+      // For comp/stock: prefer the published class index table
+      if (usePublishedIndex) {
+        const pubIdx = lookupClassIndex(r, classIndexTable);
+        if (pubIdx != null) { racerIndex.set(key, pubIdx); continue; }
+      }
       const idx = getRunIndex(r);
       if (idx != null) racerIndex.set(key, idx);
     }
@@ -1695,6 +1706,46 @@ export async function getQualifyingResults(
       membership: memberMap.get(r.name || "") || "",
     };
   });
+}
+
+// --------------- Class Index Table ---------------
+
+/**
+ * NHRA publishes class indexes for Stock, Super Stock, and Comp Eliminator.
+ * These are stored per event (they can change year to year) as a map of
+ * class designation (e.g. "FS/D", "I/SA") to numeric ET index (e.g. 10.60).
+ */
+export async function getClassIndexTable(eventCode: string, season: string): Promise<Record<string, number>> {
+  try {
+    const db = getDb();
+    const doc = await db.collection("class_indexes").doc(`${eventCode}_${season}`).get();
+    if (doc.exists) {
+      return doc.data()?.indexes || {};
+    }
+  } catch (err) {
+    console.error("[DB] Failed to load class indexes:", err);
+  }
+  return {};
+}
+
+export async function saveClassIndexTable(eventCode: string, season: string, indexes: Record<string, number>): Promise<void> {
+  const db = getDb();
+  await db.collection("class_indexes").doc(`${eventCode}_${season}`).set({ indexes }, { merge: true });
+}
+
+/**
+ * Look up a racer's class index using the class_index field (class designation)
+ * and the stored class index table for the event.
+ */
+function lookupClassIndex(run: RunRow, indexTable: Record<string, number>): number | null {
+  if (run.class_index) {
+    const idx = indexTable[run.class_index.trim()];
+    if (idx != null && idx > 0) return idx;
+    // Try uppercase
+    const idxUpper = indexTable[run.class_index.trim().toUpperCase()];
+    if (idxUpper != null && idxUpper > 0) return idxUpper;
+  }
+  return null;
 }
 
 /** Extract numeric index from a run: try dial_in first, then class_index */

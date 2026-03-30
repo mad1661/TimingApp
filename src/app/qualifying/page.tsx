@@ -56,6 +56,14 @@ export default function QualifyingPage() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Class index table for comp/stock modes
+  const [classIndexes, setClassIndexes] = useState<Record<string, number>>({});
+  const [classIndexDraft, setClassIndexDraft] = useState<Record<string, string>>({});
+  const [showIndexEditor, setShowIndexEditor] = useState(false);
+  const [savingIndexes, setSavingIndexes] = useState(false);
+  const [classDesignations, setClassDesignations] = useState<string[]>([]);
+  const [newClassDesig, setNewClassDesig] = useState("");
+
   const [results, setResults] = useState<QualifyingEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -84,16 +92,25 @@ export default function QualifyingPage() {
       .finally(() => setFiltersLoading(false));
   }, [live.config?.eventCode, live.config?.season, live.config?.eventName]);
 
-  // Load qualifying config when event changes
+  // Load qualifying config and class indexes when event changes
   const loadConfig = useCallback(async (ec: string, s: string) => {
     try {
-      const res = await fetch(`/api/stats?type=qualifying-config&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`);
-      const data = await res.json();
-      if (data.config) {
-        setClassMode(data.config.classMode || {});
-        setSavedTiebreaker(data.config.tiebreaker || "mph");
-        setTiebreaker(data.config.tiebreaker || "mph");
+      const [configRes, indexRes] = await Promise.all([
+        fetch(`/api/stats?type=qualifying-config&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`),
+        fetch(`/api/stats?type=class-indexes&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`),
+      ]);
+      const configData = await configRes.json();
+      if (configData.config) {
+        setClassMode(configData.config.classMode || {});
+        setSavedTiebreaker(configData.config.tiebreaker || "mph");
+        setTiebreaker(configData.config.tiebreaker || "mph");
       }
+      const indexData = await indexRes.json();
+      const idxs = indexData.indexes || {};
+      setClassIndexes(idxs);
+      const draft: Record<string, string> = {};
+      for (const [k, v] of Object.entries(idxs)) draft[k] = String(v);
+      setClassIndexDraft(draft);
       setConfigLoaded(true);
     } catch (err) {
       console.error(err);
@@ -107,12 +124,18 @@ export default function QualifyingPage() {
     }
   }, [selectedEvent, selectedSeason, loadConfig]);
 
-  // When category changes, apply saved mode if one exists
+  // When category changes, apply saved mode and load class designations
   useEffect(() => {
     if (selectedCategory && classMode[selectedCategory]) {
       setSelectedMode(classMode[selectedCategory]);
     }
-  }, [selectedCategory, classMode]);
+    if (selectedCategory && selectedEvent && selectedSeason) {
+      fetch(`/api/stats?type=class-designations&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&category=${encodeURIComponent(selectedCategory)}`)
+        .then((r) => r.json())
+        .then((data) => setClassDesignations(data.designations || []))
+        .catch(console.error);
+    }
+  }, [selectedCategory, classMode, selectedEvent, selectedSeason]);
 
   async function loadFiltersForEvent(ec: string, s: string) {
     try {
@@ -178,6 +201,41 @@ export default function QualifyingPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveClassIndexes() {
+    if (!selectedEvent || !selectedSeason) return;
+    setSavingIndexes(true);
+    try {
+      const indexes: Record<string, number> = {};
+      for (const [k, v] of Object.entries(classIndexDraft)) {
+        const num = parseFloat(v);
+        if (!isNaN(num) && num > 0) indexes[k] = num;
+      }
+      await fetch("/api/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "save-class-indexes",
+          event_code: selectedEvent,
+          season: selectedSeason,
+          indexes,
+        }),
+      });
+      setClassIndexes(indexes);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingIndexes(false);
+    }
+  }
+
+  function addClassDesignation() {
+    const d = newClassDesig.trim();
+    if (d && !classDesignations.includes(d)) {
+      setClassDesignations((prev) => [...prev, d].sort());
+    }
+    setNewClassDesig("");
   }
 
   async function search() {
@@ -371,6 +429,99 @@ export default function QualifyingPage() {
           </div>
         )}
       </div>
+
+      {/* Class Index Editor - shown for comp/stock modes */}
+      {(selectedMode === "comp_eliminator" || selectedMode === "stock_super_stock") && selectedCategory && (
+        <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-white">NHRA Class Indexes</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Published class indexes for {selectedCategory}. These determine qualifying order.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowIndexEditor(!showIndexEditor)}
+                className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-xs font-medium hover:text-white transition-colors"
+              >
+                {showIndexEditor ? "Hide Editor" : "Edit Indexes"}
+              </button>
+              {showIndexEditor && (
+                <button
+                  onClick={saveClassIndexes}
+                  disabled={savingIndexes}
+                  className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {savingIndexes ? (
+                    <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  Save Indexes
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Summary of current indexes */}
+          {!showIndexEditor && classDesignations.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {classDesignations.map((d) => (
+                <span key={d} className={`px-2.5 py-1 rounded text-xs font-mono ${
+                  classIndexes[d] ? "bg-purple-500/15 text-purple-400" : "bg-red-500/15 text-red-400"
+                }`}>
+                  {d}: {classIndexes[d] ? classIndexes[d].toFixed(2) : "missing"}
+                </span>
+              ))}
+              {classDesignations.filter((d) => !classIndexes[d]).length > 0 && (
+                <p className="w-full text-xs text-red-400 mt-2">
+                  Some classes are missing indexes. Click &quot;Edit Indexes&quot; to add them.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Editor */}
+          {showIndexEditor && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {classDesignations.map((d) => (
+                  <div key={d} className="flex items-center gap-2">
+                    <label className="text-xs text-gray-400 font-mono w-16 shrink-0">{d}</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={classIndexDraft[d] || ""}
+                      onChange={(e) => setClassIndexDraft((prev) => ({ ...prev, [d]: e.target.value }))}
+                      placeholder="Index"
+                      className="w-full px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Add new class designation */}
+              <div className="flex items-center gap-2 pt-2 border-t border-nhra-border">
+                <input
+                  type="text"
+                  value={newClassDesig}
+                  onChange={(e) => setNewClassDesig(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addClassDesignation()}
+                  placeholder="Add class (e.g. FS/D)"
+                  className="px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono focus:outline-none focus:border-purple-500 w-40"
+                />
+                <button
+                  onClick={addClassDesignation}
+                  className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-300 rounded text-xs font-medium hover:text-white transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Search Button */}
       <button

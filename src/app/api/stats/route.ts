@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -145,6 +145,24 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ config });
     }
 
+    if (type === "class-indexes") {
+      const indexes = await getClassIndexTable(eventCode, season);
+      return NextResponse.json({ indexes });
+    }
+
+    if (type === "class-designations") {
+      const category = params.get("category");
+      if (!category) return NextResponse.json({ error: "category required" }, { status: 400 });
+      const runs = await getEventRuns(eventCode, season);
+      const designations = new Set<string>();
+      for (const r of runs) {
+        if (r.category === category && r.class_index) {
+          designations.add(r.class_index.trim());
+        }
+      }
+      return NextResponse.json({ designations: Array.from(designations).sort() });
+    }
+
     if (type === "qualifying") {
       const category = params.get("category");
       const rounds = params.get("rounds")?.split(",").filter(Boolean) || [];
@@ -178,6 +196,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { type, event_code, season } = body;
+
+    if (type === "save-class-indexes") {
+      if (!event_code || !season) {
+        return NextResponse.json({ error: "event_code and season required" }, { status: 400 });
+      }
+      await saveClassIndexTable(event_code, season, body.indexes || {});
+      return NextResponse.json({ ok: true });
+    }
 
     if (type === "save-qualifying-config") {
       if (!event_code || !season) {
