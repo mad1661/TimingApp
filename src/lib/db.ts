@@ -1607,11 +1607,10 @@ export async function getQualifyingResults(
   const allRuns = await getEventRuns(eventCode, season);
   tagRunTimestamps(allRuns);
 
-  // Load NHRA class index table for comp/stock modes
-  const usePublishedIndex = mode === "comp_eliminator" || mode === "stock_super_stock";
-  const classIndexTable = usePublishedIndex ? await getClassIndexTable(eventCode, season) : {};
-
   const roundSet = new Set(rounds.map((r) => r.toUpperCase()));
+
+  // Sort selected rounds so we know which is the latest (e.g. Q3 > Q2 > Q1)
+  const sortedRounds = [...roundSet].sort((a, b) => b.localeCompare(a));
 
   // Filter runs for this category and selected rounds
   const eligible = allRuns.filter((r) => {
@@ -1622,30 +1621,23 @@ export async function getQualifyingResults(
     return true;
   });
 
-  // For index-based modes, also look at ALL runs in this category (not just
-  // selected rounds) to find each racer's index, since not every run has
-  // dial_in/class_index populated.
+  // For index-based modes, get each racer's index from the LATEST selected
+  // qualifying round's dial_in. E.g. if Q1,Q2,Q3 selected, use Q3's dial_in.
+  // If Q3 has no data for that car, fall back to Q2, then Q1.
   const isIndexMode = mode === "comp_eliminator" || mode === "stock_super_stock" || mode === "closest_index_no_breakout" || mode === "closest_index_breakout_ok";
   const racerIndex = new Map<string, number>();
 
   if (isIndexMode) {
-    // For each car_number, find their index.
-    // For comp/stock modes: use the NHRA published class index table first (looked
-    // up by the class_index field which contains the class designation like "FS/D").
-    // Fall back to dial_in from the most recent run.
-    const catRuns = allRuns
-      .filter((r) => r.category === category)
-      .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
-    for (const r of catRuns) {
-      const key = (r.car_number || "").trim();
-      if (!key || racerIndex.has(key)) continue;
-      // For comp/stock: prefer the published class index table
-      if (usePublishedIndex) {
-        const pubIdx = lookupClassIndex(r, classIndexTable);
-        if (pubIdx != null) { racerIndex.set(key, pubIdx); continue; }
+    const catRuns = allRuns.filter((r) => r.category === category);
+    // For each racer, find their dial_in from the latest selected round first
+    for (const round of sortedRounds) {
+      for (const r of catRuns) {
+        const key = (r.car_number || "").trim();
+        if (!key || racerIndex.has(key)) continue;
+        if (!r.round || r.round.toUpperCase() !== round) continue;
+        const idx = getRunIndex(r);
+        if (idx != null) racerIndex.set(key, idx);
       }
-      const idx = getRunIndex(r);
-      if (idx != null) racerIndex.set(key, idx);
     }
   }
 
