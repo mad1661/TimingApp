@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -140,6 +140,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ results, membership: memberLookup });
     }
 
+    if (type === "qualifying-config") {
+      const config = await getQualifyingConfig(eventCode, season);
+      return NextResponse.json({ config });
+    }
+
+    if (type === "qualifying") {
+      const category = params.get("category");
+      const rounds = params.get("rounds")?.split(",").filter(Boolean) || [];
+      const mode = params.get("mode") || "quickest_et";
+      const tb = params.get("tiebreaker") === "first_run" ? "first_run" : "mph";
+      if (!category || rounds.length === 0) {
+        return NextResponse.json({ error: "category and rounds are required" }, { status: 400 });
+      }
+      const results = await getQualifyingResults(eventCode, season, category, rounds, mode, tb as "mph" | "first_run");
+      return NextResponse.json({ results });
+    }
+
     if (type === "brackets") {
       const category = params.get("category");
       if (!category) {
@@ -154,5 +171,28 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Stats error:", error);
     return NextResponse.json({ error: "Failed to get stats" }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { type, event_code, season } = body;
+
+    if (type === "save-qualifying-config") {
+      if (!event_code || !season) {
+        return NextResponse.json({ error: "event_code and season required" }, { status: 400 });
+      }
+      await saveQualifyingConfig(event_code, season, {
+        classMode: body.classMode || {},
+        tiebreaker: body.tiebreaker || "mph",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    return NextResponse.json({ error: "Invalid type" }, { status: 400 });
+  } catch (error) {
+    console.error("Stats POST error:", error);
+    return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }

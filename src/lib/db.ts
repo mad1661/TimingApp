@@ -1525,3 +1525,177 @@ export async function bulkLookupMembership(names: string[]): Promise<Map<string,
   }
   return result;
 }
+
+// --------------- Qualifying ---------------
+
+export interface QualifyingMode {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export const QUALIFYING_MODES: QualifyingMode[] = [
+  { id: "quickest_et", label: "Quickest to Slowest", description: "Fastest ET wins. Tiebreaker: MPH or who ran first." },
+  { id: "closest_index_no_breakout", label: "Closest to Index (No Breakout)", description: "Closest ET to dial-in/index without going quicker. Breakouts excluded." },
+  { id: "closest_index_breakout_ok", label: "Closest to Index (Breakout OK)", description: "Closest ET to dial-in/index; going under is allowed, no breakout penalty." },
+  { id: "best_rt", label: "Best Reaction Time", description: "Best (lowest) reaction time wins." },
+];
+
+export interface QualifyingConfig {
+  /** Map of category -> qualifying mode id */
+  classMode: Record<string, string>;
+  /** Tiebreaker for quickest_et: "mph" or "first_run" */
+  tiebreaker: "mph" | "first_run";
+}
+
+export async function getQualifyingConfig(eventCode: string, season: string): Promise<QualifyingConfig> {
+  try {
+    const db = getDb();
+    const doc = await db.collection("qualifying_config").doc(`${eventCode}_${season}`).get();
+    if (doc.exists) {
+      const data = doc.data()!;
+      return {
+        classMode: data.classMode || {},
+        tiebreaker: data.tiebreaker || "mph",
+      };
+    }
+  } catch (err) {
+    console.error("[DB] Failed to load qualifying config:", err);
+  }
+  return { classMode: {}, tiebreaker: "mph" };
+}
+
+export async function saveQualifyingConfig(eventCode: string, season: string, config: QualifyingConfig): Promise<void> {
+  const db = getDb();
+  await db.collection("qualifying_config").doc(`${eventCode}_${season}`).set(config, { merge: true });
+}
+
+export interface QualifyingEntry {
+  position: number;
+  name: string;
+  car_number: string;
+  category: string;
+  et: number;
+  mph: number | null;
+  rt: number | null;
+  dial_in: number | null;
+  diff: number | null;
+  round: string;
+  timestamp: string;
+  membership?: string;
+}
+
+export async function getQualifyingResults(
+  eventCode: string,
+  season: string,
+  category: string,
+  rounds: string[],
+  mode: string,
+  tiebreaker: "mph" | "first_run"
+): Promise<QualifyingEntry[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  const roundSet = new Set(rounds.map((r) => r.toUpperCase()));
+
+  // Filter runs for this category and selected rounds
+  const eligible = allRuns.filter((r) => {
+    if (!r.category || r.category !== category) return false;
+    if (!r.round || !roundSet.has(r.round.toUpperCase())) return false;
+    if (r.ft1320 == null || r.ft1320 <= 0) return false;
+    if (r.is_dq === 1) return false;
+    return true;
+  });
+
+  // For each racer (by car_number), pick their best run according to mode
+  const bestByRacer = new Map<string, RunRow>();
+
+  for (const run of eligible) {
+    const key = (run.car_number || "").trim();
+    if (!key) continue;
+    const existing = bestByRacer.get(key);
+    if (!existing) {
+      bestByRacer.set(key, run);
+      continue;
+    }
+    if (isBetterQualRun(run, existing, mode, tiebreaker)) {
+      bestByRacer.set(key, run);
+    }
+  }
+
+  // Sort all best runs by the qualifying mode
+  const sorted = Array.from(bestByRacer.values()).sort((a, b) => {
+    return compareQualRuns(a, b, mode, tiebreaker);
+  });
+
+  // Look up membership numbers
+  const names = sorted.map((r) => r.name || "").filter(Boolean);
+  const memberMap = await bulkLookupMembership([...new Set(names)]);
+
+  return sorted.map((r, i) => {
+    const dialValue = (r.dial_in != null && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : null);
+    const diff = (r.ft1320 != null && dialValue != null) ? r.ft1320 - dialValue : null;
+    return {
+      position: i + 1,
+      name: r.name || "Unknown",
+      car_number: r.car_number || "",
+      category: r.category || "",
+      et: r.ft1320!,
+      mph: r.mph_1320,
+      rt: r.rt,
+      dial_in: dialValue,
+      diff,
+      round: r.round || "",
+      timestamp: r.timestamp || "",
+      membership: memberMap.get(r.name || "") || "",
+    };
+  });
+}
+
+function isBetterQualRun(candidate: RunRow, existing: RunRow, mode: string, tiebreaker: "mph" | "first_run"): boolean {
+  return compareQualRuns(candidate, existing, mode, tiebreaker) < 0;
+}
+
+function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" | "first_run"): number {
+  const dialA = (a.dial_in != null && a.dial_in > 0) ? a.dial_in : (a.class_index ? parseFloat(a.class_index) : NaN);
+  const dialB = (b.dial_in != null && b.dial_in > 0) ? b.dial_in : (b.class_index ? parseFloat(b.class_index) : NaN);
+
+  switch (mode) {
+    case "quickest_et": {
+      const etDiff = (a.ft1320 || 999) - (b.ft1320 || 999);
+      if (Math.abs(etDiff) > 0.0001) return etDiff;
+      if (tiebreaker === "mph") {
+        return (b.mph_1320 || 0) - (a.mph_1320 || 0);
+      }
+      return (a.timestamp || "").localeCompare(b.timestamp || "");
+    }
+
+    case "closest_index_no_breakout": {
+      const diffA = (a.ft1320 || 999) - dialA;
+      const diffB = (b.ft1320 || 999) - dialB;
+      const aBreakout = isNaN(dialA) || diffA < -0.0005;
+      const bBreakout = isNaN(dialB) || diffB < -0.0005;
+      if (aBreakout && !bBreakout) return 1;
+      if (!aBreakout && bBreakout) return -1;
+      if (aBreakout && bBreakout) return diffA - diffB;
+      return diffA - diffB;
+    }
+
+    case "closest_index_breakout_ok": {
+      const diffA = Math.abs((a.ft1320 || 999) - dialA);
+      const diffB = Math.abs((b.ft1320 || 999) - dialB);
+      if (isNaN(dialA) && !isNaN(dialB)) return 1;
+      if (!isNaN(dialA) && isNaN(dialB)) return -1;
+      return diffA - diffB;
+    }
+
+    case "best_rt": {
+      const rtA = a.rt != null ? a.rt : 999;
+      const rtB = b.rt != null ? b.rt : 999;
+      return rtA - rtB;
+    }
+
+    default:
+      return 0;
+  }
+}
