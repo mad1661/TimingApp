@@ -175,6 +175,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ results });
     }
 
+
     if (type === "brackets") {
       const category = params.get("category");
       if (!category) {

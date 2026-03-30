@@ -1725,21 +1725,6 @@ export async function saveClassIndexTable(eventCode: string, season: string, ind
   await db.collection("class_indexes").doc(`${eventCode}_${season}`).set({ indexes }, { merge: true });
 }
 
-/**
- * Look up a racer's class index using the class_index field (class designation)
- * and the stored class index table for the event.
- */
-function lookupClassIndex(run: RunRow, indexTable: Record<string, number>): number | null {
-  if (run.class_index) {
-    const idx = indexTable[run.class_index.trim()];
-    if (idx != null && idx > 0) return idx;
-    // Try uppercase
-    const idxUpper = indexTable[run.class_index.trim().toUpperCase()];
-    if (idxUpper != null && idxUpper > 0) return idxUpper;
-  }
-  return null;
-}
-
 /** Extract numeric index from a run: try dial_in first, then class_index */
 function getRunIndex(r: RunRow): number | null {
   if (r.dial_in != null && r.dial_in > 0) return r.dial_in;
