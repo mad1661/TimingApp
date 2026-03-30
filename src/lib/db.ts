@@ -184,11 +184,15 @@ function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_
  * Only drops entries when a completed run exists for the same car/name/round.
  */
 function removeResetEntries(runs: RunRow[]): RunRow[] {
-  // Group by car_number + category + round + event_code + season
-  // (don't include name — it may be missing on reset entries)
+  // Group by name + category + round + event_code + season
+  // Use name (after backfill) as primary grouping since car_number may be missing on resets.
+  // Also group by car_number as fallback for runs without names.
   const groups = new Map<string, RunRow[]>();
   for (const run of runs) {
-    const gk = `${(run.car_number || "").trim()}|${(run.category || "")}|${run.round}|${run.event_code}|${run.season}`;
+    // Try name first (more reliable after backfill), fall back to car_number
+    const id = (run.name || "").trim().toUpperCase() || (run.car_number || "").trim();
+    if (!id) continue;
+    const gk = `${id}|${(run.category || "")}|${run.round}|${run.event_code}|${run.season}`;
     let arr = groups.get(gk);
     if (!arr) { arr = []; groups.set(gk, arr); }
     arr.push(run);
@@ -1320,9 +1324,9 @@ export async function getPerfectReactionTimes(
     if (!((types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT))) return false;
 
     // Perfect RT is exactly 0.000 — must be non-negative, within tolerance,
-    // and the run must have actual finish data (excludes resets with rt=0 but no ET)
+    // and the run must have a valid finish time (excludes resets with rt=0 but no ET)
     if (r.rt < 0 || r.rt >= 0.0005) return false;
-    if (r.ft1320 == null && r.ft660 == null && r.ft60 == null) return false;
+    if (r.ft1320 == null || r.ft1320 <= 0) return false;
     return true;
   });
 
