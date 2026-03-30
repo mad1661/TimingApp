@@ -30,8 +30,8 @@ const MODES = [
   { id: "closest_index_no_breakout", label: "Closest to Index (No Breakout)", description: "Closest to dial without going under" },
   { id: "closest_index_breakout_ok", label: "Closest to Index (Breakout OK)", description: "Closest to dial, going under is fine" },
   { id: "best_rt", label: "Best Reaction Time", description: "Lowest RT wins" },
-  { id: "comp_eliminator", label: "Competition Eliminator", description: "Furthest under class index = #1 qualifier" },
-  { id: "stock_super_stock", label: "Stock / Super Stock", description: "Furthest under class index = #1 qualifier" },
+  { id: "comp_eliminator", label: "Competition Eliminator", description: "Furthest under class index = #1. No breakout. First to post = tiebreaker." },
+  { id: "stock_super_stock", label: "Stock / Super Stock", description: "Furthest under class index = #1. First to post = tiebreaker." },
 ];
 
 export default function QualifyingPage() {

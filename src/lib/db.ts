@@ -1544,8 +1544,8 @@ export const QUALIFYING_MODES: QualifyingMode[] = [
   { id: "closest_index_no_breakout", label: "Closest to Index (No Breakout)", description: "Closest ET to dial-in/index without going quicker. Breakouts excluded." },
   { id: "closest_index_breakout_ok", label: "Closest to Index (Breakout OK)", description: "Closest ET to dial-in/index; going under is allowed, no breakout penalty." },
   { id: "best_rt", label: "Best Reaction Time", description: "Best (lowest) reaction time wins." },
-  { id: "comp_eliminator", label: "Competition Eliminator", description: "Best ET under class index. Furthest under index = #1 qualifier. Uses class index field." },
-  { id: "stock_super_stock", label: "Stock / Super Stock", description: "Best ET under class index. Furthest under index = #1 qualifier. Tiebreaker: MPH." },
+  { id: "comp_eliminator", label: "Competition Eliminator", description: "Furthest under class index = #1 qualifier. Tiebreaker: first to post time. No breakout." },
+  { id: "stock_super_stock", label: "Stock / Super Stock", description: "Furthest under class index = #1 qualifier. Tiebreaker: first to post time." },
 ];
 
 export interface QualifyingConfig {
@@ -1719,8 +1719,8 @@ function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" |
       const diffFromIdxB = (b.ft1320 || 999) - idxB;
       // Most negative = best (furthest under index)
       if (Math.abs(diffFromIdxA - diffFromIdxB) > 0.0001) return diffFromIdxA - diffFromIdxB;
-      // Tiebreaker: higher MPH
-      return (b.mph_1320 || 0) - (a.mph_1320 || 0);
+      // Tiebreaker: first to post the time (earlier timestamp wins)
+      return (a.timestamp || "").localeCompare(b.timestamp || "");
     }
 
     default:
