@@ -132,11 +132,12 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
       }
       let runs = Array.from(dedupMap.values());
 
-      // Remove reset entries: when the same car_number + name + round has
+      backfillNames(runs);
+
+      // Remove reset entries: when the same car_number + round has
       // multiple entries and some lack finish data (ft1320), the ones without
       // finish data are timing-system resets and should be dropped.
       runs = removeResetEntries(runs);
-      backfillNames(runs);
 
       evictIfNeeded();
 
@@ -183,10 +184,11 @@ function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_
  * Only drops entries when a completed run exists for the same car/name/round.
  */
 function removeResetEntries(runs: RunRow[]): RunRow[] {
-  // Group by car_number + name + round + event_code + season
+  // Group by car_number + category + round + event_code + season
+  // (don't include name — it may be missing on reset entries)
   const groups = new Map<string, RunRow[]>();
   for (const run of runs) {
-    const gk = `${(run.car_number || "").trim()}|${(run.name || "").trim().toUpperCase()}|${run.round}|${run.event_code}|${run.season}`;
+    const gk = `${(run.car_number || "").trim()}|${(run.category || "")}|${run.round}|${run.event_code}|${run.season}`;
     let arr = groups.get(gk);
     if (!arr) { arr = []; groups.set(gk, arr); }
     arr.push(run);
