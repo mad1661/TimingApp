@@ -130,7 +130,12 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
           dedupMap.set(dk, run);
         }
       }
-      const runs = Array.from(dedupMap.values());
+      let runs = Array.from(dedupMap.values());
+
+      // Remove reset entries: when the same car_number + name + round has
+      // multiple entries and some lack finish data (ft1320), the ones without
+      // finish data are timing-system resets and should be dropped.
+      runs = removeResetEntries(runs);
       backfillNames(runs);
 
       evictIfNeeded();
@@ -167,6 +172,40 @@ function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string
 
 function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): boolean {
   return run.rt != null || run.ft1320 != null || run.ft660 != null || run.ft60 != null;
+}
+
+/**
+ * Remove timing-system reset entries. When the same car_number + name + round
+ * appears more than once and some entries have no finish time (ft1320), the
+ * entries without finish data are likely resets and should be removed.
+ * Only drops the incomplete entry when a completed entry exists for the same grouping.
+ */
+function removeResetEntries(runs: RunRow[]): RunRow[] {
+  // Group by car_number + name + round + event_code + season
+  const groups = new Map<string, RunRow[]>();
+  for (const run of runs) {
+    const gk = `${(run.car_number || "").trim()}|${(run.name || "").trim().toUpperCase()}|${run.round}|${run.event_code}|${run.season}`;
+    let arr = groups.get(gk);
+    if (!arr) { arr = []; groups.set(gk, arr); }
+    arr.push(run);
+  }
+
+  const removals = new Set<RunRow>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const withFinish = group.filter((r) => r.ft1320 != null && r.ft1320 > 0);
+    const withoutFinish = group.filter((r) => r.ft1320 == null || r.ft1320 === 0);
+    // Only remove incomplete entries if at least one completed entry exists
+    if (withFinish.length > 0 && withoutFinish.length > 0) {
+      for (const r of withoutFinish) removals.add(r);
+    }
+  }
+
+  if (removals.size > 0) {
+    console.log(`[DB] Removed ${removals.size} reset entries (no finish data where completed run exists)`);
+    return runs.filter((r) => !removals.has(r));
+  }
+  return runs;
 }
 
 // --------------- Purge & Re-fetch ---------------
