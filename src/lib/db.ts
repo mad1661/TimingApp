@@ -1312,14 +1312,18 @@ export async function getPerfectReactionTimes(
   const perfects = allRuns.filter((r) => {
     if (!r.round || !r.category || r.rt == null) return false;
 
-    const isElim = r.round.startsWith("E") || r.round === "F" || r.round.toLowerCase() === "final";
-    const isQual = r.round.startsWith("Q");
-    const isTT = r.round.startsWith("T");
+    const rd = r.round.toUpperCase();
+    const isElim = rd.startsWith("E") || rd.startsWith("R") || rd.startsWith("C") || rd === "F" || rd === "FINAL";
+    const isQual = rd.startsWith("Q");
+    const isTT = rd.startsWith("T");
 
     if (!((types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT))) return false;
 
-    // Perfect RT is exactly 0.000 (within floating point tolerance)
-    return Math.abs(r.rt) < 0.0005;
+    // Perfect RT is exactly 0.000 — must be non-negative, within tolerance,
+    // and the run must have actual finish data (excludes resets with rt=0 but no ET)
+    if (r.rt < 0 || r.rt >= 0.0005) return false;
+    if (r.ft1320 == null && r.ft660 == null && r.ft60 == null) return false;
+    return true;
   });
 
   const result: Record<string, PerfectRTEntry[]> = {};
@@ -1367,7 +1371,8 @@ export async function getDeadOnRuns(
   tagRunTimestamps(allRuns);
 
   const deadOns = allRuns.filter((r) => {
-    if (!r.round?.startsWith("E") && r.round !== "F" && r.round?.toLowerCase() !== "final") return false;
+    const rd = (r.round || "").toUpperCase();
+    if (!rd.startsWith("E") && !rd.startsWith("R") && !rd.startsWith("C") && rd !== "F" && rd !== "FINAL") return false;
     if (!r.category) return false;
     if (!r.ft1320 || r.ft1320 <= 0) return false;
     if (!r.dial_in || r.dial_in <= 0) return false;
@@ -1539,6 +1544,8 @@ export const QUALIFYING_MODES: QualifyingMode[] = [
   { id: "closest_index_no_breakout", label: "Closest to Index (No Breakout)", description: "Closest ET to dial-in/index without going quicker. Breakouts excluded." },
   { id: "closest_index_breakout_ok", label: "Closest to Index (Breakout OK)", description: "Closest ET to dial-in/index; going under is allowed, no breakout penalty." },
   { id: "best_rt", label: "Best Reaction Time", description: "Best (lowest) reaction time wins." },
+  { id: "comp_eliminator", label: "Competition Eliminator", description: "Best ET under class index. Furthest under index = #1 qualifier. Uses class index field." },
+  { id: "stock_super_stock", label: "Stock / Super Stock", description: "Best ET under class index. Furthest under index = #1 qualifier. Tiebreaker: MPH." },
 ];
 
 export interface QualifyingConfig {
@@ -1633,7 +1640,11 @@ export async function getQualifyingResults(
   const memberMap = await bulkLookupMembership([...new Set(names)]);
 
   return sorted.map((r, i) => {
-    const dialValue = (r.dial_in != null && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : null);
+    // For Comp/Stock modes, use class_index as the reference; otherwise prefer dial_in
+    const useClassIndex = mode === "comp_eliminator" || mode === "stock_super_stock";
+    const dialValue = useClassIndex
+      ? (r.class_index ? parseFloat(r.class_index) : null)
+      : ((r.dial_in != null && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : null));
     const diff = (r.ft1320 != null && dialValue != null) ? r.ft1320 - dialValue : null;
     return {
       position: i + 1,
@@ -1693,6 +1704,23 @@ function compareQualRuns(a: RunRow, b: RunRow, mode: string, tiebreaker: "mph" |
       const rtA = a.rt != null ? a.rt : 999;
       const rtB = b.rt != null ? b.rt : 999;
       return rtA - rtB;
+    }
+
+    case "comp_eliminator":
+    case "stock_super_stock": {
+      // Uses class_index (not dial_in). Furthest under index = #1 qualifier.
+      // diff = ET - class_index. Most negative (furthest under) wins.
+      const idxA = a.class_index ? parseFloat(a.class_index) : NaN;
+      const idxB = b.class_index ? parseFloat(b.class_index) : NaN;
+      if (isNaN(idxA) && !isNaN(idxB)) return 1;
+      if (!isNaN(idxA) && isNaN(idxB)) return -1;
+      if (isNaN(idxA) && isNaN(idxB)) return 0;
+      const diffFromIdxA = (a.ft1320 || 999) - idxA;
+      const diffFromIdxB = (b.ft1320 || 999) - idxB;
+      // Most negative = best (furthest under index)
+      if (Math.abs(diffFromIdxA - diffFromIdxB) > 0.0001) return diffFromIdxA - diffFromIdxB;
+      // Tiebreaker: higher MPH
+      return (b.mph_1320 || 0) - (a.mph_1320 || 0);
     }
 
     default:

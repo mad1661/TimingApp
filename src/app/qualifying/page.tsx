@@ -30,6 +30,8 @@ const MODES = [
   { id: "closest_index_no_breakout", label: "Closest to Index (No Breakout)", description: "Closest to dial without going under" },
   { id: "closest_index_breakout_ok", label: "Closest to Index (Breakout OK)", description: "Closest to dial, going under is fine" },
   { id: "best_rt", label: "Best Reaction Time", description: "Lowest RT wins" },
+  { id: "comp_eliminator", label: "Competition Eliminator", description: "Furthest under class index = #1 qualifier" },
+  { id: "stock_super_stock", label: "Stock / Super Stock", description: "Furthest under class index = #1 qualifier" },
 ];
 
 export default function QualifyingPage() {
@@ -197,10 +199,12 @@ export default function QualifyingPage() {
   }
 
   const modeInfo = MODES.find((m) => m.id === selectedMode);
-  const showDial = selectedMode !== "quickest_et" && selectedMode !== "best_rt";
-  const showDiff = showDial;
-  const showMph = selectedMode === "quickest_et";
+  const isIndexMode = selectedMode === "closest_index_no_breakout" || selectedMode === "closest_index_breakout_ok" || selectedMode === "comp_eliminator" || selectedMode === "stock_super_stock";
+  const showDial = isIndexMode;
+  const showDiff = isIndexMode;
+  const showMph = selectedMode === "quickest_et" || selectedMode === "comp_eliminator" || selectedMode === "stock_super_stock";
   const showRt = selectedMode === "best_rt";
+  const dialLabel = selectedMode === "comp_eliminator" || selectedMode === "stock_super_stock" ? "Index" : "Dial";
 
   function roundLabel(round: string) {
     if (round === "F" || round.toLowerCase() === "final") return "Final";
@@ -423,7 +427,7 @@ export default function QualifyingPage() {
                   } else {
                     colHeader += `${pad("ET", 10)}`;
                     if (showMph) colHeader += `${pad("MPH", 10)}`;
-                    if (showDial) colHeader += `${pad("Dial", 10)}${pad("Diff", 10)}`;
+                    if (showDial) colHeader += `${pad(dialLabel, 10)}${pad("Diff", 10)}`;
                   }
                   colHeader += "Membership";
 
@@ -469,7 +473,7 @@ export default function QualifyingPage() {
                       <th className="px-4 py-3 text-right">ET</th>
                     )}
                     {showMph && <th className="px-4 py-3 text-right">MPH</th>}
-                    {showDial && <th className="px-4 py-3 text-right">Dial</th>}
+                    {showDial && <th className="px-4 py-3 text-right">{dialLabel}</th>}
                     {showDiff && <th className="px-4 py-3 text-right">Diff</th>}
                     <th className="px-4 py-3 text-left">Round</th>
                     <th className="px-4 py-3 text-left">Member</th>
