@@ -989,7 +989,7 @@ function roundSortWeight(round: string | null): number {
 // Primary: time of day (8 AM → noon → 7 PM)
 // Secondary: round progression (R1 before R2 at same hour)
 // This breaks ties when AM and PM runs share the same raw hour
-function raceDaySortKey(ts: string, round: string | null): number {
+function raceDaySortKey(ts: string, round: string | null, isPm: boolean = false): number {
   const timePart = ts.split(" ")[1];
   if (!timePart) return 0;
   const [hh, mm, ss] = timePart.split(":").map(Number);
@@ -1002,14 +1002,17 @@ function raceDaySortKey(ts: string, round: string | null): number {
   } else if (hh >= 1 && hh <= 5) {
     h24 = hh + 12;      // 1-5 = always afternoon
   } else {
-    // Hours 6-7 are ambiguous (could be early AM or late PM).
-    // Use the round to disambiguate: elimination rounds (R1+, E1+, C1+, F)
-    // happen in the afternoon/evening; time trials & qualifying are morning.
-    h24 = roundSortWeight(round) >= 20 ? hh + 12 : hh;
+    // Hours 6-7: determined by same-day context passed via isPm
+    h24 = isPm ? hh + 12 : hh;
   }
 
   // Time as primary sort, round weight as tiebreaker within same minute
   return h24 * 3600 + (mm || 0) * 60 + (ss || 0) + roundSortWeight(round) * 0.001;
+}
+
+function tsHour(ts: string): number {
+  const timePart = ts.split(" ")[1];
+  return timePart ? parseInt(timePart.split(":")[0], 10) : 0;
 }
 
 function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
@@ -1028,8 +1031,32 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
+    // Hours 6-7 are ambiguous (could be early AM or late PM).
+    // Use same-day context: if a run at hour 6/7 has a round that comes
+    // AFTER every run at known-PM hours (12, 1-5), it's evening.
+    let maxPmRound = -1;
+    let hasPmAnchor = false;
+    for (const run of dayRuns) {
+      const h = tsHour(run.timestamp!);
+      if (h === 12 || (h >= 1 && h <= 5)) {
+        hasPmAnchor = true;
+        maxPmRound = Math.max(maxPmRound, roundSortWeight(run.round));
+      }
+    }
+
+    const pmRuns = new Set<RunRow>();
+    for (const run of dayRuns) {
+      const h = tsHour(run.timestamp!);
+      if ((h === 6 || h === 7) && hasPmAnchor && roundSortWeight(run.round) > maxPmRound) {
+        pmRuns.add(run);
+      }
+    }
+
     // Sort by time, with round as tiebreaker
-    dayRuns.sort((a, b) => raceDaySortKey(a.timestamp!, a.round) - raceDaySortKey(b.timestamp!, b.round));
+    dayRuns.sort((a, b) =>
+      raceDaySortKey(a.timestamp!, a.round, pmRuns.has(a)) -
+      raceDaySortKey(b.timestamp!, b.round, pmRuns.has(b))
+    );
 
     // Walk sorted runs: before hour 12 = AM, hour 12 onward = PM
     let passedNoon = pmStart;
