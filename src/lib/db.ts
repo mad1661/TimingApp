@@ -993,8 +993,21 @@ function raceDaySortKey(ts: string, round: string | null): number {
   const timePart = ts.split(" ")[1];
   if (!timePart) return 0;
   const [hh, mm, ss] = timePart.split(":").map(Number);
-  // Hours 6-11 = morning, 12 = noon, 1-5 = afternoon/evening
-  const h24 = hh >= 6 ? hh : hh === 12 ? 12 : hh + 12;
+
+  let h24: number;
+  if (hh >= 8 && hh <= 11) {
+    h24 = hh;          // 8-11 = always morning
+  } else if (hh === 12) {
+    h24 = 12;           // 12 = always noon
+  } else if (hh >= 1 && hh <= 5) {
+    h24 = hh + 12;      // 1-5 = always afternoon
+  } else {
+    // Hours 6-7 are ambiguous (could be early AM or late PM).
+    // Use the round to disambiguate: elimination rounds (R1+, E1+, C1+, F)
+    // happen in the afternoon/evening; time trials & qualifying are morning.
+    h24 = roundSortWeight(round) >= 20 ? hh + 12 : hh;
+  }
+
   // Time as primary sort, round weight as tiebreaker within same minute
   return h24 * 3600 + (mm || 0) * 60 + (ss || 0) + roundSortWeight(round) * 0.001;
 }
