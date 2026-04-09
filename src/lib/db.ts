@@ -993,8 +993,8 @@ function raceDaySortKey(ts: string, round: string | null): number {
   const timePart = ts.split(" ")[1];
   if (!timePart) return 0;
   const [hh, mm, ss] = timePart.split(":").map(Number);
-  // Hours 8-11 = morning, 12 = noon, 1-7 = afternoon/evening
-  const h24 = hh >= 8 ? hh : hh === 12 ? 12 : hh + 12;
+  // Hours 6-11 = morning, 12 = noon, 1-5 = afternoon/evening
+  const h24 = hh >= 6 ? hh : hh === 12 ? 12 : hh + 12;
   // Time as primary sort, round weight as tiebreaker within same minute
   return h24 * 3600 + (mm || 0) * 60 + (ss || 0) + roundSortWeight(round) * 0.001;
 }
