@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
 import { useLiveData } from "./LiveDataProvider";
 import Navbar from "./Navbar";
+import EventBanner from "./EventBanner";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const live = useLiveData();
@@ -20,7 +21,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <>
       <Navbar />
-      <main className="lg:ml-64 min-h-screen p-4 lg:p-8">{children}</main>
+      <main className="lg:ml-64 min-h-screen p-4 lg:p-8">
+        <EventBanner />
+        {children}
+      </main>
     </>
   );
 }
