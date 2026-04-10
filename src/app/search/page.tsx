@@ -178,6 +178,7 @@ export default function SearchPage() {
         <div className="relative" ref={dropdownRef}>
           <input
             type="text"
+            autoComplete="one-time-code"
             value={search}
             onChange={(e) => handleInputChange(e.target.value)}
             placeholder={mode === "number" ? "Enter car number..." : "Enter racer name..."}

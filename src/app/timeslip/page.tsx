@@ -158,6 +158,7 @@ export default function TimeslipPage() {
           <div ref={searchRef} className="relative">
             <input
               type="text"
+              autoComplete="one-time-code"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}

@@ -174,7 +174,7 @@ export default function RacerProfilePage() {
               <div ref={el => { searchRefs.current[idx] = el; }} className="relative">
                 <input
                   type="text"
-                  autoComplete="off"
+                  autoComplete="one-time-code"
                   value={slot.query}
                   onChange={(e) => updateSlot(idx, { query: e.target.value, selectedName: null })}
                   onFocus={() => { if (slot.suggestions.length > 0 && !slot.selectedName) updateSlot(idx, { showSuggestions: true }); }}
