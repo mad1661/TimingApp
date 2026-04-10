@@ -51,6 +51,11 @@ interface RunRow {
   class_index: string | null;
   rt: number | null;
   ft60: number | null;
+  ft330: number | null;
+  ft660: number | null;
+  mph_660: number | null;
+  ft1000: number | null;
+  mph_1000: number | null;
   ft1320: number | null;
   mph_1320: number | null;
   is_winner: number;
@@ -369,26 +374,36 @@ export default function RacerDetailPanel({ name, compact = false }: Props) {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-nhra-border text-gray-400 uppercase tracking-wider">
-                    <th className="text-left p-2 pl-4">Round</th>
+                    <th className="text-left p-2 pl-4">Rnd</th>
                     <th className="text-right p-2">RT</th>
-                    <th className="text-right p-2">ET</th>
+                    <th className="text-right p-2">60&apos;</th>
+                    <th className="text-right p-2">330&apos;</th>
+                    <th className="text-right p-2">660&apos;</th>
+                    <th className="text-right p-2">660 MPH</th>
+                    <th className="text-right p-2">1000&apos;</th>
+                    <th className="text-right p-2">1320&apos;</th>
                     <th className="text-right p-2">MPH</th>
-                    <th className="text-center p-2">W/L</th>
                     <th className="text-right p-2">Dial</th>
+                    <th className="text-center p-2">W/L</th>
                     <th className="text-left p-2 pr-4">Opp</th>
                   </tr>
                 </thead>
                 <tbody>
                   {runDeltas.map(({ run, etDelta }, i) => (
                     <tr key={i} className="border-b border-nhra-border/30 hover:bg-nhra-border/20">
-                      <td className="p-2 pl-4 text-gray-300">{run.round}</td>
+                      <td className="p-2 pl-4 text-gray-300 whitespace-nowrap">{run.round}</td>
                       <td className="p-2 text-right font-mono text-gray-300">{run.rt?.toFixed(3) ?? "-"}</td>
+                      <td className="p-2 text-right font-mono text-gray-300">{run.ft60?.toFixed(3) ?? "-"}</td>
+                      <td className="p-2 text-right font-mono text-gray-300">{run.ft330?.toFixed(3) ?? "-"}</td>
+                      <td className="p-2 text-right font-mono text-gray-300">{run.ft660?.toFixed(3) ?? "-"}</td>
+                      <td className="p-2 text-right font-mono text-gray-400">{run.mph_660?.toFixed(2) ?? "-"}</td>
+                      <td className="p-2 text-right font-mono text-gray-300">{run.ft1000?.toFixed(3) ?? "-"}</td>
                       <td className="p-2 text-right font-mono text-white font-medium">{run.ft1320?.toFixed(3) ?? "-"}</td>
                       <td className="p-2 text-right font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
+                      <td className="p-2 text-right font-mono text-gray-400">{run.dial_in?.toFixed(2) ?? "-"}</td>
                       <td className="p-2 text-center">
                         {run.is_winner ? <span className="text-green-400 font-bold">W</span> : <span className="text-gray-600">L</span>}
                       </td>
-                      <td className="p-2 text-right font-mono text-gray-400">{run.dial_in?.toFixed(2) ?? "-"}</td>
                       <td className="p-2 pr-4 text-gray-400 truncate max-w-[100px]">
                         {run.opponents?.[0]?.name || "BYE"}
                       </td>

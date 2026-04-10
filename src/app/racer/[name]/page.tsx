@@ -54,6 +54,11 @@ interface RunRow {
   class_index: string | null;
   rt: number | null;
   ft60: number | null;
+  ft330: number | null;
+  ft660: number | null;
+  mph_660: number | null;
+  ft1000: number | null;
+  mph_1000: number | null;
   ft1320: number | null;
   mph_1320: number | null;
   is_winner: number;
@@ -499,15 +504,17 @@ export default function RacerPage() {
                 <thead>
                   <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
                     <th className="text-left p-3 pl-5">Date</th>
-                    <th className="text-left p-3">Event</th>
-                    <th className="text-left p-3">Category</th>
                     <th className="text-left p-3">Round</th>
                     <th className="text-right p-3">RT</th>
+                    <th className="text-right p-3">60&apos;</th>
+                    <th className="text-right p-3">330&apos;</th>
+                    <th className="text-right p-3">660&apos;</th>
+                    <th className="text-right p-3">660 MPH</th>
+                    <th className="text-right p-3">1000&apos;</th>
                     <th className="text-right p-3">ET</th>
-                    <th className="text-right p-3 w-16">Delta</th>
                     <th className="text-right p-3">MPH</th>
-                    <th className="text-center p-3">Result</th>
                     <th className="text-right p-3">Dial</th>
+                    <th className="text-center p-3">Result</th>
                     <th className="text-left p-3 pr-5">Opponents</th>
                   </tr>
                 </thead>
@@ -520,21 +527,16 @@ export default function RacerPage() {
                     return (
                       <tr key={i} className={`border-b border-nhra-border/50 hover:bg-nhra-border/20 ${isOff ? "bg-yellow-500/5" : ""}`}>
                         <td className="p-3 pl-5 text-gray-300 whitespace-nowrap">{run.timestamp?.split(" ")[0] ?? "-"}</td>
-                        <td className="p-3 text-white whitespace-nowrap">{run.event_name || "-"}</td>
-                        <td className="p-3 text-gray-300 text-xs">{run.category}</td>
                         <td className="p-3 text-gray-300">{run.round}</td>
                         <td className="p-3 text-right font-mono text-gray-300">{run.rt?.toFixed(3) ?? "-"}</td>
+                        <td className="p-3 text-right font-mono text-gray-300">{run.ft60?.toFixed(3) ?? "-"}</td>
+                        <td className="p-3 text-right font-mono text-gray-300">{run.ft330?.toFixed(3) ?? "-"}</td>
+                        <td className="p-3 text-right font-mono text-gray-300">{run.ft660?.toFixed(3) ?? "-"}</td>
+                        <td className="p-3 text-right font-mono text-gray-400">{run.mph_660?.toFixed(2) ?? "-"}</td>
+                        <td className="p-3 text-right font-mono text-gray-300">{run.ft1000?.toFixed(3) ?? "-"}</td>
                         <td className="p-3 text-right font-mono text-white font-medium">{run.ft1320?.toFixed(3) ?? "-"}</td>
-                        <td className="p-3 text-right font-mono text-xs">
-                          {etDelta != null ? (
-                            <span className={isFaster ? "text-green-400" : isSlower ? "text-red-400" : "text-gray-500"}>
-                              {etDelta >= 0 ? "+" : ""}{etDelta.toFixed(3)}
-                            </span>
-                          ) : (
-                            <span className="text-gray-700">&mdash;</span>
-                          )}
-                        </td>
                         <td className="p-3 text-right font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
+                        <td className="p-3 text-right font-mono text-gray-400">{run.dial_in?.toFixed(2) ?? "-"}</td>
                         <td className="p-3 text-center">
                           {(() => {
                             const res = run.result?.trim().toUpperCase();
@@ -545,7 +547,6 @@ export default function RacerPage() {
                             return <span className="text-gray-600">L</span>;
                           })()}
                         </td>
-                        <td className="p-3 text-right font-mono text-gray-400">{run.dial_in?.toFixed(2) ?? "-"}</td>
                         <td className="p-3 pr-5 whitespace-nowrap">
                           {run.opponents && run.opponents.length > 0 ? (
                             <div className="space-y-0.5">
