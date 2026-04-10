@@ -78,13 +78,18 @@ export default function Navbar() {
 
         {/* Live Status + Change Event Footer */}
         <div className="border-t border-nhra-border p-4 space-y-3">
-          {live.isActive && live.config ? (
+          {live.config ? (
             <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${live.isFetching ? "bg-yellow-400 animate-pulse" : "bg-green-400 animate-pulse"}`} />
-                <span className="text-xs text-white font-medium truncate">LIVE</span>
-                <span className="text-xs text-gray-500 truncate ml-auto">{live.config.eventName || live.config.eventCode}</span>
-              </div>
+              {live.isActive && (
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${live.isFetching ? "bg-yellow-400 animate-pulse" : "bg-green-400 animate-pulse"}`} />
+                  <span className="text-xs text-white font-medium truncate">LIVE</span>
+                  <span className="text-xs text-gray-500 truncate ml-auto">{live.config.eventName || live.config.eventCode}</span>
+                </div>
+              )}
+              {!live.isActive && (
+                <p className="text-xs text-gray-500 truncate">{live.config.eventName || live.config.eventCode}</p>
+              )}
               {live.lastFetch && (
                 <p className="text-xs text-gray-500">
                   Last: {live.lastFetch.toLocaleTimeString()}
