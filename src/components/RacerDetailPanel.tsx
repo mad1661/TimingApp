@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { ChartContainer, PerformanceLineChart } from "@/components/Charts";
 import { classifyCategory, formatLabel, relevantMetrics, type RaceFormat } from "@/lib/categories";
 import { useLiveData } from "@/components/LiveDataProvider";
@@ -72,9 +71,10 @@ interface RunRow {
 interface Props {
   name: string;
   compact?: boolean;
+  onRacerClick?: (name: string) => void;
 }
 
-export default function RacerDetailPanel({ name, compact = false }: Props) {
+export default function RacerDetailPanel({ name, compact = false, onRacerClick }: Props) {
   const live = useLiveData();
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [techCards, setTechCards] = useState<TechCard[]>([]);
@@ -194,9 +194,7 @@ export default function RacerDetailPanel({ name, compact = false }: Props) {
     <div className="space-y-4">
       {/* Header */}
       <div>
-        <Link href={`/racer/${encodeURIComponent(name)}`} className="text-2xl font-bold text-white hover:text-nhra-accent transition-colors">
-          {name}
-        </Link>
+        <span className="text-2xl font-bold text-white">{name}</span>
         <p className="text-sm text-gray-400">
           {runs.length} runs{seasons.length > 0 && ` | ${seasons.join(", ")}`}
           {categories.length > 0 && ` | ${categories.join(", ")}`}
@@ -349,9 +347,9 @@ export default function RacerDetailPanel({ name, compact = false }: Props) {
                   const winPct = (rec.wins / rec.total) * 100;
                   return (
                     <div key={rec.oppName} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-nhra-border/20">
-                      <Link href={`/racer/${encodeURIComponent(rec.oppName)}`} className="text-white hover:text-nhra-accent text-xs font-medium truncate max-w-[120px]">
+                      <button onClick={() => onRacerClick?.(rec.oppName)} className="text-white hover:text-nhra-accent text-xs font-medium truncate max-w-[120px] text-left">
                         {rec.oppName}
-                      </Link>
+                      </button>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono"><span className="text-green-400">{rec.wins}W</span>-<span className="text-red-400">{rec.losses}L</span></span>
                         <div className="w-16 h-1.5 bg-red-500/30 rounded-full overflow-hidden">
@@ -404,8 +402,14 @@ export default function RacerDetailPanel({ name, compact = false }: Props) {
                       <td className="p-2 text-center">
                         {run.is_winner ? <span className="text-green-400 font-bold">W</span> : <span className="text-gray-600">L</span>}
                       </td>
-                      <td className="p-2 pr-4 text-gray-400 truncate max-w-[100px]">
-                        {run.opponents?.[0]?.name || "BYE"}
+                      <td className="p-2 pr-4 truncate max-w-[100px]">
+                        {run.opponents?.[0]?.name ? (
+                          <button onClick={() => onRacerClick?.(run.opponents![0].name!)} className="text-gray-400 hover:text-nhra-accent text-left truncate">
+                            {run.opponents[0].name}
+                          </button>
+                        ) : (
+                          <span className="text-gray-600">BYE</span>
+                        )}
                       </td>
                     </tr>
                   ))}
