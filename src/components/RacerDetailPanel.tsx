@@ -116,7 +116,8 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
 
   const validETs = runs.filter((r) => r.ft1320 && r.ft1320 > 0);
   const validRTs = runs.filter((r) => r.rt && r.rt > 0);
-  const wins = runs.filter((r) => r.is_winner);
+  const elimRuns = runs.filter((r) => r.round && /^[ERCF]/i.test(r.round));
+  const wins = elimRuns.filter((r) => r.is_winner);
   const categories = [...new Set(runs.map((r) => r.category).filter(Boolean))];
   const seasons = [...new Set(runs.map((r) => r.season).filter(Boolean))].sort().reverse();
 
@@ -260,7 +261,7 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
             </div>
             <div className="bg-nhra-card border border-nhra-border rounded-lg p-3">
               <p className="text-xs text-gray-400 uppercase">Wins</p>
-              <p className="text-xl font-bold text-white">{wins.length} <span className="text-sm text-gray-500">({((wins.length / runs.length) * 100).toFixed(0)}%)</span></p>
+              <p className="text-xl font-bold text-white">{wins.length} <span className="text-sm text-gray-500">({elimRuns.length > 0 ? ((wins.length / elimRuns.length) * 100).toFixed(0) : 0}%)</span></p>
             </div>
             <div className="bg-nhra-card border border-nhra-border rounded-lg p-3">
               <p className="text-xs text-gray-400 uppercase">Best ET</p>

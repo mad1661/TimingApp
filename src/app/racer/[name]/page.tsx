@@ -114,7 +114,8 @@ export default function RacerPage() {
 
   const validETs = runs.filter((r) => r.ft1320 && r.ft1320 > 0);
   const validRTs = runs.filter((r) => r.rt && r.rt > 0);
-  const wins = runs.filter((r) => r.is_winner);
+  const elimRuns = runs.filter((r) => r.round && /^[ERCF]/i.test(r.round));
+  const wins = elimRuns.filter((r) => r.is_winner);
   const categories = [...new Set(runs.map((r) => r.category).filter(Boolean))];
   const seasons = [...new Set(runs.map((r) => r.season).filter(Boolean))].sort().reverse();
 
@@ -302,7 +303,7 @@ export default function RacerPage() {
           {/* Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
             <StatCard label="Total Runs" value={runs.length} />
-            <StatCard label="Wins" value={wins.length} sub={`${((wins.length / runs.length) * 100).toFixed(0)}% win rate`} />
+            <StatCard label="Wins" value={wins.length} sub={`${elimRuns.length > 0 ? ((wins.length / elimRuns.length) * 100).toFixed(0) : 0}% win rate`} />
             <StatCard label="Best ET" value={bestET?.toFixed(3) ?? "-"} />
             <StatCard label="Avg ET" value={avgET?.toFixed(3) ?? "-"} />
             <StatCard label="Best RT" value={bestRT?.toFixed(3) ?? "-"} />
@@ -396,7 +397,7 @@ export default function RacerPage() {
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 uppercase">Win Rate</p>
-                      <p className="text-lg font-bold text-white font-mono">{runs.length > 0 ? `${((wins.length / runs.length) * 100).toFixed(0)}%` : "-"}</p>
+                      <p className="text-lg font-bold text-white font-mono">{elimRuns.length > 0 ? `${((wins.length / elimRuns.length) * 100).toFixed(0)}%` : "-"}</p>
                     </div>
                   </div>
                 ) : (
@@ -411,7 +412,7 @@ export default function RacerPage() {
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 uppercase">Win Rate</p>
-                      <p className="text-lg font-bold text-white font-mono">{runs.length > 0 ? `${((wins.length / runs.length) * 100).toFixed(0)}%` : "-"}</p>
+                      <p className="text-lg font-bold text-white font-mono">{elimRuns.length > 0 ? `${((wins.length / elimRuns.length) * 100).toFixed(0)}%` : "-"}</p>
                     </div>
                   </div>
                 )}
