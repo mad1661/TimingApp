@@ -99,6 +99,16 @@ export default function Navbar() {
               {live.totalNewRuns > 0 && (
                 <p className="text-xs text-green-400">{live.totalNewRuns} new runs this session</p>
               )}
+              <button
+                onClick={() => live.fetchNow()}
+                disabled={live.isFetching}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white bg-nhra-red hover:bg-nhra-red/80 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                <svg className={`w-4 h-4 ${live.isFetching ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {live.isFetching ? "Fetching..." : "Refresh Data"}
+              </button>
             </div>
           ) : (
             <p className="text-xs text-gray-500 text-center">No live event</p>
