@@ -4,12 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
 
-interface EventOption {
-  event_code: string;
-  event_name: string;
-  season: string;
-}
-
 interface PackageEntry {
   name: string;
   car_number: string;
@@ -25,10 +19,9 @@ interface PackageEntry {
 
 export default function BestLosingPackagePage() {
   const live = useLiveData();
-  const [events, setEvents] = useState<EventOption[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState("");
-  const [selectedEventName, setSelectedEventName] = useState("");
-  const [selectedSeason, setSelectedSeason] = useState("");
+  const selectedEvent = live.config?.eventCode || "";
+  const selectedEventName = live.config?.eventName || "";
+  const selectedSeason = live.config?.season || "";
   const [filtersLoading, setFiltersLoading] = useState(true);
 
   // Available rounds and categories from the event
@@ -45,56 +38,25 @@ export default function BestLosingPackagePage() {
   const [searched, setSearched] = useState(false);
   const [winnersCopied, setWinnersCopied] = useState(false);
 
-  // Load events on mount
+  // Load filters on mount / event change
   useEffect(() => {
-    const ec = live.config?.eventCode || "";
-    const s = live.config?.season || "";
-    if (ec && s) {
-      setSelectedEvent(ec);
-      setSelectedEventName(live.config?.eventName || "");
-      setSelectedSeason(s);
-    }
-    const qs = ec && s ? `event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1` : "limit=1";
-    fetch(`/api/runs?${qs}`)
+    if (!selectedEvent || !selectedSeason) return;
+    setFiltersLoading(true);
+    setSelectedRounds(new Set());
+    setSelectedCategories(new Set());
+    setResults({});
+    setSearched(false);
+    fetch(`/api/runs?event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&limit=1`)
       .then((r) => r.json())
       .then((data) => {
         if (data.filters) {
-          setEvents(data.filters.events || []);
           setAvailableRounds(data.filters.rounds || []);
           setAvailableCategories(data.filters.categories || []);
         }
       })
       .catch(console.error)
       .finally(() => setFiltersLoading(false));
-  }, [live.config?.eventCode, live.config?.season]);
-
-  // Reload rounds/categories when event changes
-  async function loadFiltersForEvent(ec: string, s: string) {
-    try {
-      const res = await fetch(`/api/runs?event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1`);
-      const data = await res.json();
-      if (data.filters) {
-        setAvailableRounds(data.filters.rounds || []);
-        setAvailableCategories(data.filters.categories || []);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  function handleEventChange(value: string) {
-    const event = events.find((e) => `${e.event_code}|${e.season}` === value);
-    if (event) {
-      setSelectedEvent(event.event_code);
-      setSelectedEventName(event.event_name);
-      setSelectedSeason(event.season);
-      setSelectedRounds(new Set());
-      setSelectedCategories(new Set());
-      setResults({});
-      setSearched(false);
-      loadFiltersForEvent(event.event_code, event.season);
-    }
-  }
+  }, [selectedEvent, selectedSeason]);
 
   function toggleRound(round: string) {
     setSelectedRounds((prev) => {
@@ -159,25 +121,6 @@ export default function BestLosingPackagePage() {
         <p className="text-gray-400">
           Find the losers with the best combined reaction time and closeness to dial-in across elimination rounds
         </p>
-      </div>
-
-      {/* Event Selector */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
-        <label className="block text-sm text-gray-400 mb-2">Event</label>
-        <select
-          value={selectedEvent ? `${selectedEvent}|${selectedSeason}` : ""}
-          onChange={(e) => handleEventChange(e.target.value)}
-          className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white text-base focus:outline-none focus:border-nhra-accent"
-          disabled={filtersLoading}
-          aria-label="Select Event"
-        >
-          <option value="">Select Event</option>
-          {events.map((e) => (
-            <option key={`${e.event_code}|${e.season}`} value={`${e.event_code}|${e.season}`}>
-              {e.event_name} ({e.season})
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Round Selection */}

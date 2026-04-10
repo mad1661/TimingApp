@@ -4,12 +4,6 @@ import { useEffect, useState } from "react";
 import BracketView from "@/components/BracketView";
 import { useLiveData } from "@/components/LiveDataProvider";
 
-interface EventOption {
-  event_code: string;
-  event_name: string;
-  season: string;
-}
-
 interface RunRow {
   timestamp: string | null;
   round: string | null;
@@ -27,34 +21,27 @@ interface RunRow {
 
 export default function BracketsPage() {
   const live = useLiveData();
-  const [events, setEvents] = useState<EventOption[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState("");
-  const [selectedSeason, setSelectedSeason] = useState("");
+  const selectedEvent = live.config?.eventCode || "";
+  const selectedSeason = live.config?.season || "";
   const [selectedCategory, setSelectedCategory] = useState("");
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [filtersLoading, setFiltersLoading] = useState(true);
 
   useEffect(() => {
-    const ec = live.config?.eventCode || "";
-    const s = live.config?.season || "";
-    if (ec && s) {
-      setSelectedEvent(ec);
-      setSelectedSeason(s);
-    }
-    const qs = ec && s ? `event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1` : "limit=1";
-    fetch(`/api/runs?${qs}`)
+    if (!selectedEvent || !selectedSeason) { setFiltersLoading(false); return; }
+    setFiltersLoading(true);
+    fetch(`/api/runs?event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&limit=1`)
       .then((r) => r.json())
       .then((data) => {
         if (data.filters) {
-          setEvents(data.filters.events || []);
           setCategories(data.filters.categories || []);
         }
       })
       .catch(console.error)
       .finally(() => setFiltersLoading(false));
-  }, [live.config?.eventCode, live.config?.season]);
+  }, [selectedEvent, selectedSeason]);
 
   async function loadBrackets() {
     if (!selectedEvent || !selectedSeason || !selectedCategory) return;
@@ -70,14 +57,6 @@ export default function BracketsPage() {
     }
   }
 
-  function handleEventChange(value: string) {
-    const event = events.find((e) => `${e.event_code}|${e.season}` === value);
-    if (event) {
-      setSelectedEvent(event.event_code);
-      setSelectedSeason(event.season);
-    }
-  }
-
   return (
     <div className="max-w-7xl mx-auto">
       <div className="mb-8">
@@ -86,24 +65,7 @@ export default function BracketsPage() {
       </div>
 
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">Event</label>
-            <select
-              value={selectedEvent ? `${selectedEvent}|${selectedSeason}` : ""}
-              onChange={(e) => handleEventChange(e.target.value)}
-              className="w-full px-4 py-2.5 bg-nhra-darker border border-nhra-border rounded-lg text-white focus:outline-none focus:border-nhra-accent"
-              disabled={filtersLoading}
-              aria-label="Select Event"
-            >
-              <option value="">Select Event</option>
-              {events.map((e) => (
-                <option key={`${e.event_code}|${e.season}`} value={`${e.event_code}|${e.season}`}>
-                  {e.event_name} ({e.season})
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-gray-400 mb-1">Category</label>
             <select

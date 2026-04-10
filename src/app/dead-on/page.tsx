@@ -4,12 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
 
-interface EventOption {
-  event_code: string;
-  event_name: string;
-  season: string;
-}
-
 interface DeadOnEntry {
   name: string;
   car_number: string;
@@ -24,11 +18,9 @@ interface DeadOnEntry {
 
 export default function DeadOnPage() {
   const live = useLiveData();
-  const [events, setEvents] = useState<EventOption[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState("");
-  const [selectedEventName, setSelectedEventName] = useState("");
-  const [selectedSeason, setSelectedSeason] = useState("");
-  const [filtersLoading, setFiltersLoading] = useState(true);
+  const selectedEvent = live.config?.eventCode || "";
+  const selectedEventName = live.config?.eventName || "";
+  const selectedSeason = live.config?.season || "";
 
   const [results, setResults] = useState<Record<string, DeadOnEntry[]>>({});
   const [membership, setMembership] = useState<Record<string, string>>({});
@@ -36,37 +28,6 @@ export default function DeadOnPage() {
   const [searched, setSearched] = useState(false);
   const [winnersCopied, setWinnersCopied] = useState(false);
 
-  useEffect(() => {
-    const ec = live.config?.eventCode || "";
-    const s = live.config?.season || "";
-    if (ec && s) {
-      setSelectedEvent(ec);
-      setSelectedEventName(live.config?.eventName || "");
-      setSelectedSeason(s);
-    }
-    const qs = ec && s ? `event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}&limit=1` : "limit=1";
-    fetch(`/api/runs?${qs}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.filters) {
-          setEvents(data.filters.events || []);
-        }
-      })
-      .catch(console.error)
-      .finally(() => setFiltersLoading(false));
-  }, [live.config?.eventCode, live.config?.season, live.config?.eventName]);
-
-  function handleEventChange(value: string) {
-    const event = events.find((e) => `${e.event_code}|${e.season}` === value);
-    if (event) {
-      setSelectedEvent(event.event_code);
-      setSelectedEventName(event.event_name);
-      setSelectedSeason(event.season);
-      setResults({});
-      setMembership({});
-      setSearched(false);
-    }
-  }
 
   async function search() {
     if (!selectedEvent || !selectedSeason) return;
@@ -99,25 +60,6 @@ export default function DeadOnPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white mb-2">Dead On</h1>
         <p className="text-gray-400">Racers who ran exactly on their dial-in in elimination rounds</p>
-      </div>
-
-      {/* Event Selector */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
-        <label className="block text-sm text-gray-400 mb-2">Event</label>
-        <select
-          value={selectedEvent ? `${selectedEvent}|${selectedSeason}` : ""}
-          onChange={(e) => handleEventChange(e.target.value)}
-          className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white text-base focus:outline-none focus:border-nhra-accent"
-          disabled={filtersLoading}
-          aria-label="Select Event"
-        >
-          <option value="">Select Event</option>
-          {events.map((e) => (
-            <option key={`${e.event_code}|${e.season}`} value={`${e.event_code}|${e.season}`}>
-              {e.event_name} ({e.season})
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Search Button */}
