@@ -24,15 +24,44 @@ const emptySlot = (): RacerSlot => ({
   selectedName: null,
 });
 
+const STORAGE_KEY = "racer_profile_slots";
+
+function loadSavedSlots(): RacerSlot[] {
+  if (typeof window === "undefined") return [emptySlot()];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [emptySlot()];
+    const names: string[] = JSON.parse(raw);
+    if (!Array.isArray(names) || names.length === 0) return [emptySlot()];
+    return names.map(n => ({ query: n, selectedName: n, suggestions: [], showSuggestions: false }));
+  } catch {
+    return [emptySlot()];
+  }
+}
+
+function saveSlotsToStorage(slots: RacerSlot[]) {
+  const names = slots.map(s => s.selectedName).filter(Boolean) as string[];
+  if (names.length > 0) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(names));
+  } else {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+}
+
 export default function RacerProfilePage() {
   const live = useLiveData();
-  const [slots, setSlots] = useState<RacerSlot[]>([emptySlot()]);
+  const [slots, setSlots] = useState<RacerSlot[]>(() => loadSavedSlots());
   const searchRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const justSelectedRefs = useRef<boolean[]>([false]);
+  const justSelectedRefs = useRef<boolean[]>(slots.map(() => false));
 
   const eventQS = live.config?.eventCode
     ? `&event_code=${encodeURIComponent(live.config.eventCode)}&season=${encodeURIComponent(live.config.season || "")}`
     : "";
+
+  // Persist selected racers to localStorage
+  useEffect(() => {
+    saveSlotsToStorage(slots);
+  }, [slots]);
 
   function updateSlot(idx: number, updates: Partial<RacerSlot>) {
     setSlots(prev => prev.map((s, i) => i === idx ? { ...s, ...updates } : s));
