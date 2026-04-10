@@ -195,9 +195,15 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
     <div className="space-y-4">
       {/* Header */}
       <div>
-        <Link href={`/racer/${encodeURIComponent(name)}`} className="text-2xl font-bold text-white hover:text-nhra-accent transition-colors">
-          {name}
-        </Link>
+        {onRacerClick ? (
+          <button onClick={() => onRacerClick(name)} className="text-2xl font-bold text-white hover:text-nhra-accent transition-colors text-left">
+            {name}
+          </button>
+        ) : (
+          <Link href={`/racer/${encodeURIComponent(name)}`} className="text-2xl font-bold text-white hover:text-nhra-accent transition-colors">
+            {name}
+          </Link>
+        )}
         <p className="text-sm text-gray-400">
           {runs.length} runs{seasons.length > 0 && ` | ${seasons.join(", ")}`}
           {categories.length > 0 && ` | ${categories.join(", ")}`}

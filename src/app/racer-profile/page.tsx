@@ -123,7 +123,18 @@ export default function RacerProfilePage() {
     }
   }
 
+  const [popupRacer, setPopupRacer] = useState<string | null>(null);
+
   const selectedCount = slots.filter(s => s.selectedName).length;
+
+  // When comparing multiple racers, clicking a name opens the popup instead of adding
+  function handleRacerClick(name: string) {
+    if (selectedCount > 1) {
+      setPopupRacer(name);
+    } else {
+      addRacerByName(name);
+    }
+  }
 
   return (
     <div className="max-w-[1800px] mx-auto">
@@ -223,7 +234,7 @@ export default function RacerProfilePage() {
         }`}>
           {slots.filter(s => s.selectedName).map((slot) => (
             <div key={slot.selectedName} className="min-w-0">
-              <RacerDetailPanel name={slot.selectedName!} compact={selectedCount > 1} onRacerClick={addRacerByName} />
+              <RacerDetailPanel name={slot.selectedName!} compact={selectedCount > 1} onRacerClick={handleRacerClick} />
             </div>
           ))}
         </div>
@@ -232,6 +243,48 @@ export default function RacerProfilePage() {
       {selectedCount === 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl p-12 text-center text-gray-500">
           Search for a racer above to see their full profile with stats, charts, and run history
+        </div>
+      )}
+
+      {/* Popup modal for full racer detail */}
+      {popupRacer && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-start justify-center overflow-y-auto" onClick={() => setPopupRacer(null)}>
+          <div
+            className="w-full max-w-5xl my-8 mx-4 bg-nhra-dark border border-nhra-border rounded-2xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Popup header */}
+            <div className="sticky top-0 z-10 bg-nhra-darker border-b border-nhra-border rounded-t-2xl px-6 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Racer Detail</h2>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { addRacerByName(popupRacer); setPopupRacer(null); }}
+                  className="px-3 py-1.5 bg-nhra-red/20 border border-nhra-red/30 text-nhra-red rounded-lg text-xs font-medium hover:bg-nhra-red/30 transition-colors flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12m6-6H6" />
+                  </svg>
+                  Add to Comparison
+                </button>
+                <button
+                  onClick={() => setPopupRacer(null)}
+                  className="p-2 text-gray-400 hover:text-white hover:bg-nhra-card rounded-lg transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* Full-width racer detail */}
+            <div className="p-6">
+              <RacerDetailPanel
+                name={popupRacer}
+                compact={false}
+                onRacerClick={(n) => { setPopupRacer(n); }}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>
