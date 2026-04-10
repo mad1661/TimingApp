@@ -545,6 +545,22 @@ export async function getCarNumberRuns(carNumber: string, eventCode: string, sea
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
+export async function getRacerRunsAllEvents(name: string, excludeEventCode?: string, excludeSeason?: string): Promise<RunRow[]> {
+  const events = await getEvents();
+  const allRuns: RunRow[] = [];
+  for (const ev of events) {
+    if (excludeEventCode && excludeSeason && ev.event_code === excludeEventCode && ev.season === excludeSeason) continue;
+    const runs = await getEventRuns(ev.event_code, ev.season);
+    tagRunTimestamps(runs);
+    for (const r of runs) {
+      if (r.name === name) {
+        allRuns.push(r);
+      }
+    }
+  }
+  return allRuns.sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
+}
+
 export async function getCarNumberRunsAllEvents(carNumber: string): Promise<RunRow[]> {
   const events = await getEvents();
   const allRuns: RunRow[] = [];

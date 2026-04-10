@@ -79,7 +79,9 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
   const live = useLiveData();
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [techCards, setTechCards] = useState<TechCard[]>([]);
+  const [crossEventRuns, setCrossEventRuns] = useState<RunRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [otherEventsOpen, setOtherEventsOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -103,7 +105,14 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
           .catch(console.error)
       : Promise.resolve();
 
-    Promise.all([fetchRuns, fetchTechCards]).finally(() => setLoading(false));
+    const fetchCrossEvent = fetch(
+      `/api/stats?type=racer-all-events&name=${encodeURIComponent(name)}${ec ? `&exclude_event_code=${encodeURIComponent(ec)}` : ""}${s ? `&exclude_season=${encodeURIComponent(s)}` : ""}`
+    )
+      .then((r) => r.json())
+      .then((data) => setCrossEventRuns(data.runs || []))
+      .catch(console.error);
+
+    Promise.all([fetchRuns, fetchTechCards, fetchCrossEvent]).finally(() => setLoading(false));
   }, [name, live.config?.eventCode, live.config?.season]);
 
   if (loading) {
@@ -429,6 +438,109 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
           </div>
         </>
       )}
+
+      {/* Other Events (cross-event lookup) */}
+      {crossEventRuns.length > 0 && (() => {
+        const groupedByEvent = new Map<string, RunRow[]>();
+        for (const r of crossEventRuns) {
+          const key = r.event_name || r.season || "Unknown Event";
+          const arr = groupedByEvent.get(key) || [];
+          arr.push(r);
+          groupedByEvent.set(key, arr);
+        }
+
+        return (
+          <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+            <button
+              onClick={() => setOtherEventsOpen(!otherEventsOpen)}
+              className="w-full p-4 flex items-center justify-between hover:bg-nhra-border/20 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-white">Other Events</h3>
+                <span className="text-xs text-gray-500">{crossEventRuns.length} runs across {groupedByEvent.size} events</span>
+              </div>
+              <span className="text-gray-400 text-xs">{otherEventsOpen ? "\u25B2" : "\u25BC"}</span>
+            </button>
+            {otherEventsOpen && (
+              <div className="border-t border-nhra-border">
+                {Array.from(groupedByEvent.entries()).map(([eventName, evRuns]) => {
+                  const evValidETs = evRuns.filter((r) => r.ft1320 && r.ft1320 > 0);
+                  const evValidRTs = evRuns.filter((r) => r.rt && r.rt > 0);
+                  const evElimRuns = evRuns.filter((r) => r.round && /^[ERCF]/i.test(r.round));
+                  const evWins = evElimRuns.filter((r) => r.is_winner);
+                  const evBestET = evValidETs.length > 0 ? Math.min(...evValidETs.map((r) => r.ft1320!)) : null;
+                  const evBestRT = evValidRTs.length > 0 ? Math.min(...evValidRTs.map((r) => r.rt!)) : null;
+
+                  return (
+                    <div key={eventName} className="border-b border-nhra-border/30 last:border-b-0">
+                      <div className="p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-sm font-semibold text-white">{eventName}</h4>
+                          <span className="text-xs text-gray-500">{evRuns[0]?.season}</span>
+                        </div>
+                        <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"} gap-2 mb-3`}>
+                          <div className="bg-nhra-darker rounded-lg p-2">
+                            <p className="text-[10px] text-gray-500 uppercase">Runs</p>
+                            <p className="text-sm font-bold text-white">{evRuns.length}</p>
+                          </div>
+                          <div className="bg-nhra-darker rounded-lg p-2">
+                            <p className="text-[10px] text-gray-500 uppercase">Best ET</p>
+                            <p className="text-sm font-bold text-white font-mono">{evBestET?.toFixed(3) ?? "-"}</p>
+                          </div>
+                          <div className="bg-nhra-darker rounded-lg p-2">
+                            <p className="text-[10px] text-gray-500 uppercase">Best RT</p>
+                            <p className="text-sm font-bold text-white font-mono">{evBestRT?.toFixed(3) ?? "-"}</p>
+                          </div>
+                          <div className="bg-nhra-darker rounded-lg p-2">
+                            <p className="text-[10px] text-gray-500 uppercase">Wins</p>
+                            <p className="text-sm font-bold text-white">{evWins.length}</p>
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-nhra-border text-gray-400 uppercase tracking-wider">
+                                <th className="text-left p-1.5 pl-2">Rnd</th>
+                                <th className="text-right p-1.5">RT</th>
+                                <th className="text-right p-1.5">60&apos;</th>
+                                <th className="text-right p-1.5">330&apos;</th>
+                                <th className="text-right p-1.5">660&apos;</th>
+                                <th className="text-right p-1.5">660 MPH</th>
+                                <th className="text-right p-1.5">1000&apos;</th>
+                                <th className="text-right p-1.5">1320&apos;</th>
+                                <th className="text-right p-1.5">MPH</th>
+                                <th className="text-center p-1.5">W/L</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {evRuns.map((run, i) => (
+                                <tr key={i} className="border-b border-nhra-border/20 hover:bg-nhra-border/20">
+                                  <td className="p-1.5 pl-2 text-gray-300 whitespace-nowrap">{run.round}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-300">{run.rt?.toFixed(3) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-300">{run.ft60?.toFixed(3) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-300">{run.ft330?.toFixed(3) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-300">{run.ft660?.toFixed(3) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-400">{run.mph_660?.toFixed(2) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-300">{run.ft1000?.toFixed(3) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-white font-medium">{run.ft1320?.toFixed(3) ?? "-"}</td>
+                                  <td className="p-1.5 text-right font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
+                                  <td className="p-1.5 text-center">
+                                    {run.is_winner ? <span className="text-green-400 font-bold">W</span> : <span className="text-gray-600">L</span>}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

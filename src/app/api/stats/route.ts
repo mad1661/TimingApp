@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -40,6 +40,16 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ racers: results.map((r) => r.name), racerDetails: results });
       }
       return NextResponse.json({ racers: [] });
+    }
+
+    // racer-all-events: fetch all runs for a racer across all events
+    if (type === "racer-all-events") {
+      const racerName = params.get("name");
+      if (!racerName) return NextResponse.json({ error: "name parameter required" }, { status: 400 });
+      const excludeEventCode = params.get("exclude_event_code") || undefined;
+      const excludeSeason = params.get("exclude_season") || undefined;
+      const runs = await getRacerRunsAllEvents(racerName, excludeEventCode, excludeSeason);
+      return NextResponse.json({ name: racerName, runs, totalRuns: runs.length });
     }
 
     if (!eventCode || !season) {
