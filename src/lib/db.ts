@@ -1058,7 +1058,9 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       raceDaySortKey(b.timestamp!, b.round, pmRuns.has(b))
     );
 
-    // Walk sorted runs: before hour 12 = AM, hour 12 onward = PM
+    // Walk sorted runs: before hour 12 = AM, hour 12 onward = PM.
+    // Hours 1-5 are also unambiguously PM (they sort after morning hours),
+    // so flip to PM when we see them too — handles days with no hour-12 run.
     let passedNoon = pmStart;
 
     for (const run of dayRuns) {
@@ -1066,14 +1068,11 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       if (!timePart) continue;
       const h = parseInt(timePart.split(":")[0], 10);
 
-      if (h === 12) {
+      if (h === 12 || (!passedNoon && h >= 1 && h <= 5)) {
         passedNoon = true;
-        run.timestamp = run.timestamp + " PM";
-      } else if (passedNoon) {
-        run.timestamp = run.timestamp + " PM";
-      } else {
-        run.timestamp = run.timestamp + " AM";
       }
+
+      run.timestamp = run.timestamp + (passedNoon ? " PM" : " AM");
     }
   }
 }
