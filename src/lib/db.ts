@@ -1048,22 +1048,31 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
 
   for (const [, dayRuns] of byDay) {
     // Hours 6-7 are ambiguous (could be early AM or late PM).
-    // Use same-day context: if a run at hour 6/7 has a round that comes
-    // AFTER every run at known-PM hours (12, 1-5), it's evening.
-    let maxPmRound = -1;
-    let hasPmAnchor = false;
+    // Use same-day context PER CLASS: if a run at hour 6/7 has a round that
+    // comes AFTER every run of the SAME CLASS at known-PM hours (12, 1-5),
+    // it's evening. Comparing per-class handles the fact that round numbers
+    // don't progress uniformly across classes (e.g. bracket classes run R-5,
+    // R-6 while pro classes are still on Q-3).
+    const maxPmRoundByClass = new Map<string, number>();
     for (const run of dayRuns) {
       const h = tsHour(run.timestamp!);
       if (h === 12 || (h >= 1 && h <= 5)) {
-        hasPmAnchor = true;
-        maxPmRound = Math.max(maxPmRound, roundSortWeight(run.round));
+        const cat = run.category || "";
+        const w = roundSortWeight(run.round);
+        const cur = maxPmRoundByClass.get(cat);
+        if (cur === undefined || w > cur) maxPmRoundByClass.set(cat, w);
       }
     }
 
     const pmRuns = new Set<RunRow>();
     for (const run of dayRuns) {
       const h = tsHour(run.timestamp!);
-      if ((h === 6 || h === 7) && hasPmAnchor && roundSortWeight(run.round) > maxPmRound) {
+      if (h !== 6 && h !== 7) continue;
+      const cat = run.category || "";
+      const maxForClass = maxPmRoundByClass.get(cat);
+      // If this class has PM-hour runs and this run's round is later than
+      // all of them, this hour 6/7 run is evening (PM).
+      if (maxForClass !== undefined && roundSortWeight(run.round) > maxForClass) {
         pmRuns.add(run);
       }
     }
