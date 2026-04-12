@@ -1077,8 +1077,10 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       const w = roundSortWeight(run.round);
       const maxPm = maxPmRoundByClass.get(cat);
       const maxAm = maxAmRoundByClass.get(cat);
-      // Round later than any same-class PM-hour round → PM
-      if (maxPm !== undefined && w > maxPm) {
+      // Round at or later than any same-class PM-hour round → PM
+      // (>= handles qualifying sessions that span into hour 6, e.g. Q-4
+      // running from 5:44 PM into 6:02 PM with the same round label)
+      if (maxPm !== undefined && w >= maxPm) {
         pmRuns.add(run);
       }
       // No PM-hour reference, but later than same-class morning rounds → PM
