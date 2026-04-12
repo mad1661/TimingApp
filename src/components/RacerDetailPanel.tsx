@@ -73,15 +73,18 @@ interface Props {
   name: string;
   compact?: boolean;
   onRacerClick?: (name: string) => void;
+  initialCategory?: string;
 }
 
-export default function RacerDetailPanel({ name, compact = false, onRacerClick }: Props) {
+export default function RacerDetailPanel({ name, compact = false, onRacerClick, initialCategory }: Props) {
   const live = useLiveData();
-  const [runs, setRuns] = useState<RunRow[]>([]);
+  const [allRuns, setAllRuns] = useState<RunRow[]>([]);
   const [techCards, setTechCards] = useState<TechCard[]>([]);
-  const [crossEventRuns, setCrossEventRuns] = useState<RunRow[]>([]);
+  const [allCrossEventRuns, setAllCrossEventRuns] = useState<RunRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [otherEventsOpen, setOtherEventsOpen] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(initialCategory || null);
+  const [filterInitialized, setFilterInitialized] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -91,7 +94,7 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
     const fetchRuns = ec && s
       ? fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`)
           .then((r) => r.json())
-          .then((data) => setRuns(data.runs || []))
+          .then((data) => setAllRuns(data.runs || []))
           .catch(console.error)
       : Promise.resolve();
 
@@ -109,11 +112,40 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
       `/api/stats?type=racer-all-events&name=${encodeURIComponent(name)}${ec ? `&exclude_event_code=${encodeURIComponent(ec)}` : ""}${s ? `&exclude_season=${encodeURIComponent(s)}` : ""}`
     )
       .then((r) => r.json())
-      .then((data) => setCrossEventRuns(data.runs || []))
+      .then((data) => setAllCrossEventRuns(data.runs || []))
       .catch(console.error);
 
     Promise.all([fetchRuns, fetchTechCards, fetchCrossEvent]).finally(() => setLoading(false));
   }, [name, live.config?.eventCode, live.config?.season]);
+
+  // All categories this racer has competed in (current event + cross-event)
+  const allCategories = [...new Set([...allRuns, ...allCrossEventRuns].map(r => r.category).filter(Boolean) as string[])].sort();
+
+  // Auto-set default filter category to the primary (most recent or most-run) category
+  // in the current event, but only once after loading.
+  useEffect(() => {
+    if (loading || filterInitialized) return;
+    if (initialCategory) {
+      setCategoryFilter(initialCategory);
+    } else if (allRuns.length > 0) {
+      // Most common category in current event runs
+      const counts = new Map<string, number>();
+      for (const r of allRuns) {
+        if (r.category) counts.set(r.category, (counts.get(r.category) || 0) + 1);
+      }
+      let best: string | null = null;
+      let bestCount = 0;
+      for (const [cat, n] of counts) {
+        if (n > bestCount) { best = cat; bestCount = n; }
+      }
+      setCategoryFilter(best);
+    }
+    setFilterInitialized(true);
+  }, [loading, filterInitialized, initialCategory, allRuns]);
+
+  // Apply the category filter
+  const runs = categoryFilter ? allRuns.filter(r => r.category === categoryFilter) : allRuns;
+  const crossEventRuns = categoryFilter ? allCrossEventRuns.filter(r => r.category === categoryFilter) : allCrossEventRuns;
 
   if (loading) {
     return (
@@ -239,9 +271,39 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
         )}
         <p className="text-sm text-gray-400">
           {runs.length} runs{seasons.length > 0 && ` | ${seasons.join(", ")}`}
-          {categories.length > 0 && ` | ${categories.join(", ")}`}
+          {categoryFilter && ` | ${categoryFilter}`}
         </p>
       </div>
+
+      {/* Category filter — shows only if racer has multiple classes */}
+      {allCategories.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-500 uppercase tracking-wider">Class:</span>
+          <button
+            onClick={() => setCategoryFilter(null)}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
+              categoryFilter === null
+                ? "bg-nhra-red/20 border-nhra-red/50 text-nhra-red"
+                : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
+            }`}
+          >
+            All ({allCategories.length})
+          </button>
+          {allCategories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setCategoryFilter(cat)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                categoryFilter === cat
+                  ? "bg-nhra-red/20 border-nhra-red/50 text-nhra-red"
+                  : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Tech Card */}
       {techCards.length > 0 && (

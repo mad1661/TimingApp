@@ -133,6 +133,7 @@ export default function RacerProfilePage() {
   function startNew() {
     justSelectedRefs.current = [false];
     setSlots([emptySlot()]);
+    setNextPairCategory(null);
   }
 
   function addRacerByName(name: string) {
@@ -157,6 +158,8 @@ export default function RacerProfilePage() {
 
   const selectedCount = slots.filter(s => s.selectedName).length;
 
+  const [nextPairCategory, setNextPairCategory] = useState<string | null>(null);
+
   async function loadNextPair() {
     if (!live.config?.eventCode) return;
     setLoadingNextPair(true);
@@ -165,13 +168,15 @@ export default function RacerProfilePage() {
         `/api/stats?type=next-pair&event_code=${encodeURIComponent(live.config.eventCode)}&season=${encodeURIComponent(live.config.season || "")}`
       );
       const data = await res.json();
-      const pair = (data.pair || []) as { name: string | null }[];
+      const pair = (data.pair || []) as { name: string | null; category: string | null }[];
       const names = pair.map(p => p.name).filter(Boolean) as string[];
+      const category = pair.find(p => p.category)?.category || null;
       if (names.length === 0) {
         alert("No staged pair found — all recent runs already have timing data.");
         return;
       }
-      // Start fresh and load the pair
+      // Start fresh and load the pair with the paired category
+      setNextPairCategory(category);
       justSelectedRefs.current = names.map(() => true);
       setSlots(names.map(n => ({ query: n, selectedName: n, suggestions: [], showSuggestions: false })));
     } catch (err) {
@@ -304,7 +309,7 @@ export default function RacerProfilePage() {
         }`}>
           {slots.filter(s => s.selectedName).map((slot) => (
             <div key={slot.selectedName} className="min-w-0">
-              <RacerDetailPanel name={slot.selectedName!} compact={selectedCount > 1} onRacerClick={handleRacerClick} />
+              <RacerDetailPanel name={slot.selectedName!} compact={selectedCount > 1} onRacerClick={handleRacerClick} initialCategory={nextPairCategory || undefined} />
             </div>
           ))}
         </div>
