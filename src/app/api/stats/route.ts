@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -93,6 +93,11 @@ export async function GET(request: NextRequest) {
 
     if (type === "latest") {
       const pair = await getLatestPair(eventCode, season);
+      return NextResponse.json({ pair });
+    }
+
+    if (type === "next-pair") {
+      const pair = await getNextPair(eventCode, season);
       return NextResponse.json({ pair });
     }
 

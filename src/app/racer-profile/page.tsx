@@ -153,8 +153,33 @@ export default function RacerProfilePage() {
   }
 
   const [popupRacer, setPopupRacer] = useState<string | null>(null);
+  const [loadingNextPair, setLoadingNextPair] = useState(false);
 
   const selectedCount = slots.filter(s => s.selectedName).length;
+
+  async function loadNextPair() {
+    if (!live.config?.eventCode) return;
+    setLoadingNextPair(true);
+    try {
+      const res = await fetch(
+        `/api/stats?type=next-pair&event_code=${encodeURIComponent(live.config.eventCode)}&season=${encodeURIComponent(live.config.season || "")}`
+      );
+      const data = await res.json();
+      const pair = (data.pair || []) as { name: string | null }[];
+      const names = pair.map(p => p.name).filter(Boolean) as string[];
+      if (names.length === 0) {
+        alert("No staged pair found — all recent runs already have timing data.");
+        return;
+      }
+      // Start fresh and load the pair
+      justSelectedRefs.current = names.map(() => true);
+      setSlots(names.map(n => ({ query: n, selectedName: n, suggestions: [], showSuggestions: false })));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingNextPair(false);
+    }
+  }
 
   // When comparing multiple racers, clicking a name opens the popup instead of adding
   function handleRacerClick(name: string) {
@@ -167,22 +192,38 @@ export default function RacerProfilePage() {
 
   return (
     <div className="max-w-[1800px] mx-auto">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Racer Profile</h1>
           <p className="text-gray-400">Look up and compare up to 4 racers side by side</p>
         </div>
-        {selectedCount > 0 && (
+        <div className="flex items-center gap-3">
           <button
-            onClick={startNew}
-            className="px-4 py-2.5 bg-nhra-darker border border-nhra-border text-gray-400 rounded-lg text-sm font-medium hover:text-white hover:border-gray-500 transition-colors flex items-center gap-2"
+            onClick={loadNextPair}
+            disabled={loadingNextPair || !live.config?.eventCode}
+            className="px-4 py-2.5 bg-nhra-red hover:bg-nhra-red/80 text-white rounded-lg text-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12m6-6H6" />
-            </svg>
-            Start New
+            {loadingNextPair ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            )}
+            Load Next Pair
           </button>
-        )}
+          {selectedCount > 0 && (
+            <button
+              onClick={startNew}
+              className="px-4 py-2.5 bg-nhra-darker border border-nhra-border text-gray-400 rounded-lg text-sm font-medium hover:text-white hover:border-gray-500 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12m6-6H6" />
+              </svg>
+              Start New
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search bar area */}

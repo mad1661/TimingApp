@@ -1513,6 +1513,38 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
     .sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
 }
 
+// Returns the most recent pair of cars that have been staged to run but haven't
+// recorded timing data yet. These are cars with a timestamp but no rt/ft1320/
+// ft660 values — the NHRA system posts pairings before they actually run.
+export async function getNextPair(eventCode: string, season: string): Promise<RunRow[]> {
+  const runs = await getEventRuns(eventCode, season);
+  tagRunTimestamps(runs);
+
+  const withTimestamp = runs.filter((r) => r.timestamp);
+  const withoutData = withTimestamp.filter(
+    (r) => r.rt == null && r.ft1320 == null && r.ft660 == null && r.ft60 == null
+  );
+  if (withoutData.length === 0) return [];
+
+  // Most recent staged run
+  const sorted = [...withoutData].sort((a, b) =>
+    tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!))
+  );
+  const latestStaged = sorted[0];
+
+  // Group by timestamp + category + round to get the full pair (or quad)
+  const sameRace = withTimestamp.filter(
+    (r) => r.category === latestStaged.category && r.round === latestStaged.round
+  );
+  const FOUR_WIDE_TOLERANCE = 3;
+  const raceTs = sameRace.map((r) => r.timestamp!);
+  const tsGroups = buildTimestampGroups(raceTs, FOUR_WIDE_TOLERANCE);
+  const latestCanonical = tsGroups.get(latestStaged.timestamp!) || latestStaged.timestamp!;
+  return sameRace
+    .filter((r) => (tsGroups.get(r.timestamp!) || r.timestamp!) === latestCanonical)
+    .sort((a, b) => tsSortKey(b.timestamp!).localeCompare(tsSortKey(a.timestamp!)));
+}
+
 // --------------- Tech Card Data ---------------
 
 export interface TechCardEntry {
