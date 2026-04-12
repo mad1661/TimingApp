@@ -444,7 +444,13 @@ export default function SchedulePage() {
         }
       }
     } else {
-      sessionRows = actualEntries.map((entry) => ({
+      // When downtime is hidden, merge split sessions of the same category/round
+      // so e.g. Top Fuel E1 that was split by downtime shows as one combined row.
+      const entries = showDowntime
+        ? actualEntries
+        : Array.from(mergeActualsByClass(actualEntries).values())
+            .sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
+      sessionRows = entries.map((entry) => ({
         type: "session" as const,
         actual: entry.firstTimestamp,
         end: entry.lastTimestamp,
