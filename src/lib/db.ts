@@ -1048,17 +1048,22 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
 
   for (const [, dayRuns] of byDay) {
     // Hours 6-7 are ambiguous (could be early AM or late PM).
-    // Use same-day context PER CLASS: if a run at hour 6/7 has a round that
-    // comes AFTER every run of the SAME CLASS at known-PM hours (12, 1-5),
-    // it's evening. Comparing per-class handles the fact that round numbers
-    // don't progress uniformly across classes (e.g. bracket classes run R-5,
-    // R-6 while pro classes are still on Q-3).
-    const maxPmRoundByClass = new Map<string, number>();
+    // Use same-day context PER CLASS, since round numbers progress monotonically
+    // in time within a class but NOT across classes (bracket classes can be on
+    // R-6 while pros are still on Q-3). Compare each ambiguous-hour run's round
+    // against the max round of other same-class runs at KNOWN time-of-day hours
+    // (AM 8-11 or PM 12, 1-5). If its round is greater, it must be later in the
+    // day → PM. Otherwise → AM.
+    const maxAmRoundByClass = new Map<string, number>(); // hours 8-11
+    const maxPmRoundByClass = new Map<string, number>(); // hours 12, 1-5
     for (const run of dayRuns) {
       const h = tsHour(run.timestamp!);
-      if (h === 12 || (h >= 1 && h <= 5)) {
-        const cat = run.category || "";
-        const w = roundSortWeight(run.round);
+      const cat = run.category || "";
+      const w = roundSortWeight(run.round);
+      if (h >= 8 && h <= 11) {
+        const cur = maxAmRoundByClass.get(cat);
+        if (cur === undefined || w > cur) maxAmRoundByClass.set(cat, w);
+      } else if (h === 12 || (h >= 1 && h <= 5)) {
         const cur = maxPmRoundByClass.get(cat);
         if (cur === undefined || w > cur) maxPmRoundByClass.set(cat, w);
       }
@@ -1069,10 +1074,15 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       const h = tsHour(run.timestamp!);
       if (h !== 6 && h !== 7) continue;
       const cat = run.category || "";
-      const maxForClass = maxPmRoundByClass.get(cat);
-      // If this class has PM-hour runs and this run's round is later than
-      // all of them, this hour 6/7 run is evening (PM).
-      if (maxForClass !== undefined && roundSortWeight(run.round) > maxForClass) {
+      const w = roundSortWeight(run.round);
+      const maxPm = maxPmRoundByClass.get(cat);
+      const maxAm = maxAmRoundByClass.get(cat);
+      // Round later than any same-class PM-hour round → PM
+      if (maxPm !== undefined && w > maxPm) {
+        pmRuns.add(run);
+      }
+      // No PM-hour reference, but later than same-class morning rounds → PM
+      else if (maxPm === undefined && maxAm !== undefined && w > maxAm) {
         pmRuns.add(run);
       }
     }
