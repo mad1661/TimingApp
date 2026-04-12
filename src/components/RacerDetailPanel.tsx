@@ -167,10 +167,34 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
   const seasonRuns = activeSeason
     ? [...runs, ...crossEventRuns].filter((r) => r.season === activeSeason)
     : [];
-  const seasonValidETs = seasonRuns.filter((r) => r.ft1320 && r.ft1320 > 0);
-  const seasonValidRTs = seasonRuns.filter((r) => r.rt && r.rt > 0);
-  const seasonValid60 = seasonRuns.filter((r) => r.ft60 && r.ft60 > 0);
-  const seasonValidSpeeds = seasonRuns.filter((r) => r.mph_1320 && r.mph_1320 > 0);
+
+  // Exclude aborted runs (early shutoffs) from ET/MPH/60' averages.
+  // A run is considered aborted if ET is >30% slower than the median, or
+  // top MPH is >30% slower than the median. Wins and total counts still
+  // include all runs.
+  const allSeasonETs = seasonRuns.map((r) => r.ft1320).filter((v): v is number => !!v && v > 0);
+  const allSeasonMPH = seasonRuns.map((r) => r.mph_1320).filter((v): v is number => !!v && v > 0);
+  const median = (arr: number[]) => {
+    if (arr.length === 0) return null;
+    const sorted = [...arr].sort((a, b) => a - b);
+    return sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+  };
+  const seasonMedianET = median(allSeasonETs);
+  const seasonMedianMPH = median(allSeasonMPH);
+  const isAborted = (r: RunRow) => {
+    if (seasonMedianET && r.ft1320 && r.ft1320 > seasonMedianET * 1.3) return true;
+    if (seasonMedianMPH && r.mph_1320 && r.mph_1320 < seasonMedianMPH * 0.7) return true;
+    return false;
+  };
+  const seasonCleanRuns = seasonRuns.filter((r) => !isAborted(r));
+  const seasonAbortedCount = seasonRuns.length - seasonCleanRuns.length;
+
+  const seasonValidETs = seasonCleanRuns.filter((r) => r.ft1320 && r.ft1320 > 0);
+  const seasonValidRTs = seasonCleanRuns.filter((r) => r.rt && r.rt > 0);
+  const seasonValid60 = seasonCleanRuns.filter((r) => r.ft60 && r.ft60 > 0);
+  const seasonValidSpeeds = seasonCleanRuns.filter((r) => r.mph_1320 && r.mph_1320 > 0);
   const seasonElimRuns = seasonRuns.filter((r) => r.round && /^[ERCF]/i.test(r.round));
   const seasonWins = seasonElimRuns.filter((r) => r.is_winner);
   const seasonBestET = seasonValidETs.length > 0 ? Math.min(...seasonValidETs.map((r) => r.ft1320!)) : null;
@@ -412,10 +436,15 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
           {/* Season Averages — combines all events in the active season */}
           {activeSeason && seasonRuns.length > runs.length && (
             <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
                 <h3 className="text-sm font-semibold text-white">{activeSeason} Season Averages</h3>
                 <span className="text-xs text-gray-500">{seasonRuns.length} runs | {seasonEventCount} events</span>
               </div>
+              {seasonAbortedCount > 0 && (
+                <p className="text-[11px] text-yellow-400/70 mb-3">
+                  Averages exclude {seasonAbortedCount} aborted run{seasonAbortedCount !== 1 && "s"} (ET &gt;30% off median or MPH &gt;30% low). Totals and wins still include all runs.
+                </p>
+              )}
               <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"} gap-3`}>
                 <div className="bg-nhra-darker rounded-lg p-3">
                   <p className="text-xs text-gray-500 uppercase">Avg ET</p>
