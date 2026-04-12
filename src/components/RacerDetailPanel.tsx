@@ -130,6 +130,29 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
   const categories = [...new Set(runs.map((r) => r.category).filter(Boolean))];
   const seasons = [...new Set(runs.map((r) => r.season).filter(Boolean))].sort().reverse();
 
+  // Season averages: combine current event + cross-event runs for the active season
+  const activeSeason = live.config?.season || "";
+  const seasonRuns = activeSeason
+    ? [...runs, ...crossEventRuns].filter((r) => r.season === activeSeason)
+    : [];
+  const seasonValidETs = seasonRuns.filter((r) => r.ft1320 && r.ft1320 > 0);
+  const seasonValidRTs = seasonRuns.filter((r) => r.rt && r.rt > 0);
+  const seasonValid60 = seasonRuns.filter((r) => r.ft60 && r.ft60 > 0);
+  const seasonValidSpeeds = seasonRuns.filter((r) => r.mph_1320 && r.mph_1320 > 0);
+  const seasonElimRuns = seasonRuns.filter((r) => r.round && /^[ERCF]/i.test(r.round));
+  const seasonWins = seasonElimRuns.filter((r) => r.is_winner);
+  const seasonBestET = seasonValidETs.length > 0 ? Math.min(...seasonValidETs.map((r) => r.ft1320!)) : null;
+  const seasonAvgET = seasonValidETs.length > 0 ? seasonValidETs.reduce((s, r) => s + r.ft1320!, 0) / seasonValidETs.length : null;
+  const seasonBestRT = seasonValidRTs.length > 0 ? Math.min(...seasonValidRTs.map((r) => r.rt!)) : null;
+  const seasonAvgRT = seasonValidRTs.length > 0 ? seasonValidRTs.reduce((s, r) => s + r.rt!, 0) / seasonValidRTs.length : null;
+  const seasonAvg60 = seasonValid60.length > 0 ? seasonValid60.reduce((s, r) => s + r.ft60!, 0) / seasonValid60.length : null;
+  const seasonAvgSpeed = seasonValidSpeeds.length > 0 ? seasonValidSpeeds.reduce((s, r) => s + r.mph_1320!, 0) / seasonValidSpeeds.length : null;
+  const seasonBestSpeed = seasonValidSpeeds.length > 0 ? Math.max(...seasonValidSpeeds.map((r) => r.mph_1320!)) : null;
+  const seasonEtStdDev = seasonValidETs.length > 1 && seasonAvgET
+    ? Math.sqrt(seasonValidETs.reduce((sum, r) => sum + Math.pow(r.ft1320! - seasonAvgET, 2), 0) / (seasonValidETs.length - 1))
+    : null;
+  const seasonEventCount = new Set(seasonRuns.map((r) => `${r.event_name || ""}|${r.season || ""}`)).size;
+
   const bestET = validETs.length > 0 ? Math.min(...validETs.map((r) => r.ft1320!)) : null;
   const avgET = validETs.length > 0 ? validETs.reduce((s, r) => s + r.ft1320!, 0) / validETs.length : null;
   const bestRT = validRTs.length > 0 ? Math.min(...validRTs.map((r) => r.rt!)) : null;
@@ -323,6 +346,53 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick }
               <p className="mt-2 text-xs text-gray-500">ET range: <span className="font-mono text-gray-400">{(medianET - etStdDev).toFixed(3)} &mdash; {(medianET + etStdDev).toFixed(3)}</span></p>
             )}
           </div>
+
+          {/* Season Averages — combines all events in the active season */}
+          {activeSeason && seasonRuns.length > runs.length && (
+            <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white">{activeSeason} Season Averages</h3>
+                <span className="text-xs text-gray-500">{seasonRuns.length} runs | {seasonEventCount} events</span>
+              </div>
+              <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"} gap-3`}>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Avg ET</p>
+                  <p className="text-lg font-bold text-white font-mono">{seasonAvgET?.toFixed(3) ?? "-"}</p>
+                  <p className="text-[10px] text-gray-600">best {seasonBestET?.toFixed(3) ?? "-"}</p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Avg RT</p>
+                  <p className="text-lg font-bold text-white font-mono">{seasonAvgRT?.toFixed(3) ?? "-"}</p>
+                  <p className="text-[10px] text-gray-600">best {seasonBestRT?.toFixed(3) ?? "-"}</p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Avg 60&apos;</p>
+                  <p className="text-lg font-bold text-white font-mono">{seasonAvg60?.toFixed(3) ?? "-"}</p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Avg MPH</p>
+                  <p className="text-lg font-bold text-white font-mono">{seasonAvgSpeed?.toFixed(2) ?? "-"}</p>
+                  <p className="text-[10px] text-gray-600">top {seasonBestSpeed?.toFixed(2) ?? "-"}</p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Wins</p>
+                  <p className="text-lg font-bold text-white">{seasonWins.length} <span className="text-xs text-gray-500">({seasonElimRuns.length > 0 ? ((seasonWins.length / seasonElimRuns.length) * 100).toFixed(0) : 0}%)</span></p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Elim Runs</p>
+                  <p className="text-lg font-bold text-white">{seasonElimRuns.length}</p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Consistency</p>
+                  <p className="text-lg font-bold text-white font-mono">{seasonEtStdDev ? `\u00b1${seasonEtStdDev.toFixed(3)}` : "-"}</p>
+                </div>
+                <div className="bg-nhra-darker rounded-lg p-3">
+                  <p className="text-xs text-gray-500 uppercase">Total Runs</p>
+                  <p className="text-lg font-bold text-white">{seasonRuns.length}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Dial-In Accuracy */}
           {dialRuns.length > 0 && (
