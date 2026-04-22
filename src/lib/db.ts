@@ -266,7 +266,13 @@ export async function purgeEventRuns(eventCode: string, season: string): Promise
 
 // --------------- Write operations ---------------
 
+// Tracks events we've already verified or inserted this process so repeated
+// polling doesn't re-query Firestore on every refresh.
+const _knownEvents = new Set<string>();
+
 export async function insertEvent(event: Omit<EventRow, "id" | "created_at">): Promise<void> {
+  const key = eventKey(event.event_code, event.season);
+  if (_knownEvents.has(key)) return;
   try {
     const db = getDb();
     const existing = await db.collection("events")
@@ -281,6 +287,7 @@ export async function insertEvent(event: Omit<EventRow, "id" | "created_at">): P
         created_at: new Date().toISOString(),
       });
     }
+    _knownEvents.add(key);
   } catch (err) {
     console.error("[DB] insertEvent error:", err);
   }

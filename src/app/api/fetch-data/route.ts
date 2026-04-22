@@ -24,7 +24,9 @@ export async function POST(request: NextRequest) {
 
     await insertEvent({ event_code: eventCode, event_type: eventType, event_name: eventName, season, start_date: startDate });
     const inserted = await insertRuns(eventCode, season, runs);
-    await logFetch(eventCode, season, eventType, inserted);
+    if (inserted > 0) {
+      await logFetch(eventCode, season, eventType, inserted);
+    }
     console.log(`[FetchData] Inserted ${inserted} new runs (${runs.length} total parsed)`);
 
     return NextResponse.json({ success: true, totalParsed: runs.length, inserted, purged: !!purge });

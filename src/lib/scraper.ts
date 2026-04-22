@@ -42,7 +42,142 @@ function extractViewState(html: string): ViewStateFields {
   };
 }
 
+// Session cache: reuse authenticated cookies + last-known form state across
+// refreshes so scheduled polling skips the full login + dropdown navigation.
+interface CachedSession {
+  cookies: string;
+  // Form fields (hidden inputs, selects) captured from the most recent
+  // successful run-grid response. Used as a warm ViewState for the next poll.
+  fields: Record<string, string>;
+  selection: {
+    eventType: string;
+    eventCode: string;
+    season: string;
+    dateFilter: string;
+  };
+  expiresAt: number;
+}
+
+const SESSION_TTL_MS = 10 * 60 * 1000;
+const _sessions = new Map<string, CachedSession>();
+
+function sessionKey(username: string): string {
+  return username.trim().toLowerCase();
+}
+
+function selectionMatches(cached: CachedSession["selection"], opts: ScrapeOptions): boolean {
+  return cached.eventType === opts.eventType
+    && cached.eventCode === opts.eventCode
+    && cached.season === opts.season
+    && cached.dateFilter === (opts.dateFilter || "");
+}
+
+function invalidateSession(username: string): void {
+  _sessions.delete(sessionKey(username));
+}
+
+function responseLooksLoggedOut(html: string): boolean {
+  // The login form has a UsernameTextbox input; the dashboard never does.
+  return html.includes("UsernameTextbox") || html.includes("PasswordTextbox");
+}
+
+async function tryFastRefresh(options: ScrapeOptions): Promise<Omit<RunRow, "id" | "created_at">[] | null> {
+  const key = sessionKey(options.username);
+  const session = _sessions.get(key);
+  if (!session) return null;
+  if (Date.now() > session.expiresAt) {
+    _sessions.delete(key);
+    return null;
+  }
+  if (!selectionMatches(session.selection, options)) return null;
+
+  const eventValue = `{ 'EventType' : '${options.eventType}', 'StartDate' : '${options.startDate}', 'EventCode' : '${options.eventCode}', 'Season' : '${options.season}' }`;
+
+  // Re-trigger the event race dropdown postback against the cached ViewState
+  // to force the server to re-render the run grid with fresh data.
+  const fields = { ...session.fields };
+  fields["__EVENTTARGET"] = "divEventRaceDropDown";
+  fields["__EVENTARGUMENT"] = "";
+  fields["yearDropDown"] = options.season;
+  fields["eventTypeDropDown"] = options.eventType;
+  fields["divEventRaceDropDown"] = eventValue;
+
+  const res = await fetch(`${BASE_URL}/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": session.cookies,
+      "User-Agent": "TiminData/1.0",
+    },
+    body: new URLSearchParams(fields).toString(),
+    redirect: "manual",
+  });
+
+  if (res.status >= 300 && res.status < 400) {
+    _sessions.delete(key);
+    return null;
+  }
+
+  let html = await res.text();
+  if (responseLooksLoggedOut(html) || !html.includes("runGridView")) {
+    _sessions.delete(key);
+    return null;
+  }
+
+  if (options.dateFilter) {
+    const dateFields = collectFormFields(html);
+    dateFields["__EVENTTARGET"] = "dateDropDown";
+    dateFields["__EVENTARGUMENT"] = "";
+    dateFields["dateDropDown"] = options.dateFilter;
+
+    const dateRes = await fetch(`${BASE_URL}/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Cookie": session.cookies,
+        "User-Agent": "TiminData/1.0",
+      },
+      body: new URLSearchParams(dateFields).toString(),
+    });
+    html = await dateRes.text();
+    if (responseLooksLoggedOut(html) || !html.includes("runGridView")) {
+      _sessions.delete(key);
+      return null;
+    }
+  }
+
+  session.fields = collectFormFields(html);
+  session.expiresAt = Date.now() + SESSION_TTL_MS;
+
+  return parseRunsFromHtml(html, options);
+}
+
+function rememberSession(options: ScrapeOptions, cookies: string, finalHtml: string): void {
+  _sessions.set(sessionKey(options.username), {
+    cookies,
+    fields: collectFormFields(finalHtml),
+    selection: {
+      eventType: options.eventType,
+      eventCode: options.eventCode,
+      season: options.season,
+      dateFilter: options.dateFilter || "",
+    },
+    expiresAt: Date.now() + SESSION_TTL_MS,
+  });
+}
+
 export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow, "id" | "created_at">[]> {
+  try {
+    const fast = await tryFastRefresh(options);
+    if (fast !== null) {
+      console.log(`[Scraper] Fast refresh hit for ${options.eventCode} (${fast.length} rows)`);
+      return fast;
+    }
+  } catch (err) {
+    console.log("[Scraper] Fast refresh failed, falling back to full login:", err instanceof Error ? err.message : err);
+    invalidateSession(options.username);
+  }
+
   const loginPageRes = await fetch(`${BASE_URL}/login.aspx`, {
     redirect: "manual",
     headers: { "User-Agent": "TiminData/1.0" },
@@ -137,9 +272,11 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
       body: new URLSearchParams(dateFields).toString(),
     });
     const dateHtml = await dateRes.text();
+    rememberSession(options, allCookies, dateHtml);
     return parseRunsFromHtml(dateHtml, options);
   }
 
+  rememberSession(options, allCookies, eventHtml);
   return parseRunsFromHtml(eventHtml, options);
 }
 
