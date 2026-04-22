@@ -96,9 +96,6 @@ export default function SetupPage() {
 
   async function loadEvents() {
     setEventsLoading(true);
-    setSelectedEventIdx(-1);
-    setEventDates([]);
-    setSelectedDate("");
     try {
       const res = await fetch("/api/fetch-events", {
         method: "POST",
@@ -116,7 +113,31 @@ export default function SetupPage() {
   useEffect(() => {
     if (loggedIn && username && password) loadEvents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season, eventType]);
+  }, [season, eventType, loggedIn]);
+
+  // Auto-select the stored event (and load its dates) once the events list
+  // populates. Without this, a user returning with prepopulated config sees
+  // "-- Select an event --" and no day filter until they pick a different
+  // event and come back. Preserves the pre-populated selectedDate.
+  useEffect(() => {
+    if (!live.config || events.length === 0 || selectedEventIdx >= 0) return;
+    const idx = events.findIndex(
+      (ev) => ev.eventCode === live.config!.eventCode && ev.startDate === live.config!.startDate
+    );
+    if (idx < 0) return;
+    setSelectedEventIdx(idx);
+    const target = events[idx];
+    setDatesLoading(true);
+    fetch("/api/fetch-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, action: "dates", event: target }),
+    })
+      .then((res) => res.json())
+      .then((data) => { if (data.success && data.dates) setEventDates(data.dates); })
+      .catch(() => {})
+      .finally(() => setDatesLoading(false));
+  }, [events, live.config, selectedEventIdx, username, password]);
 
   const selectedEvent = selectedEventIdx >= 0 ? events[selectedEventIdx] : null;
 
@@ -422,14 +443,24 @@ export default function SetupPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Season</label>
-                <select value={season} onChange={(e) => setSeason(e.target.value)} aria-label="Season"
+                <select value={season} onChange={(e) => {
+                  setSeason(e.target.value);
+                  setSelectedEventIdx(-1);
+                  setEventDates([]);
+                  setSelectedDate("");
+                }} aria-label="Season"
                   className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white focus:outline-none focus:border-nhra-accent">
                   {SEASONS.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Event Type</label>
-                <select value={eventType} onChange={(e) => setEventType(e.target.value)} aria-label="Event Type"
+                <select value={eventType} onChange={(e) => {
+                  setEventType(e.target.value);
+                  setSelectedEventIdx(-1);
+                  setEventDates([]);
+                  setSelectedDate("");
+                }} aria-label="Event Type"
                   className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white focus:outline-none focus:border-nhra-accent">
                   {EVENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
