@@ -146,6 +146,11 @@ export default function SharePage() {
     return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
   });
 
+  const totalPairs = todaysEntries.reduce((s, e) => s + e.pairCount, 0);
+  const totalCars = todaysEntries.reduce((s, e) => s + e.totalRuns, 0);
+  const distinctCategories = new Set(todaysEntries.map((e) => e.category)).size;
+  const distinctRounds = new Set(todaysEntries.map((e) => `${e.category}|${e.round}`)).size;
+
   return (
     <div className="min-h-screen bg-nhra-darker text-white">
       <div className="max-w-5xl mx-auto px-4 py-6">
@@ -183,37 +188,59 @@ export default function SharePage() {
             No runs recorded yet today.
           </div>
         ) : (
-          <div className="mb-6">
-            <h2 className="text-base font-bold text-white mb-3">{fmtDateLabel(todaysEntries[0].firstTimestamp)}</h2>
-            <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
-                    <th className="text-left p-3">Start</th>
-                    <th className="text-left p-3">End</th>
-                    <th className="text-left p-3">Category</th>
-                    <th className="text-left p-3">Round</th>
-                    <th className="text-right p-3">Cars</th>
-                    <th className="text-right p-3">Pairs</th>
-                    <th className="text-right p-3">Duration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {todaysEntries.map((s, i) => (
-                    <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
-                      <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
-                      <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
-                      <td className="p-3 text-white whitespace-nowrap">{s.category}</td>
-                      <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
-                      <td className="p-3 text-right font-mono text-white">{s.totalRuns}</td>
-                      <td className="p-3 text-right font-mono text-gray-400">{s.pairCount}</td>
-                      <td className="p-3 text-right font-mono text-gray-400 whitespace-nowrap">{fmtDuration(s.durationMinutes)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <>
+            {/* Summary tiles */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Pairs run</div>
+                <div className="text-2xl font-bold text-white font-mono">{totalPairs}</div>
+              </div>
+              <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Cars run</div>
+                <div className="text-2xl font-bold text-white font-mono">{totalCars}</div>
+              </div>
+              <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Sessions</div>
+                <div className="text-2xl font-bold text-white font-mono">{distinctRounds}</div>
+              </div>
+              <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
+                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Categories</div>
+                <div className="text-2xl font-bold text-white font-mono">{distinctCategories}</div>
+              </div>
             </div>
-          </div>
+
+            <div className="mb-6">
+              <h2 className="text-base font-bold text-white mb-3">{fmtDateLabel(todaysEntries[0].firstTimestamp)}</h2>
+              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
+                      <th className="text-left p-3">Start</th>
+                      <th className="text-left p-3">End</th>
+                      <th className="text-left p-3">Category</th>
+                      <th className="text-left p-3">Round</th>
+                      <th className="text-right p-3">Cars</th>
+                      <th className="text-right p-3 text-nhra-accent">Pairs Run</th>
+                      <th className="text-right p-3">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {todaysEntries.map((s, i) => (
+                      <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
+                        <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
+                        <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
+                        <td className="p-3 text-white whitespace-nowrap">{s.category}</td>
+                        <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
+                        <td className="p-3 text-right font-mono text-gray-300">{s.totalRuns}</td>
+                        <td className="p-3 text-right font-mono text-white font-bold">{s.pairCount}</td>
+                        <td className="p-3 text-right font-mono text-gray-400 whitespace-nowrap">{fmtDuration(s.durationMinutes)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
 
         <div className="text-center text-xs text-gray-600 mt-8">
