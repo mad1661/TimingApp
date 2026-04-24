@@ -180,6 +180,34 @@ export async function GET(request: NextRequest) {
     const runNumberMap = new Map<RunRow, number>();
     sortedByTime.forEach((r, i) => runNumberMap.set(r, i + 1));
 
+    // Apply manual_run_number overrides. Setting a run to position N inserts
+    // it at that slot and shifts everything from the old slot back to N by
+    // +/- 1 so there are no duplicate numbers. Multiple overrides are applied
+    // in order of increasing target.
+    const manuallyOverridden = sortedByTime
+      .filter((r) => r.manual_run_number != null && r.manual_run_number > 0)
+      .sort((a, b) => (a.manual_run_number ?? 0) - (b.manual_run_number ?? 0));
+
+    for (const r of manuallyOverridden) {
+      const target = r.manual_run_number!;
+      const current = runNumberMap.get(r)!;
+      if (current === target) continue;
+      if (current > target) {
+        // Moving to a lower number: bump everyone in [target, current) up by 1.
+        for (const [other, num] of runNumberMap) {
+          if (other === r) continue;
+          if (num >= target && num < current) runNumberMap.set(other, num + 1);
+        }
+      } else {
+        // Moving to a higher number: shift everyone in (current, target] down by 1.
+        for (const [other, num] of runNumberMap) {
+          if (other === r) continue;
+          if (num > current && num <= target) runNumberMap.set(other, num - 1);
+        }
+      }
+      runNumberMap.set(r, target);
+    }
+
     // Filter to the requested round/category/class.
     const filtered = allRuns.filter((r) => {
       if (r.round !== round) return false;
@@ -371,7 +399,7 @@ export async function GET(request: NextRequest) {
             is_dq: r.is_dq,
             result: r.result ?? null,
             timestamp: r.timestamp,
-            run_number: r.manual_run_number != null ? r.manual_run_number : (runNumberMap.get(r) ?? 0),
+            run_number: runNumberMap.get(r) ?? 0,
             index_value,
             over_under_thou,
             remarks: computeRemarks(r),
@@ -384,13 +412,19 @@ export async function GET(request: NextRequest) {
 
     const isFourWide = maxPairSize > 2;
 
-    pairs.sort((a, b) => {
-      const da = parseTsToDate(a.canonical_ts);
-      const db = parseTsToDate(b.canonical_ts);
-      const ta = da ? da.getTime() : 0;
-      const tb = db ? db.getTime() : 0;
-      return ta - tb;
-    });
+    // Sort pairs by the lowest run_number in each pair. Since run_number
+    // is chronological by default but can be overridden, this lets a manual
+    // Run # move the pair to the right spot on the sheet.
+    const pairMinRunNumber = (p: RoundPrintPair): number => {
+      let min = Infinity;
+      for (const r of p.runs) if (r.run_number > 0 && r.run_number < min) min = r.run_number;
+      if (min === Infinity) {
+        const d = parseTsToDate(p.canonical_ts);
+        return d ? d.getTime() : 0;
+      }
+      return min;
+    };
+    pairs.sort((a, b) => pairMinRunNumber(a) - pairMinRunNumber(b));
 
     const firstTs = pairs[0]?.canonical_ts ?? null;
     const lastTs = pairs[pairs.length - 1]?.canonical_ts ?? null;
