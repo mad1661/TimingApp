@@ -32,6 +32,7 @@ interface RunRow {
   category: string | null;
   lane: string | null;
   dial_in: number | null;
+  manual_run_number?: number | null;
   _dedup_key?: string;
 }
 
@@ -471,7 +472,7 @@ function RunsPageInner() {
                                 ft660: run.ft660, mph_660: run.mph_660, ft1000: run.ft1000,
                                 mph_1000: run.mph_1000, ft1320: run.ft1320, mph_1320: run.mph_1320,
                                 dial_in: run.dial_in, is_winner: run.is_winner, is_dq: run.is_dq,
-                                result: run.result,
+                                result: run.result, manual_run_number: run.manual_run_number ?? null,
                               })}
                               className="text-gray-600 hover:text-nhra-accent transition-colors"
                               title="Edit run"

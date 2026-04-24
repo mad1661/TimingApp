@@ -33,6 +33,12 @@ export interface RunRow {
   event_type: string | null;
   season: string | null;
   start_date: string | null;
+  // Optional display-only run-number override. When set, overrides the
+  // chronological run number computed for the Round Log Print sheet.
+  manual_run_number?: number | null;
+  // Marker for runs inserted manually via /api/add-pair. When any run in a
+  // 4-wide pair has this flag, the print output pads missing lanes.
+  manual_entry?: number | null;
   created_at?: string;
   _dedup_key?: string;
 }

@@ -37,6 +37,7 @@ export interface RoundPrintPair {
   runs: RoundPrintRun[];
   pair_mov: number | null;
   winner_car: string | null;
+  has_manual_entry: boolean;
 }
 
 export interface RoundPrintPayload {
@@ -57,11 +58,42 @@ export interface RoundPrintPayload {
 
 function laneOrder(lane: string | null): number {
   const l = (lane || "").toUpperCase();
-  if (l === "L" || l === "1") return 1;
-  if (l === "R" || l === "2") return 2;
-  if (l === "3") return 3;
-  if (l === "4") return 4;
+  if (l === "L" || l === "L1" || l === "1") return 1;
+  if (l === "R" || l === "L2" || l === "2") return 2;
+  if (l === "L3" || l === "3") return 3;
+  if (l === "L4" || l === "4") return 4;
   return 99;
+}
+
+function makeEmptyLaneRun(laneLabel: string, category: string | null): RoundPrintRun {
+  return {
+    car_number: null,
+    name: null,
+    category,
+    class_index: null,
+    dial_in: null,
+    lane: laneLabel,
+    rt: null,
+    ft60: null,
+    ft330: null,
+    ft660: null,
+    mph_660: null,
+    ft1000: null,
+    mph_1000: null,
+    ft1320: null,
+    mph_1320: null,
+    mov: null,
+    is_winner: 0,
+    is_dq: 0,
+    result: null,
+    timestamp: null,
+    run_number: 0,
+    index_value: null,
+    over_under_thou: 0,
+    remarks: "",
+    finish: 5,
+    winpos: "DNF",
+  };
 }
 
 function fmtClock(date: Date | null): string {
@@ -226,11 +258,13 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      const hasManualEntry = runs.some((r) => r.manual_entry === 1);
       pairs.push({
         canonical_ts: canonical,
         time_label: timeLabel,
         pair_mov: pairMov,
         winner_car: winner?.car_number ?? null,
+        has_manual_entry: hasManualEntry,
         runs: runs.map((r) => {
           const index_value = parseIndex(r.class_index, r.dial_in);
           let over_under_thou: number | null = null;
@@ -260,7 +294,7 @@ export async function GET(request: NextRequest) {
             is_dq: r.is_dq,
             result: r.result ?? null,
             timestamp: r.timestamp,
-            run_number: runNumberMap.get(r) ?? 0,
+            run_number: r.manual_run_number != null ? r.manual_run_number : (runNumberMap.get(r) ?? 0),
             index_value,
             over_under_thou,
             remarks: computeRemarks(r),
@@ -269,6 +303,33 @@ export async function GET(request: NextRequest) {
           } satisfies RoundPrintRun;
         }),
       });
+    }
+
+    // For 4-wide rounds, pad pairs that were added manually so every manual
+    // pair prints all four L1/L2/L3/L4 rows even when the operator only filled
+    // in one lane. Live-timing captured pairs are left alone.
+    const isFourWide = maxPairSize > 2;
+    if (isFourWide) {
+      const sampleLane = pairs
+        .flatMap((p) => p.runs.map((r) => r.lane ?? ""))
+        .find((l) => l.length > 0);
+      const useLPrefix = sampleLane ? /^l\d$/i.test(sampleLane) : true;
+      const slotLabel = (i: number) => (useLPrefix ? `L${i}` : String(i));
+      const catLabel = category ?? pairs[0]?.runs[0]?.category ?? null;
+
+      for (const pair of pairs) {
+        if (!pair.has_manual_entry) continue;
+        const present = new Set(pair.runs.map((r) => (r.lane || "").toUpperCase()));
+        for (let slot = 1; slot <= 4; slot++) {
+          const labels = [slotLabel(slot).toUpperCase(), String(slot)];
+          if (slot === 1) labels.push("L");
+          if (slot === 2) labels.push("R");
+          if (!labels.some((l) => present.has(l))) {
+            pair.runs.push(makeEmptyLaneRun(slotLabel(slot), catLabel));
+          }
+        }
+        pair.runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
+      }
     }
 
     pairs.sort((a, b) => {

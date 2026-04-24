@@ -24,6 +24,7 @@ export interface EditableRun {
   is_winner: number;
   is_dq: number;
   result: string | null;
+  manual_run_number?: number | null;
 }
 
 interface Props {
@@ -82,6 +83,7 @@ export default function EditRunModal({ run, eventCode, season, onClose, onSaved 
       is_winner: form.is_winner,
       is_dq: form.is_dq,
       result: form.result,
+      manual_run_number: form.manual_run_number ?? null,
     };
     try {
       const res = await fetch("/api/edit-run", {
@@ -177,6 +179,9 @@ export default function EditRunModal({ run, eventCode, season, onClose, onSaved 
           </Field>
           <Field label="Result (W/R/3/4)">
             <input value={form.result ?? ""} onChange={(e) => set("result", e.target.value.toUpperCase())} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+          </Field>
+          <Field label="Run # override">
+            <input type="number" step={1} value={form.manual_run_number ?? ""} onChange={(e) => set("manual_run_number", e.target.value === "" ? null : parseInt(e.target.value, 10))} placeholder="auto" className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
           </Field>
         </div>
 

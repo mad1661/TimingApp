@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
       event_type: r.event_type ?? template?.event_type ?? null,
       season,
       start_date: r.start_date ?? template?.start_date ?? null,
+      manual_entry: 1,
     }));
 
     const count = await insertRuns(event_code, season, normalized);

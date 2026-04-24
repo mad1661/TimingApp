@@ -20,6 +20,7 @@ async function addIgnoredKey(eventCode: string, season: string, key: string) {
 const NUMERIC_FIELDS = new Set([
   "rt", "ft60", "ft330", "ft660", "mph_660", "ft1000", "mph_1000",
   "ft1320", "mph_1320", "mov", "is_winner", "is_dq", "qual_pos", "dial_in",
+  "manual_run_number",
 ]);
 
 const STRING_FIELDS = new Set([
@@ -120,6 +121,8 @@ export async function POST(req: NextRequest) {
       event_type: merged.event_type,
       season: merged.season,
       start_date: merged.start_date,
+      manual_run_number: merged.manual_run_number ?? null,
+      manual_entry: merged.manual_entry ?? null,
     };
 
     await upsertRun(event_code, season, toInsert);
