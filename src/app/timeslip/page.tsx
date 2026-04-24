@@ -133,7 +133,29 @@ export default function TimeslipPage() {
         season: run.season,
       });
     }
-    return runners.sort((a, b) => {
+
+    // Dedupe by (lane + car #). If two opponents collide on the same key, keep
+    // the one with the most recorded timing data (same rule as the round log).
+    const dataScore = (r: TimeslipRun): number => {
+      let n = 0;
+      if (r.rt != null) n++;
+      if (r.ft60 != null) n++;
+      if (r.ft330 != null) n++;
+      if (r.ft660 != null) n++;
+      if (r.ft1000 != null) n++;
+      if (r.ft1320 != null) n++;
+      if (r.mph_1320 != null) n++;
+      return n;
+    };
+    const byKey = new Map<string, TimeslipRun>();
+    for (const r of runners) {
+      const key = `${(r.lane || "").toUpperCase()}|${(r.car_number || "").trim()}`;
+      const ex = byKey.get(key);
+      if (!ex || dataScore(r) > dataScore(ex)) byKey.set(key, r);
+    }
+    let deduped = Array.from(byKey.values());
+
+    deduped.sort((a, b) => {
       const la = a.lane || "";
       const lb = b.lane || "";
       if (la === "L") return -1;
@@ -142,6 +164,49 @@ export default function TimeslipPage() {
       if (lb === "R") return -1;
       return la.localeCompare(lb);
     });
+
+    // Drag racing is at most 4-wide. If the timestamp grouping accidentally
+    // merged two quads that happened within one second of each other, keep
+    // the 4 runners closest in time (and in wall-clock order) to the target
+    // run so the timeslip never shows a bogus "Lane 5".
+    if (deduped.length > 4) {
+      const targetTs = run.timestamp ?? "";
+      const parse = (ts: string | null): number => {
+        if (!ts) return 0;
+        const parts = ts.split(" ");
+        const [mo, da, yr] = (parts[0] || "").split("/");
+        const [hh, mm, ss] = (parts[1] || "").split(":");
+        let h = parseInt(hh || "0", 10);
+        const ampm = (parts[2] || "").toUpperCase();
+        if (ampm === "PM" && h !== 12) h += 12;
+        if (ampm === "AM" && h === 12) h = 0;
+        return new Date(
+          parseInt(yr || "0", 10),
+          parseInt(mo || "1", 10) - 1,
+          parseInt(da || "1", 10),
+          h,
+          parseInt(mm || "0", 10),
+          parseInt(ss || "0", 10),
+        ).getTime();
+      };
+      const targetMs = parse(targetTs);
+      deduped = deduped
+        .map((r) => ({ r, gap: Math.abs(parse(r.timestamp) - targetMs) }))
+        .sort((a, b) => a.gap - b.gap)
+        .slice(0, 4)
+        .map(({ r }) => r);
+      deduped.sort((a, b) => {
+        const la = a.lane || "";
+        const lb = b.lane || "";
+        if (la === "L") return -1;
+        if (lb === "L") return 1;
+        if (la === "R") return 1;
+        if (lb === "R") return -1;
+        return la.localeCompare(lb);
+      });
+    }
+
+    return deduped;
   }
 
   return (
