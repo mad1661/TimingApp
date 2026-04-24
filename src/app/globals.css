@@ -35,7 +35,9 @@ body {
   nav, .print\:hidden { display: none !important; }
   main { margin: 0 !important; padding: 0 !important; }
   .timeslip-card { box-shadow: none !important; margin: 0 auto; }
-  .round-print { color: black !important; background: white !important; font-size: 9pt !important; }
+  .round-print { color: black !important; background: white !important; font-size: 10pt !important; }
   .round-print * { color: black !important; }
-  @page { size: letter landscape; margin: 0.4in; }
+  .round-print table { width: 100% !important; }
+  .round-print td, .round-print th { padding-left: 0.25rem !important; padding-right: 0.25rem !important; }
+  @page { size: letter landscape; margin: 0.35in; }
 }
