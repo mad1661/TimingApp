@@ -105,7 +105,9 @@ function posLabel(pos: number): string {
 
 function computeRemarks(r: RunRow): string {
   const parts: string[] = [];
+  const didNotFinish = r.ft1320 == null || r.ft1320 === 0;
   if (r.is_dq) parts.push("DQ");
+  else if (didNotFinish) parts.push("BROKE");
   if (r.rt != null && r.rt < 0) parts.push("RED");
   const res = (r.result || "").trim().toUpperCase();
   if (res === "W" || (!res && r.is_winner === 1)) parts.push("WIN");
