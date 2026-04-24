@@ -9,8 +9,8 @@ interface Props {
   footerLabel?: string;
 }
 
-const FIRST_PAGE_PAIRS = 32;
-const NEXT_PAGE_PAIRS = 38;
+const FIRST_PAGE_CARS = 32;
+const NEXT_PAGE_CARS = 38;
 
 function fmt3(v: number | null | undefined): string {
   if (v == null) return "";
@@ -67,27 +67,46 @@ function DataCell({ children, align = "left", mono = true }: { children?: React.
 function chunkPairs(pairs: RoundPrintPair[]): RoundPrintPair[][] {
   const chunks: RoundPrintPair[][] = [];
   if (pairs.length === 0) return chunks;
-  chunks.push(pairs.slice(0, FIRST_PAGE_PAIRS));
-  let idx = FIRST_PAGE_PAIRS;
-  while (idx < pairs.length) {
-    chunks.push(pairs.slice(idx, idx + NEXT_PAGE_PAIRS));
-    idx += NEXT_PAGE_PAIRS;
+  let cur: RoundPrintPair[] = [];
+  let carsInChunk = 0;
+  for (const pair of pairs) {
+    const carsInPair = pair.runs.length;
+    const limit = chunks.length === 0 ? FIRST_PAGE_CARS : NEXT_PAGE_CARS;
+    if (cur.length > 0 && carsInChunk + carsInPair > limit) {
+      chunks.push(cur);
+      cur = [];
+      carsInChunk = 0;
+    }
+    cur.push(pair);
+    carsInChunk += carsInPair;
   }
+  if (cur.length > 0) chunks.push(cur);
   return chunks;
 }
 
 function Banner({ roundHeader, startTime, date, category }: { roundHeader: string; startTime: string; date: string; category: string }) {
-  const bang = "!".repeat(120);
+  const bangFill = "!".repeat(220);
   return (
-    <div>
-      <div className="whitespace-pre text-[8px] leading-none overflow-hidden">{bang}</div>
-      <div className="flex justify-between items-center text-[11px] my-1">
-        <div className="font-bold">{roundHeader}&nbsp;&nbsp;&nbsp;{startTime}&nbsp;&nbsp;{date}</div>
-        <div className="font-bold text-lg tracking-[0.2em]">{category}</div>
-        <div className="text-right opacity-0 select-none">placeholder</div>
+    <div className="leading-none">
+      {/* Top bang line with category name centered */}
+      <div className="flex items-baseline w-full overflow-hidden whitespace-nowrap">
+        <span className="flex-1 overflow-hidden text-[9px]">{bangFill}</span>
+        <span className="px-3 font-bold italic text-[13px] tracking-[0.25em] flex-shrink-0">{category}</span>
+        <span className="flex-1 overflow-hidden text-[9px] text-right">{bangFill}</span>
       </div>
-      <div className="whitespace-pre text-[8px] leading-none overflow-hidden">{bang}</div>
-      <div className="text-right text-[10px] mt-0.5 mb-2">CompuLink StarTrak&nbsp;&nbsp;&nbsp;&nbsp;#####</div>
+
+      {/* Round / time / date line */}
+      <div className="text-[11px] mt-1 mb-1 font-bold">
+        Round #&nbsp;{roundHeader.replace(/^Round # /, "")}&nbsp;&nbsp;&nbsp;{startTime}&nbsp;&nbsp;{date}
+      </div>
+
+      {/* Bottom bang line with CompuLink StarTrak on the right */}
+      <div className="flex items-baseline w-full overflow-hidden whitespace-nowrap">
+        <span className="flex-1 overflow-hidden text-[9px]">{bangFill}</span>
+        <span className="pl-3 text-[10px] flex-shrink-0">CompuLink StarTrak&nbsp;&nbsp;&nbsp;&nbsp;#####</span>
+      </div>
+
+      <div className="h-2" />
     </div>
   );
 }
