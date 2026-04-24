@@ -19,6 +19,14 @@ interface FiltersResp {
 
 const ALL_ROUNDS = "__ALL__";
 
+async function fetchOne(eventCode: string, season: string, round: string, category: string): Promise<RoundPrintPayload> {
+  const params = new URLSearchParams({ event_code: eventCode, season, round });
+  if (category) params.set("category", category);
+  const res = await fetch(`/api/round-print?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export default function RoundPrintPage() {
   const live = useLiveData();
   const [events, setEvents] = useState<EventOption[]>([]);
@@ -65,41 +73,41 @@ export default function RoundPrintPage() {
     loadFilters();
   }, [loadFilters]);
 
-  const loadSections = useCallback(async () => {
-    if (!eventCode || !season || !round) { setSections([]); return; }
-    setLoading(true);
-    setError(null);
-    try {
-      const targetRounds = round === ALL_ROUNDS ? rounds : [round];
-      const targetCategories = category ? [category] : (round === ALL_ROUNDS ? categories : [""]);
-
-      const requests: Promise<RoundPrintPayload>[] = [];
-      for (const r of targetRounds) {
-        for (const c of targetCategories) {
-          const params = new URLSearchParams({ event_code: eventCode, season, round: r });
-          if (c) params.set("category", c);
-          requests.push(
-            fetch(`/api/round-print?${params}`).then(async (res) => {
-              if (!res.ok) throw new Error(await res.text());
-              return res.json();
-            })
-          );
-        }
-      }
-      const results = await Promise.all(requests);
-      setSections(results.filter((p) => p.pairs.length > 0));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-      setSections([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [eventCode, season, round, category, rounds, categories]);
-
   useEffect(() => {
-    if (eventCode && season && round) loadSections();
-    else setSections([]);
-  }, [eventCode, season, round, category, loadSections]);
+    let cancelled = false;
+    if (!eventCode || !season || !round) { setSections([]); return; }
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        if (round === ALL_ROUNDS) {
+          const targetCategories = category ? [category] : categories;
+          const requests: Promise<RoundPrintPayload>[] = [];
+          for (const r of rounds) {
+            for (const c of targetCategories) {
+              requests.push(fetchOne(eventCode, season, r, c));
+            }
+          }
+          const results = await Promise.all(requests);
+          if (!cancelled) setSections(results.filter((p) => p.pairs.length > 0));
+        } else {
+          const payload = await fetchOne(eventCode, season, round, category);
+          if (!cancelled) setSections(payload.pairs.length > 0 ? [payload] : []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load");
+          setSections([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, [eventCode, season, round, category, rounds, categories]);
 
   function handlePrint() {
     window.print();
