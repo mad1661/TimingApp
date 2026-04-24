@@ -80,7 +80,19 @@ function roundLabel(r: string): string {
 function dayKey(ts: string): string {
   const d = parseTs(ts);
   if (!d) return ts.split(" ")[0] || ts;
-  return d.toISOString().slice(0, 10);
+  // Use the local-time Y-M-D so 'today' matches the viewer's calendar day.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function todayKey(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export default function SharePage() {
@@ -125,22 +137,14 @@ export default function SharePage() {
   const event = data?.event;
   const sched = data?.schedule ?? [];
 
-  // Group by day and then by category, sorted by first run time per session.
-  const byDay = new Map<string, ScheduleEntry[]>();
-  for (const s of sched) {
-    const k = dayKey(s.firstTimestamp);
-    const arr = byDay.get(k) ?? [];
-    arr.push(s);
-    byDay.set(k, arr);
-  }
-  const days = Array.from(byDay.entries()).sort(([a], [b]) => a.localeCompare(b));
-  for (const [, arr] of days) {
-    arr.sort((a, b) => {
-      const da = parseTs(a.firstTimestamp);
-      const db = parseTs(b.firstTimestamp);
-      return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
-    });
-  }
+  // Only show entries from the current local day.
+  const today = todayKey();
+  const todaysEntries = sched.filter((s) => dayKey(s.firstTimestamp) === today);
+  todaysEntries.sort((a, b) => {
+    const da = parseTs(a.firstTimestamp);
+    const db = parseTs(b.firstTimestamp);
+    return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
+  });
 
   return (
     <div className="min-h-screen bg-nhra-darker text-white">
@@ -174,44 +178,42 @@ export default function SharePage() {
           </div>
         )}
 
-        {days.length === 0 ? (
+        {todaysEntries.length === 0 ? (
           <div className="bg-nhra-card border border-nhra-border rounded-xl p-8 text-center text-gray-500">
-            No runs recorded yet for this event.
+            No runs recorded yet today.
           </div>
         ) : (
-          days.map(([day, entries]) => (
-            <div key={day} className="mb-6">
-              <h2 className="text-base font-bold text-white mb-3">{fmtDateLabel(entries[0].firstTimestamp)}</h2>
-              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
-                      <th className="text-left p-3">Start</th>
-                      <th className="text-left p-3">End</th>
-                      <th className="text-left p-3">Category</th>
-                      <th className="text-left p-3">Round</th>
-                      <th className="text-right p-3">Cars</th>
-                      <th className="text-right p-3">Pairs</th>
-                      <th className="text-right p-3">Duration</th>
+          <div className="mb-6">
+            <h2 className="text-base font-bold text-white mb-3">{fmtDateLabel(todaysEntries[0].firstTimestamp)}</h2>
+            <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
+                    <th className="text-left p-3">Start</th>
+                    <th className="text-left p-3">End</th>
+                    <th className="text-left p-3">Category</th>
+                    <th className="text-left p-3">Round</th>
+                    <th className="text-right p-3">Cars</th>
+                    <th className="text-right p-3">Pairs</th>
+                    <th className="text-right p-3">Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {todaysEntries.map((s, i) => (
+                    <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
+                      <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
+                      <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
+                      <td className="p-3 text-white whitespace-nowrap">{s.category}</td>
+                      <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
+                      <td className="p-3 text-right font-mono text-white">{s.totalRuns}</td>
+                      <td className="p-3 text-right font-mono text-gray-400">{s.pairCount}</td>
+                      <td className="p-3 text-right font-mono text-gray-400 whitespace-nowrap">{fmtDuration(s.durationMinutes)}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {entries.map((s, i) => (
-                      <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
-                        <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
-                        <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
-                        <td className="p-3 text-white whitespace-nowrap">{s.category}</td>
-                        <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
-                        <td className="p-3 text-right font-mono text-white">{s.totalRuns}</td>
-                        <td className="p-3 text-right font-mono text-gray-400">{s.pairCount}</td>
-                        <td className="p-3 text-right font-mono text-gray-400 whitespace-nowrap">{fmtDuration(s.durationMinutes)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))
+          </div>
         )}
 
         <div className="text-center text-xs text-gray-600 mt-8">
