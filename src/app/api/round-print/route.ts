@@ -96,6 +96,8 @@ function computeRemarks(r: RunRow): string {
   const parts: string[] = [];
   if (r.is_dq) parts.push("DQ");
   if (r.rt != null && r.rt < 0) parts.push("RED");
+  const res = (r.result || "").trim().toUpperCase();
+  if (res === "W" || (!res && r.is_winner === 1)) parts.push("WIN");
   return parts.join(" ");
 }
 
