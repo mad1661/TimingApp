@@ -231,6 +231,39 @@ export async function GET(request: NextRequest) {
       return n;
     };
 
+    // In a 4-wide round, each quad is recorded as two L/R sub-pairs sharing
+    // nearly the same canonical timestamp. Sort by the *raw* timestamp and
+    // promote the second L/R to lanes 3/4 so the sheet shows 1,2,3,4.
+    const computeLaneRemap = (runs: RunRow[]): Map<RunRow, string> => {
+      const map = new Map<RunRow, string>();
+      if (runs.length <= 2) return map;
+      const counts = new Map<string, number>();
+      for (const r of runs) {
+        const l = (r.lane || "").toUpperCase();
+        counts.set(l, (counts.get(l) ?? 0) + 1);
+      }
+      const hasDupes = Array.from(counts.values()).some((c) => c > 1);
+      if (!hasDupes) return map;
+      const sorted = [...runs].sort((a, b) => {
+        const da = a.timestamp ? parseTsToDate(a.timestamp) : null;
+        const db = b.timestamp ? parseTsToDate(b.timestamp) : null;
+        return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
+      });
+      let lSeen = 0;
+      let rSeen = 0;
+      for (const r of sorted) {
+        const l = (r.lane || "").toUpperCase();
+        if (l === "L" || l === "1") {
+          lSeen++;
+          map.set(r, lSeen === 1 ? "1" : "3");
+        } else if (l === "R" || l === "2") {
+          rSeen++;
+          map.set(r, rSeen === 1 ? "2" : "4");
+        }
+      }
+      return map;
+    };
+
     for (const [canonical, rawRuns] of pairMap) {
       // Collapse consecutive timing-system resets: within one pair, if multiple
       // rows share the same lane + car number, keep the row with the most
@@ -248,7 +281,9 @@ export async function GET(request: NextRequest) {
       // If nothing went down the track in this entire pair, skip it.
       if (!runs.some(hasAnyTiming)) continue;
 
-      runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
+      const laneRemap = computeLaneRemap(runs);
+      const effectiveLane = (r: RunRow): string | null => laneRemap.get(r) ?? r.lane;
+      runs.sort((a, b) => laneOrder(effectiveLane(a)) - laneOrder(effectiveLane(b)));
       if (runs.length > maxPairSize) maxPairSize = runs.length;
       const date = parseTsToDate(canonical);
       const timeLabel = fmtClock(date);
@@ -312,7 +347,7 @@ export async function GET(request: NextRequest) {
             category: r.category,
             class_index: r.class_index,
             dial_in: r.dial_in,
-            lane: r.lane,
+            lane: laneRemap.get(r) ?? r.lane,
             rt: r.rt,
             ft60: r.ft60,
             ft330: r.ft330,
