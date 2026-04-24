@@ -28,6 +28,7 @@ interface OpponentData {
 
 interface RunRow extends TimeslipRun {
   id?: string;
+  _dedup_key?: string;
   opponents?: OpponentData[];
 }
 
@@ -98,6 +99,28 @@ export default function TimeslipPage() {
     } catch { setRuns([]); }
     setLoading(false);
   }
+
+  // Re-fetch the selected racer's runs whenever the LiveDataProvider gets new
+  // data, so the timeslip list refreshes without requiring a page reload.
+  useEffect(() => {
+    if (!selectedRacer) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/stats?type=racer&name=${encodeURIComponent(selectedRacer)}${eventQS}`);
+        const data = await res.json();
+        if (!cancelled) {
+          const newRuns: RunRow[] = data.runs || [];
+          setRuns(newRuns);
+          setSelectedRun((current) => {
+            if (!current) return current;
+            return newRuns.find((r) => r.id === current.id || r._dedup_key === current._dedup_key) ?? current;
+          });
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [live.dataVersion, selectedRacer, eventQS]);
 
   function handlePrint() {
     window.print();

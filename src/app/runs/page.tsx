@@ -174,7 +174,7 @@ function RunsPageInner() {
     }
   }, [nameFilter, categoryFilter, seasonFilter, roundFilter, classFilter, page, sortBy, sortDir, eventCode, season]);
 
-  useEffect(() => { fetchRuns(); }, [fetchRuns]);
+  useEffect(() => { fetchRuns(); }, [fetchRuns, live.dataVersion]);
 
   async function handleIgnore(run: RunRow) {
     const key = run._dedup_key;

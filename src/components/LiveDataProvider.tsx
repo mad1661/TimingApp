@@ -25,6 +25,7 @@ interface LiveDataState {
   lastResult: { totalParsed: number; inserted: number } | null;
   lastError: string | null;
   totalNewRuns: number;
+  dataVersion: number;
   setConfig: (config: LiveConfig) => void;
   start: () => void;
   stop: () => void;
@@ -64,6 +65,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
   const [lastResult, setLastResult] = useState<{ totalParsed: number; inserted: number } | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [totalNewRuns, setTotalNewRuns] = useState(0);
+  const [dataVersion, setDataVersion] = useState(0);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const configRef = useRef(config);
   const activeRef = useRef(isActive);
@@ -110,6 +112,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
         if (data.inserted > 0) {
           setTotalNewRuns((prev) => prev + data.inserted);
         }
+        setDataVersion((v) => v + 1);
       } else {
         setLastError(data.error || "Fetch failed");
       }
@@ -163,7 +166,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
 
   return (
     <LiveDataContext.Provider value={{
-      config, isActive, isFetching, lastFetch, lastResult, lastError, totalNewRuns,
+      config, isActive, isFetching, lastFetch, lastResult, lastError, totalNewRuns, dataVersion,
       setConfig, start, stop, fetchNow: doFetch, clearConfig,
     }}>
       {children}

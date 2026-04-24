@@ -114,7 +114,7 @@ export default function Dashboard() {
         .then((data) => { if (data?.pair) setLatestPair(data.pair); })
         .catch(console.error);
     }
-  }, [live.totalNewRuns, live.config?.eventCode, live.config?.season]);
+  }, [live.dataVersion, live.totalNewRuns, live.config?.eventCode, live.config?.season]);
 
   if (loading) {
     return (

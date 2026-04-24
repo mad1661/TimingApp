@@ -71,7 +71,7 @@ export default function RoundPrintPage() {
 
   useEffect(() => {
     loadFilters();
-  }, [loadFilters]);
+  }, [loadFilters, live.dataVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,7 +107,7 @@ export default function RoundPrintPage() {
 
     load();
     return () => { cancelled = true; };
-  }, [eventCode, season, round, category, rounds, categories]);
+  }, [eventCode, season, round, category, rounds, categories, live.dataVersion]);
 
   function handlePrint() {
     window.print();
