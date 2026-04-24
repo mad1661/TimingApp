@@ -338,32 +338,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // For 4-wide rounds, pad every pair up to four L1/L2/L3/L4 rows. This
-    // covers the case where the live timing system only captured some of the
-    // lanes (e.g. a 4-wide single) — the remaining lanes print as DNF
-    // placeholders so the sheet matches the CompuLink convention.
     const isFourWide = maxPairSize > 2;
-    if (isFourWide) {
-      const sampleLane = pairs
-        .flatMap((p) => p.runs.map((r) => r.lane ?? ""))
-        .find((l) => l.length > 0);
-      const useLPrefix = sampleLane ? /^l\d$/i.test(sampleLane) : true;
-      const slotLabel = (i: number) => (useLPrefix ? `L${i}` : String(i));
-      const catLabel = category ?? pairs[0]?.runs[0]?.category ?? null;
-
-      for (const pair of pairs) {
-        const present = new Set(pair.runs.map((r) => (r.lane || "").toUpperCase()));
-        for (let slot = 1; slot <= 4; slot++) {
-          const labels = [slotLabel(slot).toUpperCase(), String(slot)];
-          if (slot === 1) labels.push("L");
-          if (slot === 2) labels.push("R");
-          if (!labels.some((l) => present.has(l))) {
-            pair.runs.push(makeEmptyLaneRun(slotLabel(slot), catLabel));
-          }
-        }
-        pair.runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
-      }
-    }
 
     pairs.sort((a, b) => {
       const da = parseTsToDate(a.canonical_ts);
