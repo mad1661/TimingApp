@@ -84,8 +84,9 @@ function chunkPairs(pairs: RoundPrintPair[]): RoundPrintPair[][] {
   return chunks;
 }
 
-function Banner({ roundHeader, startTime, date, category }: { roundHeader: string; startTime: string; date: string; category: string }) {
+function Banner({ roundHeader, startTime, date, category, isFourWide }: { roundHeader: string; startTime: string; date: string; category: string; isFourWide: boolean }) {
   const bangFill = "!".repeat(220);
+  const compuLinkLabel = isFourWide ? "CompuLink 4 LANE" : "CompuLink StarTrak";
   return (
     <div className="leading-none">
       {/* Top bang line with category name centered */}
@@ -100,10 +101,10 @@ function Banner({ roundHeader, startTime, date, category }: { roundHeader: strin
         Round #&nbsp;{roundHeader.replace(/^Round # /, "")}&nbsp;&nbsp;&nbsp;{startTime}&nbsp;&nbsp;{date}
       </div>
 
-      {/* Bottom bang line with CompuLink StarTrak on the right */}
+      {/* Bottom bang line with CompuLink label on the right */}
       <div className="flex items-baseline w-full overflow-hidden whitespace-nowrap">
         <span className="flex-1 overflow-hidden text-[9px]">{bangFill}</span>
-        <span className="pl-3 text-[10px] flex-shrink-0">CompuLink StarTrak&nbsp;&nbsp;&nbsp;&nbsp;#####</span>
+        <span className="pl-3 text-[10px] flex-shrink-0">{compuLinkLabel}&nbsp;&nbsp;&nbsp;&nbsp;#####</span>
       </div>
 
       <div className="h-2" />
@@ -115,45 +116,44 @@ function ColumnHeader() {
   return (
     <thead>
       <tr>
+        <HeaderCell w="4%">Lane</HeaderCell>
         <HeaderCell align="right" w="4%">#</HeaderCell>
-        <HeaderCell w="6%">CLASS</HeaderCell>
-        <HeaderCell w="6%">Idx/Rec</HeaderCell>
+        <HeaderCell w="5%">CLASS</HeaderCell>
+        <HeaderCell w="5%">Idx/Rec</HeaderCell>
         <HeaderCell align="right" w="5%">Ov/Un</HeaderCell>
-        <HeaderCell w="3%">D/I</HeaderCell>
-        <HeaderCell align="right" w="5%">R/T</HeaderCell>
-        <HeaderCell align="right" w="6%">60&apos;</HeaderCell>
-        <HeaderCell align="right" w="6%">330</HeaderCell>
-        <HeaderCell align="right" w="6%">1/8</HeaderCell>
-        <HeaderCell align="right" w="6%">MPH</HeaderCell>
-        <HeaderCell align="right" w="6%">1000</HeaderCell>
-        <HeaderCell align="right" w="6%">ET</HeaderCell>
-        <HeaderCell align="right" w="6%">MPH</HeaderCell>
-        <HeaderCell align="right" w="5%">Run #</HeaderCell>
-        <HeaderCell align="right" w="5%">1st</HeaderCell>
+        <HeaderCell align="right" w="4%">R/T</HeaderCell>
+        <HeaderCell align="right" w="5%">60&apos;</HeaderCell>
+        <HeaderCell align="right" w="5%">330</HeaderCell>
+        <HeaderCell align="right" w="5%">1/8</HeaderCell>
+        <HeaderCell align="right" w="5%">MPH</HeaderCell>
+        <HeaderCell align="right" w="5%">1000</HeaderCell>
+        <HeaderCell align="right" w="5%">ET</HeaderCell>
+        <HeaderCell align="right" w="5%">MPH</HeaderCell>
+        <HeaderCell align="right" w="4%">Run #</HeaderCell>
+        <HeaderCell align="right" w="5%">Finish</HeaderCell>
+        <HeaderCell w="6%">WINpos</HeaderCell>
         <HeaderCell align="right" w="4%">MOV</HeaderCell>
         <HeaderCell w="5%">TIME</HeaderCell>
-        <HeaderCell w="6%">Remarks</HeaderCell>
+        <HeaderCell w="7%">Remarks</HeaderCell>
       </tr>
     </thead>
   );
 }
 
 function PairRows({ pair }: { pair: RoundPrintPair }) {
-  const winnerMovAssigned = pair.pair_mov != null;
   const winnerCar = pair.winner_car;
   return (
     <>
       {pair.runs.map((run, ri) => {
         const isWinner = run.car_number != null && run.car_number === winnerCar;
-        const showFirst = isWinner && winnerMovAssigned;
         const showTime = ri === 0;
         return (
           <tr key={`${pair.canonical_ts}-${run.run_number}-${ri}`} className="align-baseline">
+            <DataCell>{run.lane ?? ""}</DataCell>
             <DataCell align="right">{run.car_number ?? ""}</DataCell>
             <DataCell>{run.class_index ?? ""}</DataCell>
             <DataCell>{fmtIndex(run)}</DataCell>
             <DataCell align="right">{fmtOverUnder(run.over_under_thou)}</DataCell>
-            <DataCell></DataCell>
             <DataCell align="right">{fmtRT(run.rt)}</DataCell>
             <DataCell align="right">{fmt3(run.ft60)}</DataCell>
             <DataCell align="right">{fmt3(run.ft330)}</DataCell>
@@ -163,7 +163,8 @@ function PairRows({ pair }: { pair: RoundPrintPair }) {
             <DataCell align="right">{fmt3(run.ft1320)}</DataCell>
             <DataCell align="right">{fmt2(run.mph_1320)}</DataCell>
             <DataCell align="right">{String(run.run_number)}</DataCell>
-            <DataCell align="right">{showFirst ? fmtMov(pair.pair_mov) : ""}</DataCell>
+            <DataCell align="right">{run.finish != null ? String(run.finish) : ""}</DataCell>
+            <DataCell>{run.winpos}</DataCell>
             <DataCell align="right">{isWinner ? fmtMov(pair.pair_mov, 2) : ""}</DataCell>
             <DataCell>{showTime ? pair.time_label : ""}</DataCell>
             <DataCell>{run.remarks}</DataCell>
@@ -171,7 +172,7 @@ function PairRows({ pair }: { pair: RoundPrintPair }) {
         );
       })}
       <tr aria-hidden="true">
-        <td colSpan={18} className="py-2" />
+        <td colSpan={19} className="py-2" />
       </tr>
     </>
   );
@@ -207,6 +208,7 @@ export default function RoundPrintCard({ data, categoryLabel, footerLabel }: Pro
                 startTime={start_time_label}
                 date={date_label}
                 category={categoryLabel}
+                isFourWide={data.is_four_wide}
               />
             )}
 

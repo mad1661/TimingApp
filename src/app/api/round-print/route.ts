@@ -27,6 +27,8 @@ export interface RoundPrintRun {
   index_value: number | null;
   over_under_thou: number | null;
   remarks: string;
+  finish: number | null;
+  winpos: string;
 }
 
 export interface RoundPrintPair {
@@ -47,6 +49,7 @@ export interface RoundPrintPayload {
   start_time_label: string;
   end_time_label: string;
   date_label: string;
+  is_four_wide: boolean;
   car_count: number;
   pair_count: number;
   pairs: RoundPrintPair[];
@@ -90,6 +93,14 @@ function parseIndex(classIndex: string | null, dialIn: number | null): number | 
     if (!isNaN(v)) return v;
   }
   return null;
+}
+
+function posLabel(pos: number): string {
+  if (pos === 1) return "WIN";
+  if (pos === 2) return "2nd";
+  if (pos === 3) return "3rd";
+  if (pos === 4) return "4th";
+  return "";
 }
 
 function computeRemarks(r: RunRow): string {
@@ -147,6 +158,7 @@ export async function GET(request: NextRequest) {
         start_time_label: "",
         end_time_label: "",
         date_label: "",
+        is_four_wide: false,
         car_count: 0,
         pair_count: 0,
         pairs: [],
@@ -167,23 +179,50 @@ export async function GET(request: NextRequest) {
     }
 
     const pairs: RoundPrintPair[] = [];
+    let maxPairSize = 0;
     for (const [canonical, runs] of pairMap) {
       runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
-      const firstRun = runs[0];
+      if (runs.length > maxPairSize) maxPairSize = runs.length;
       const date = parseTsToDate(canonical);
       const timeLabel = fmtClock(date);
 
-      // Pair-level MOV: use the recorded mov from whichever run has it, or compute
-      // from winning/losing ET if both are available.
+      // Pair-level MOV
       let pairMov: number | null = null;
       const withMov = runs.find((r) => r.mov != null);
-      if (withMov && withMov.mov != null) {
-        pairMov = withMov.mov;
-      }
+      if (withMov && withMov.mov != null) pairMov = withMov.mov;
+
       const winner = runs.find((r) => {
         const res = (r.result || "").trim().toUpperCase();
         return res === "W" || (!res && r.is_winner === 1);
       });
+
+      // Compute finish position for each run: prefer explicit result (W/R/3/4),
+      // otherwise rank by finishing ET. Missing ET -> DNF at position N+1.
+      const n = runs.length;
+      const finishMap = new Map<RunRow, { finish: number | null; winpos: string }>();
+      const resultPos = (res: string): number | null => {
+        const r = res.trim().toUpperCase();
+        if (r === "W") return 1;
+        if (r === "R") return 2;
+        if (r === "3") return 3;
+        if (r === "4") return 4;
+        return null;
+      };
+      const allHaveResult = runs.every((r) => resultPos(r.result || "") !== null);
+      if (allHaveResult) {
+        for (const r of runs) {
+          const pos = resultPos(r.result || "")!;
+          finishMap.set(r, { finish: pos, winpos: posLabel(pos) });
+        }
+      } else {
+        const finished = runs.filter((r) => r.ft1320 != null && r.ft1320 > 0 && !r.is_dq);
+        const unfinished = runs.filter((r) => !finished.includes(r));
+        finished.sort((a, b) => (a.ft1320 ?? 0) - (b.ft1320 ?? 0));
+        finished.forEach((r, i) => finishMap.set(r, { finish: i + 1, winpos: posLabel(i + 1) }));
+        for (const r of unfinished) {
+          finishMap.set(r, { finish: n + 1, winpos: r.is_dq ? "DQ" : "DNF" });
+        }
+      }
 
       pairs.push({
         canonical_ts: canonical,
@@ -193,9 +232,11 @@ export async function GET(request: NextRequest) {
         runs: runs.map((r) => {
           const index_value = parseIndex(r.class_index, r.dial_in);
           let over_under_thou: number | null = null;
-          if (index_value != null && r.ft1320 != null) {
-            over_under_thou = Math.round((r.ft1320 - index_value) * 1000);
+          if (r.ft1320 != null) {
+            const idx = index_value ?? 0;
+            over_under_thou = Math.round((r.ft1320 - idx) * 1000);
           }
+          const fm = finishMap.get(r) ?? { finish: null, winpos: "" };
           return {
             car_number: r.car_number,
             name: r.name,
@@ -221,11 +262,11 @@ export async function GET(request: NextRequest) {
             index_value,
             over_under_thou,
             remarks: computeRemarks(r),
+            finish: fm.finish,
+            winpos: fm.winpos,
           } satisfies RoundPrintRun;
         }),
       });
-      // Ignore unused destructure value
-      void firstRun;
     }
 
     pairs.sort((a, b) => {
@@ -251,6 +292,7 @@ export async function GET(request: NextRequest) {
       start_time_label: fmtClock(firstDate),
       end_time_label: fmtClock(lastDate),
       date_label: fmtDate(firstDate),
+      is_four_wide: maxPairSize > 2,
       car_count: filtered.length,
       pair_count: pairs.length,
       pairs,
