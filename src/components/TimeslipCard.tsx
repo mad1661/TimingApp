@@ -217,11 +217,23 @@ function TimingRow4Wide({
   const valClass = bold ? "font-black" : "font-bold";
   const textSize = highlight ? "text-lg sm:text-xl" : "text-xs sm:text-sm";
   const subSize = highlight ? textSize : "text-[9px]";
+  const midIdx = Math.ceil(runners.length / 2);
 
   return (
     <div className={`flex items-center ${highlight ? "py-2 bg-gray-50 -mx-1 px-1 rounded" : "py-1"} border-b border-dashed border-gray-300 last:border-0`}>
-      {runners.map((r, i) => (
-        <div key={i} className={`flex-1 text-center ${i > 0 ? "border-l border-gray-200" : ""}`}>
+      {runners.slice(0, midIdx).map((r, i) => (
+        <div key={`L${i}`} className={`flex-1 text-center ${i > 0 ? "border-l border-gray-200" : ""}`}>
+          <span className={`${valClass} ${textSize} font-mono`}>{r.val}</span>
+          {subs && r.sub && <div className={`${subSize} text-black font-mono`}>{r.sub}</div>}
+        </div>
+      ))}
+      <div className="w-20 text-center flex-shrink-0 px-1">
+        <span className={`text-[10px] uppercase tracking-wider text-black ${highlight ? "font-bold" : ""}`}>
+          {label}
+        </span>
+      </div>
+      {runners.slice(midIdx).map((r, i) => (
+        <div key={`R${i}`} className={`flex-1 text-center ${i > 0 ? "border-l border-gray-200" : ""}`}>
           <span className={`${valClass} ${textSize} font-mono`}>{r.val}</span>
           {subs && r.sub && <div className={`${subSize} text-black font-mono`}>{r.sub}</div>}
         </div>
@@ -247,31 +259,58 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         </div>
       </div>
 
-      {/* Racer names header — 4 columns */}
-      <div className="grid grid-cols-4 border-b-2 border-gray-800">
-        {runners.map((run, i) => {
-          const badge = resultBadge(run);
-          return (
-            <div key={i} className={`px-2 py-2 text-center ${resultRowBg(run)} ${i > 0 ? "border-l border-gray-800" : ""}`}>
-              <div className="text-[10px] text-black font-bold uppercase mb-0.5">Lane {i === 0 ? 1 : i === 1 ? 2 : i === 2 ? 3 : 4}</div>
-              <div className="text-xs sm:text-sm font-black tracking-wide truncate">{run.name || "—"}</div>
-              <div className="flex items-center justify-center gap-1 mt-0.5 flex-wrap">
-                <span className="text-[10px] text-nhra-accent font-bold">#{run.car_number || "-"}</span>
-                {badge && <span className={`text-[8px] font-bold ${badge.bg} ${badge.fg} px-1 py-0.5 rounded`}>{badge.text}</span>}
+      {/* Racer names header — flex with middle gap */}
+      <div className="flex items-stretch border-b-2 border-gray-800">
+        {(() => {
+          const mid = Math.ceil(runners.length / 2);
+          const left = runners.slice(0, mid);
+          const right = runners.slice(mid);
+          const renderLane = (run: TimeslipRun, i: number, offset: number) => {
+            const badge = resultBadge(run);
+            const laneNum = offset + i + 1;
+            return (
+              <div key={`${offset}-${i}`} className={`flex-1 px-2 py-2 text-center ${resultRowBg(run)} ${i > 0 || offset > 0 ? "border-l border-gray-800" : ""}`}>
+                <div className="text-[10px] text-black font-bold uppercase mb-0.5">Lane {laneNum}</div>
+                <div className="text-xs sm:text-sm font-black tracking-wide truncate">{run.name || "—"}</div>
+                <div className="flex items-center justify-center gap-1 mt-0.5 flex-wrap">
+                  <span className="text-[10px] text-nhra-accent font-bold">#{run.car_number || "-"}</span>
+                  {badge && <span className={`text-[8px] font-bold ${badge.bg} ${badge.fg} px-1 py-0.5 rounded`}>{badge.text}</span>}
+                </div>
               </div>
-            </div>
+            );
+          };
+          return (
+            <>
+              {left.map((run, i) => renderLane(run, i, 0))}
+              <div className="w-20 flex-shrink-0 bg-gray-800 flex items-center justify-center">
+                <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">VS</span>
+              </div>
+              {right.map((run, i) => renderLane(run, i, mid))}
+            </>
           );
-        })}
+        })()}
       </div>
 
-      {/* Dial-In row */}
-      <div className="grid grid-cols-4 border-b border-gray-300 bg-gray-50">
-        {runners.map((run, i) => (
-          <div key={i} className={`text-center py-1.5 ${i > 0 ? "border-l border-gray-200" : ""}`}>
-            <div className="text-[9px] text-black uppercase">Dial-In</div>
-            <span className="text-xs font-bold font-mono">{run.dial_in != null ? fmt(run.dial_in, 2) : "N/A"}</span>
-          </div>
-        ))}
+      {/* Dial-In row — flex with matching middle gap */}
+      <div className="flex items-center border-b border-gray-300 bg-gray-50">
+        {(() => {
+          const mid = Math.ceil(runners.length / 2);
+          const left = runners.slice(0, mid);
+          const right = runners.slice(mid);
+          const renderDial = (run: TimeslipRun, i: number, offset: number) => (
+            <div key={`${offset}-${i}`} className={`flex-1 text-center py-1.5 ${i > 0 || offset > 0 ? "border-l border-gray-200" : ""}`}>
+              <div className="text-[9px] text-black uppercase">Dial-In</div>
+              <span className="text-xs font-bold font-mono">{run.dial_in != null ? fmt(run.dial_in, 2) : "N/A"}</span>
+            </div>
+          );
+          return (
+            <>
+              {left.map((run, i) => renderDial(run, i, 0))}
+              <div className="w-20 flex-shrink-0" />
+              {right.map((run, i) => renderDial(run, i, mid))}
+            </>
+          );
+        })()}
       </div>
 
       {/* Timing rows */}
