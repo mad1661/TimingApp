@@ -12,7 +12,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const hasConfig = !!live.config;
   const isSetupPage = pathname === "/" && !hasConfig;
-  const isStandaloneSharedPage = pathname.startsWith("/day/");
+  const isStandaloneSharedPage = pathname.startsWith("/day/") || pathname.startsWith("/share");
 
   if (isSetupPage || isStandaloneSharedPage) {
     return <main className="min-h-screen">{children}</main>;
