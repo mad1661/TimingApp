@@ -283,7 +283,9 @@ export async function GET(request: NextRequest) {
           byLaneCar.set(key, run);
         }
       }
-      const runs = Array.from(byLaneCar.values());
+      const runs = Array.from(byLaneCar.values()).filter(
+        (r) => (r.car_number && r.car_number.trim()) || hasAnyTiming(r)
+      );
 
       // If nothing went down the track in this entire pair, skip it.
       if (!runs.some(hasAnyTiming)) continue;
@@ -406,7 +408,10 @@ export async function GET(request: NextRequest) {
       end_time_label: fmtClock(lastDate),
       date_label: fmtDate(firstDate),
       is_four_wide: maxPairSize > 2,
-      car_count: filtered.length,
+      car_count: pairs.reduce(
+        (sum, p) => sum + p.runs.filter((r) => r.car_number && r.car_number.trim()).length,
+        0,
+      ),
       pair_count: pairs.length,
       pairs,
     };
