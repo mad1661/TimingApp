@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+// Hide the share page from any in-app linking. The page also lives outside the
+// AppShell (no navbar, no event banner, no LiveDataProvider config), so a
+// visitor here has no in-page link back to the rest of the app.
+
 interface ScheduleEntry {
   category: string;
   round: string;
@@ -211,7 +215,7 @@ export default function SharePage() {
         )}
 
         <div className="text-center text-xs text-gray-600 mt-8">
-          Powered by Timing Data &middot; Schedule auto-refreshed from getresults.nhradata.com
+          {data?.fetchedAt && <>Last refreshed {new Date(data.fetchedAt).toLocaleString()}</>}
         </div>
       </div>
     </div>
