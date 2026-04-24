@@ -39,7 +39,9 @@ body {
   .round-print * { color: black !important; }
   .round-print table { width: 100% !important; }
   .round-print td, .round-print th { padding-left: 0.25rem !important; padding-right: 0.25rem !important; }
-  .round-print-page { break-inside: avoid; }
+  .round-print thead { display: table-header-group !important; }
+  .round-print tr { break-inside: avoid; page-break-inside: avoid; }
+  .round-print-page { break-inside: auto; }
   .round-print-page:not(:last-child) { break-after: page; page-break-after: always; }
   @page { size: letter landscape; margin: 0.35in; }
 }
