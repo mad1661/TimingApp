@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useLiveData } from "@/components/LiveDataProvider";
 import { buildTimestampGroups } from "@/lib/timestamp-utils";
+import EditRunModal, { type EditableRun } from "@/components/EditRunModal";
+import AddPairModal from "@/components/AddPairModal";
 
 interface RunRow {
   id?: string;
@@ -123,6 +125,9 @@ function RunsPageInner() {
   const [showIgnored, setShowIgnored] = useState(false);
   const [confirmRun, setConfirmRun] = useState<RunRow | null>(null);
   const [ignoreLoading, setIgnoreLoading] = useState<string | null>(null);
+  const [editingRun, setEditingRun] = useState<EditableRun | null>(null);
+  const [showAddPair, setShowAddPair] = useState(false);
+  const [dqLoading, setDqLoading] = useState<string | null>(null);
 
   const eventCode = live.config?.eventCode || "";
   const season = live.config?.season || "";
@@ -186,6 +191,27 @@ function RunsPageInner() {
     }
     setIgnoreLoading(null);
     setConfirmRun(null);
+  }
+
+  async function handleToggleDQ(run: RunRow) {
+    if (!run._dedup_key || !eventCode || !season) return;
+    setDqLoading(run._dedup_key);
+    try {
+      await fetch("/api/edit-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_code: eventCode,
+          season,
+          dedup_key: run._dedup_key,
+          updates: { is_dq: run.is_dq ? 0 : 1 },
+        }),
+      });
+      await fetchRuns();
+    } catch (err) {
+      console.error(err);
+    }
+    setDqLoading(null);
   }
 
   async function handleRestore(run: RunRow) {
@@ -267,6 +293,13 @@ function RunsPageInner() {
               {showIgnored ? "Showing Ignored" : "Show Ignored"} ({ignoredKeys.size})
             </button>
           )}
+          <button
+            onClick={() => setShowAddPair(true)}
+            disabled={!eventCode || !season}
+            className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40"
+          >
+            + Add Pair
+          </button>
           <button
             onClick={handleExportCsv}
             disabled={runs.length === 0}
@@ -427,26 +460,58 @@ function RunsPageInner() {
                       <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.dial_in?.toFixed(2) ?? "-"}</td>
                       <td className={`p-3 text-gray-400 ${ignoredStyle}`}>{run.lane}</td>
                       <td className="p-3 text-center whitespace-nowrap">
-                        {isIgnored ? (
-                          <button
-                            onClick={() => handleRestore(run)}
-                            disabled={ignoreLoading === run._dedup_key}
-                            className="px-2 py-1 bg-yellow-600/20 border border-yellow-600/40 text-yellow-400 rounded text-xs font-medium hover:bg-yellow-600/30 hover:text-yellow-300 transition-colors disabled:opacity-50"
-                          >
-                            {ignoreLoading === run._dedup_key ? "..." : "Restore"}
-                          </button>
-                        ) : run._dedup_key ? (
-                          <button
-                            onClick={() => setConfirmRun(run)}
-                            disabled={ignoreLoading === run._dedup_key}
-                            className="text-gray-600 hover:text-yellow-500 transition-colors disabled:opacity-50"
-                            title="Ignore test run"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.99 7.05m3.888 2.828L14.12 14.12m0 0l2.829 2.829M6.99 7.05L3 3m3.99 4.05l14.01 14.01" />
-                            </svg>
-                          </button>
-                        ) : null}
+                        <div className="flex items-center justify-center gap-2">
+                          {run._dedup_key && !isIgnored && (
+                            <button
+                              onClick={() => setEditingRun({
+                                _dedup_key: run._dedup_key,
+                                timestamp: run.timestamp, round: run.round, car_number: run.car_number,
+                                name: run.name, class_index: run.class_index, category: run.category,
+                                lane: run.lane, rt: run.rt, ft60: run.ft60, ft330: run.ft330,
+                                ft660: run.ft660, mph_660: run.mph_660, ft1000: run.ft1000,
+                                mph_1000: run.mph_1000, ft1320: run.ft1320, mph_1320: run.mph_1320,
+                                dial_in: run.dial_in, is_winner: run.is_winner, is_dq: run.is_dq,
+                                result: run.result,
+                              })}
+                              className="text-gray-600 hover:text-nhra-accent transition-colors"
+                              title="Edit run"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                          )}
+                          {run._dedup_key && !isIgnored && (
+                            <button
+                              onClick={() => handleToggleDQ(run)}
+                              disabled={dqLoading === run._dedup_key}
+                              className={`text-xs font-bold px-1.5 py-0.5 rounded border transition-colors ${run.is_dq ? "bg-red-600/20 border-red-500/40 text-red-400" : "border-gray-700 text-gray-500 hover:text-red-400 hover:border-red-500/40"}`}
+                              title={run.is_dq ? "Un-DQ" : "DQ this run"}
+                            >
+                              {dqLoading === run._dedup_key ? "…" : "DQ"}
+                            </button>
+                          )}
+                          {isIgnored ? (
+                            <button
+                              onClick={() => handleRestore(run)}
+                              disabled={ignoreLoading === run._dedup_key}
+                              className="px-2 py-1 bg-yellow-600/20 border border-yellow-600/40 text-yellow-400 rounded text-xs font-medium hover:bg-yellow-600/30 hover:text-yellow-300 transition-colors disabled:opacity-50"
+                            >
+                              {ignoreLoading === run._dedup_key ? "..." : "Restore"}
+                            </button>
+                          ) : run._dedup_key ? (
+                            <button
+                              onClick={() => setConfirmRun(run)}
+                              disabled={ignoreLoading === run._dedup_key}
+                              className="text-gray-600 hover:text-yellow-500 transition-colors disabled:opacity-50"
+                              title="Ignore test run"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L6.99 7.05m3.888 2.828L14.12 14.12m0 0l2.829 2.829M6.99 7.05L3 3m3.99 4.05l14.01 14.01" />
+                              </svg>
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -477,6 +542,27 @@ function RunsPageInner() {
           run={confirmRun}
           onConfirm={() => handleIgnore(confirmRun)}
           onCancel={() => setConfirmRun(null)}
+        />
+      )}
+
+      {editingRun && eventCode && season && (
+        <EditRunModal
+          run={editingRun}
+          eventCode={eventCode}
+          season={season}
+          onClose={() => setEditingRun(null)}
+          onSaved={() => { setEditingRun(null); fetchRuns(); }}
+        />
+      )}
+
+      {showAddPair && eventCode && season && (
+        <AddPairModal
+          eventCode={eventCode}
+          season={season}
+          rounds={filters?.rounds || []}
+          categories={filters?.categories || []}
+          onClose={() => setShowAddPair(false)}
+          onSaved={() => { setShowAddPair(false); fetchRuns(); }}
         />
       )}
     </div>

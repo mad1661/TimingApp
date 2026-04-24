@@ -356,6 +356,45 @@ export async function insertRuns(
   return newRuns.length;
 }
 
+/**
+ * Force-write a run: always persists, even when the change detector in insertRuns
+ * would skip the write (e.g. toggling is_dq / changing class_index / fixing a name).
+ * If the dedup_key changes, the caller should separately add the old key to the
+ * ignored list so the original entry disappears from views.
+ */
+export async function upsertRun(
+  eventCode: string,
+  season: string,
+  run: Omit<RunRow, "id" | "created_at" | "_dedup_key">
+): Promise<void> {
+  const cache = await ensureEventCache(eventCode, season);
+  const key = dedupKey(run);
+  const row: RunRow = {
+    ...run,
+    _dedup_key: key,
+    created_at: new Date().toISOString(),
+  };
+
+  const existingIdx = cache.runs.findIndex((r) => r._dedup_key === key);
+  if (existingIdx !== -1) {
+    cache.runs[existingIdx] = row;
+  } else {
+    cache.runs.push(row);
+    cache.dedupKeys.add(key);
+  }
+
+  const db = getDb();
+  const path = collectionPath(eventCode, season);
+  await db.collection(path).add({
+    runs: [row],
+    count: 1,
+    created_at: new Date().toISOString(),
+  });
+
+  backfillNames(cache.runs);
+  console.log(`[DB] Upserted run ${key}`);
+}
+
 function backfillNames(runs: RunRow[]): void {
   const nameMap = new Map<string, string>();
   for (const run of runs) {

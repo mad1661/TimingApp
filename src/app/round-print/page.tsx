@@ -17,6 +17,8 @@ interface FiltersResp {
   events?: EventOption[];
 }
 
+const ALL_ROUNDS = "__ALL__";
+
 export default function RoundPrintPage() {
   const live = useLiveData();
   const [events, setEvents] = useState<EventOption[]>([]);
@@ -27,12 +29,11 @@ export default function RoundPrintPage() {
   const [rounds, setRounds] = useState<string[]>([]);
   const [category, setCategory] = useState<string>("");
   const [round, setRound] = useState<string>("");
-  const [data, setData] = useState<RoundPrintPayload | null>(null);
+  const [sections, setSections] = useState<RoundPrintPayload[]>([]);
   const [loading, setLoading] = useState(false);
   const [filtersLoading, setFiltersLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Pre-populate from live config when it hydrates.
   useEffect(() => {
     const ec = live.config?.eventCode || "";
     const s = live.config?.season || "";
@@ -42,7 +43,6 @@ export default function RoundPrintPage() {
     }
   }, [live.config?.eventCode, live.config?.season, eventCode, season]);
 
-  // Load events + filters whenever the active event changes.
   const loadFilters = useCallback(async () => {
     setFiltersLoading(true);
     try {
@@ -65,65 +65,67 @@ export default function RoundPrintPage() {
     loadFilters();
   }, [loadFilters]);
 
-  const loadRound = useCallback(async () => {
-    if (!eventCode || !season || !round) return;
+  const loadSections = useCallback(async () => {
+    if (!eventCode || !season || !round) { setSections([]); return; }
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({
-        event_code: eventCode,
-        season,
-        round,
-      });
-      if (category) params.set("category", category);
-      const res = await fetch(`/api/round-print?${params}`);
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `HTTP ${res.status}`);
+      const targetRounds = round === ALL_ROUNDS ? rounds : [round];
+      const targetCategories = category ? [category] : (round === ALL_ROUNDS ? categories : [""]);
+
+      const requests: Promise<RoundPrintPayload>[] = [];
+      for (const r of targetRounds) {
+        for (const c of targetCategories) {
+          const params = new URLSearchParams({ event_code: eventCode, season, round: r });
+          if (c) params.set("category", c);
+          requests.push(
+            fetch(`/api/round-print?${params}`).then(async (res) => {
+              if (!res.ok) throw new Error(await res.text());
+              return res.json();
+            })
+          );
+        }
       }
-      const json = (await res.json()) as RoundPrintPayload;
-      setData(json);
+      const results = await Promise.all(requests);
+      setSections(results.filter((p) => p.pairs.length > 0));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
-      setData(null);
+      setSections([]);
     } finally {
       setLoading(false);
     }
-  }, [eventCode, season, round, category]);
+  }, [eventCode, season, round, category, rounds, categories]);
 
   useEffect(() => {
-    if (eventCode && season && round) loadRound();
-    else setData(null);
-  }, [eventCode, season, round, category, loadRound]);
+    if (eventCode && season && round) loadSections();
+    else setSections([]);
+  }, [eventCode, season, round, category, loadSections]);
 
   function handlePrint() {
     window.print();
   }
 
   function handleEventChange(value: string) {
-    if (!value) {
-      setEventCode("");
-      setSeason("");
-      return;
-    }
+    if (!value) { setEventCode(""); setSeason(""); return; }
     const [ec, s] = value.split("|");
     setEventCode(ec);
     setSeason(s);
     setRound("");
     setCategory("");
-    setData(null);
+    setSections([]);
   }
 
-  const categoryLabel = (category || data?.pairs[0]?.runs[0]?.category || "ALL CLASSES").toUpperCase();
   const eventValue = eventCode && season ? `${eventCode}|${season}` : "";
+  const totalCars = sections.reduce((sum, s) => sum + s.car_count, 0);
+  const totalPairs = sections.reduce((sum, s) => sum + s.pair_count, 0);
 
   return (
     <div className="max-w-[1200px] mx-auto">
       <div className="print:hidden">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-white mb-2">Round Print</h1>
+          <h1 className="text-3xl font-bold text-white mb-2">Round Log Print</h1>
           <p className="text-gray-400">
-            Generate a CompuLink StarTrak style printout for a round.
+            Generate a CompuLink StarTrak style log for a single round, a whole class, or every class.
           </p>
         </div>
 
@@ -154,6 +156,7 @@ export default function RoundPrintPage() {
                 className="w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm focus:outline-none focus:border-nhra-accent disabled:opacity-50"
               >
                 <option value="">Select a round…</option>
+                <option value={ALL_ROUNDS}>All rounds (final results)</option>
                 {rounds.map((r) => (
                   <option key={r} value={r}>{r}</option>
                 ))}
@@ -179,7 +182,7 @@ export default function RoundPrintPage() {
           <div className="flex flex-wrap items-center gap-3 mt-4">
             <button
               onClick={handlePrint}
-              disabled={!data || data.pairs.length === 0}
+              disabled={sections.length === 0}
               className="px-4 py-2 bg-nhra-red text-white rounded-lg font-semibold hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -188,32 +191,39 @@ export default function RoundPrintPage() {
               Print
             </button>
             {filtersLoading && <span className="text-gray-500 text-xs">Loading filters…</span>}
-            {loading && <span className="text-gray-500 text-xs">Loading round…</span>}
+            {loading && <span className="text-gray-500 text-xs">Loading…</span>}
             {error && <span className="text-red-400 text-xs">{error}</span>}
-            {data && !loading && (
+            {sections.length > 0 && !loading && (
               <span className="text-gray-400 text-xs">
-                {data.car_count} run(s) &middot; {data.pair_count} pair(s) &middot; {data.date_label} &middot; {data.start_time_label} – {data.end_time_label}
+                {sections.length} section(s) &middot; {totalCars} run(s) &middot; {totalPairs} pair(s)
               </span>
             )}
           </div>
         </div>
       </div>
 
-      {data && data.pairs.length > 0 && (
-        <div className="bg-white text-black rounded-lg overflow-x-auto print:bg-white print:overflow-visible print:rounded-none">
-          <RoundPrintCard data={data} categoryLabel={categoryLabel} />
+      {sections.map((section, idx) => {
+        const label = (section.category || "ALL CLASSES").toUpperCase();
+        return (
+          <div
+            key={`${section.round}-${section.category ?? "all"}-${idx}`}
+            className="bg-white text-black rounded-lg overflow-x-auto print:bg-white print:overflow-visible print:rounded-none mb-6 round-print-section"
+            style={{ breakBefore: idx === 0 ? "auto" : "page", pageBreakBefore: idx === 0 ? "auto" : "always" }}
+          >
+            <RoundPrintCard data={section} categoryLabel={label} />
+          </div>
+        );
+      })}
+
+      {sections.length === 0 && !loading && round && eventCode && (
+        <div className="print:hidden bg-nhra-card border border-nhra-border rounded-xl p-8 text-center text-gray-500">
+          No runs for that selection.
         </div>
       )}
 
-      {data && data.pairs.length === 0 && !loading && (
+      {!round && eventCode && !loading && (
         <div className="print:hidden bg-nhra-card border border-nhra-border rounded-xl p-8 text-center text-gray-500">
-          No runs for that round/category.
-        </div>
-      )}
-
-      {!data && !loading && !round && eventCode && (
-        <div className="print:hidden bg-nhra-card border border-nhra-border rounded-xl p-8 text-center text-gray-500">
-          Pick a round to preview the printout.
+          Pick a round (or &ldquo;All rounds&rdquo;) to preview the printout.
         </div>
       )}
 
