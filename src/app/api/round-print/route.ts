@@ -57,42 +57,11 @@ export interface RoundPrintPayload {
 
 function laneOrder(lane: string | null): number {
   const l = (lane || "").toUpperCase();
-  if (l === "L" || l === "L1" || l === "1") return 1;
-  if (l === "R" || l === "L2" || l === "2") return 2;
-  if (l === "L3" || l === "3") return 3;
-  if (l === "L4" || l === "4") return 4;
+  if (l === "L" || l === "1") return 1;
+  if (l === "R" || l === "2") return 2;
+  if (l === "3") return 3;
+  if (l === "4") return 4;
   return 99;
-}
-
-function makeEmptyLaneRun(laneLabel: string, category: string | null): RoundPrintRun {
-  return {
-    car_number: null,
-    name: null,
-    category,
-    class_index: null,
-    dial_in: null,
-    lane: laneLabel,
-    rt: null,
-    ft60: null,
-    ft330: null,
-    ft660: null,
-    mph_660: null,
-    ft1000: null,
-    mph_1000: null,
-    ft1320: null,
-    mph_1320: null,
-    mov: null,
-    is_winner: 0,
-    is_dq: 0,
-    result: null,
-    timestamp: null,
-    run_number: 0,
-    index_value: null,
-    over_under_thou: 0,
-    remarks: "",
-    finish: 5,
-    winpos: "DNF",
-  };
 }
 
 function fmtClock(date: Date | null): string {
@@ -211,13 +180,11 @@ export async function GET(request: NextRequest) {
       pairMap.set(canonical, arr);
     }
 
-    const maxPairSize = Math.max(0, ...Array.from(pairMap.values(), (runs) => runs.length));
-    const pairIsFourWide = maxPairSize > 2;
-    const dnfPos = pairIsFourWide ? 5 : 0; // 0 means "use n+1" fallback below
-
     const pairs: RoundPrintPair[] = [];
+    let maxPairSize = 0;
     for (const [canonical, runs] of pairMap) {
       runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
+      if (runs.length > maxPairSize) maxPairSize = runs.length;
       const date = parseTsToDate(canonical);
       const timeLabel = fmtClock(date);
 
@@ -254,9 +221,8 @@ export async function GET(request: NextRequest) {
         const unfinished = runs.filter((r) => !finished.includes(r));
         finished.sort((a, b) => (a.ft1320 ?? 0) - (b.ft1320 ?? 0));
         finished.forEach((r, i) => finishMap.set(r, { finish: i + 1, winpos: posLabel(i + 1) }));
-        const dnfFinish = dnfPos > 0 ? dnfPos : n + 1;
         for (const r of unfinished) {
-          finishMap.set(r, { finish: dnfFinish, winpos: r.is_dq ? "DQ" : "DNF" });
+          finishMap.set(r, { finish: n + 1, winpos: r.is_dq ? "DQ" : "DNF" });
         }
       }
 
@@ -303,34 +269,6 @@ export async function GET(request: NextRequest) {
           } satisfies RoundPrintRun;
         }),
       });
-    }
-
-    const isFourWide = pairIsFourWide;
-
-    // In a 4-wide round, pad every pair up to 4 lane slots so singles and
-    // partial fields still print L1/L2/L3/L4 rows (CompuLink convention).
-    if (isFourWide) {
-      // Detect lane labeling style from the data (L1..L4 preferred; else 1..4).
-      const sampleLane = pairs
-        .flatMap((p) => p.runs.map((r) => r.lane ?? ""))
-        .find((l) => l.length > 0);
-      const useLPrefix = sampleLane ? /^l\d$/i.test(sampleLane) : true;
-      const slotLabel = (i: number) => (useLPrefix ? `L${i}` : String(i));
-      const catLabel = category ?? pairs[0]?.runs[0]?.category ?? null;
-
-      for (const pair of pairs) {
-        const present = new Set(pair.runs.map((r) => (r.lane || "").toUpperCase()));
-        for (let slot = 1; slot <= 4; slot++) {
-          const labels = [slotLabel(slot).toUpperCase(), String(slot)];
-          if (slot === 1) labels.push("L");
-          if (slot === 2) labels.push("R");
-          const alreadyThere = labels.some((l) => present.has(l));
-          if (!alreadyThere) {
-            pair.runs.push(makeEmptyLaneRun(slotLabel(slot), catLabel));
-          }
-        }
-        pair.runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
-      }
     }
 
     pairs.sort((a, b) => {
