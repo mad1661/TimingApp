@@ -161,13 +161,20 @@ export async function GET(request: NextRequest) {
 
     const allRuns = await getEventRuns(eventCode, season);
 
-    // Assign event-wide sequential run numbers by chronological order.
+    // Assign event-wide sequential run numbers by chronological order. When
+    // multiple runs share the same canonical timestamp (a quad on a 4-wide
+    // staging) the CompuLink system numbers them in finish order — fastest ET
+    // first — so we tie-break by ET ascending and only fall back to lane order
+    // if both timestamps and ETs match.
     const sortedByTime = [...allRuns].sort((a, b) => {
       const da = a.timestamp ? parseTsToDate(a.timestamp) : null;
       const db = b.timestamp ? parseTsToDate(b.timestamp) : null;
       const ta = da ? da.getTime() : 0;
       const tb = db ? db.getTime() : 0;
       if (ta !== tb) return ta - tb;
+      const ea = a.ft1320 != null && a.ft1320 > 0 ? a.ft1320 : Infinity;
+      const eb = b.ft1320 != null && b.ft1320 > 0 ? b.ft1320 : Infinity;
+      if (ea !== eb) return ea - eb;
       return laneOrder(a.lane) - laneOrder(b.lane);
     });
     const runNumberMap = new Map<RunRow, number>();
