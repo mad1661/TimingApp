@@ -214,7 +214,40 @@ export async function GET(request: NextRequest) {
 
     const pairs: RoundPrintPair[] = [];
     let maxPairSize = 0;
-    for (const [canonical, runs] of pairMap) {
+
+    const hasAnyTiming = (r: RunRow): boolean =>
+      r.rt != null || r.ft60 != null || r.ft330 != null ||
+      r.ft660 != null || r.ft1000 != null || r.ft1320 != null;
+
+    const dataScore = (r: RunRow): number => {
+      let n = 0;
+      if (r.rt != null) n++;
+      if (r.ft60 != null) n++;
+      if (r.ft330 != null) n++;
+      if (r.ft660 != null) n++;
+      if (r.ft1000 != null) n++;
+      if (r.ft1320 != null) n++;
+      if (r.mph_1320 != null) n++;
+      return n;
+    };
+
+    for (const [canonical, rawRuns] of pairMap) {
+      // Collapse consecutive timing-system resets: within one pair, if multiple
+      // rows share the same lane + car number, keep the row with the most
+      // recorded timing data and drop the others.
+      const byLaneCar = new Map<string, RunRow>();
+      for (const run of rawRuns) {
+        const key = `${(run.lane || "").toUpperCase()}|${(run.car_number || "").trim()}`;
+        const existing = byLaneCar.get(key);
+        if (!existing || dataScore(run) > dataScore(existing)) {
+          byLaneCar.set(key, run);
+        }
+      }
+      const runs = Array.from(byLaneCar.values());
+
+      // If nothing went down the track in this entire pair, skip it.
+      if (!runs.some(hasAnyTiming)) continue;
+
       runs.sort((a, b) => laneOrder(a.lane) - laneOrder(b.lane));
       if (runs.length > maxPairSize) maxPairSize = runs.length;
       const date = parseTsToDate(canonical);
@@ -305,9 +338,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // For 4-wide rounds, pad pairs that were added manually so every manual
-    // pair prints all four L1/L2/L3/L4 rows even when the operator only filled
-    // in one lane. Live-timing captured pairs are left alone.
+    // For 4-wide rounds, pad every pair up to four L1/L2/L3/L4 rows. This
+    // covers the case where the live timing system only captured some of the
+    // lanes (e.g. a 4-wide single) — the remaining lanes print as DNF
+    // placeholders so the sheet matches the CompuLink convention.
     const isFourWide = maxPairSize > 2;
     if (isFourWide) {
       const sampleLane = pairs
@@ -318,7 +352,6 @@ export async function GET(request: NextRequest) {
       const catLabel = category ?? pairs[0]?.runs[0]?.category ?? null;
 
       for (const pair of pairs) {
-        if (!pair.has_manual_entry) continue;
         const present = new Set(pair.runs.map((r) => (r.lane || "").toUpperCase()));
         for (let slot = 1; slot <= 4; slot++) {
           const labels = [slotLabel(slot).toUpperCase(), String(slot)];
