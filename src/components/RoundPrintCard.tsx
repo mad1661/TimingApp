@@ -45,6 +45,15 @@ function fmtIndex(run: RoundPrintRun): string {
   return "";
 }
 
+function laneDisplay(lane: string | null | undefined): string {
+  const l = (lane || "").trim().toUpperCase();
+  if (l === "L" || l === "L1" || l === "1") return "1";
+  if (l === "R" || l === "L2" || l === "2") return "2";
+  if (l === "L3" || l === "3") return "3";
+  if (l === "L4" || l === "4") return "4";
+  return l;
+}
+
 function HeaderCell({ children, align = "left", w }: { children: React.ReactNode; align?: "left" | "right"; w: string }) {
   return (
     <th
@@ -149,7 +158,7 @@ function PairRows({ pair }: { pair: RoundPrintPair }) {
         const showTime = ri === 0;
         return (
           <tr key={`${pair.canonical_ts}-${run.run_number}-${ri}`} className="align-baseline">
-            <DataCell>{run.lane ?? ""}</DataCell>
+            <DataCell>{laneDisplay(run.lane)}</DataCell>
             <DataCell align="right">{run.car_number ?? ""}</DataCell>
             <DataCell>{run.class_index ?? ""}</DataCell>
             <DataCell>{fmtIndex(run)}</DataCell>
