@@ -185,7 +185,14 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
 
 export async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
   const cache = await ensureEventCache(eventCode, season);
-  return cache.runs;
+  // Filter out runs with timestamps in the future — these are NHRA
+  // pre-staging placeholders that haven't actually happened.
+  const now = Date.now();
+  return cache.runs.filter((r) => {
+    if (!r.timestamp) return true;
+    const d = parseTsToDateShared(r.timestamp);
+    return !d || d.getTime() <= now;
+  });
 }
 
 // --------------- Dedup ---------------
