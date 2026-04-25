@@ -161,20 +161,23 @@ export async function GET(request: NextRequest) {
 
     const allRuns = await getEventRuns(eventCode, season);
 
-    // Assign event-wide sequential run numbers by chronological order. When
-    // multiple runs share the same canonical timestamp (a quad on a 4-wide
-    // staging) the CompuLink system numbers them in finish order — fastest ET
-    // first — so we tie-break by ET ascending and only fall back to lane order
-    // if both timestamps and ETs match.
-    const sortedByTime = [...allRuns].sort((a, b) => {
+    // Assign run numbers scoped to the current round (and category, when one
+    // is selected). This keeps the printed Run # column compact and free of
+    // gaps when other classes ran in between this round's pairs. Sort by
+    // chronological timestamp, with lane order as a tie-breaker so adjacent
+    // lanes in a quad get adjacent numbers.
+    const scope = (r: RunRow): boolean => {
+      if (r.round !== round) return false;
+      if (category && r.category !== category) return false;
+      if (classFilter && (r.class_index || "").trim() !== classFilter) return false;
+      return true;
+    };
+    const sortedByTime = allRuns.filter(scope).sort((a, b) => {
       const da = a.timestamp ? parseTsToDate(a.timestamp) : null;
       const db = b.timestamp ? parseTsToDate(b.timestamp) : null;
       const ta = da ? da.getTime() : 0;
       const tb = db ? db.getTime() : 0;
       if (ta !== tb) return ta - tb;
-      const ea = a.ft1320 != null && a.ft1320 > 0 ? a.ft1320 : Infinity;
-      const eb = b.ft1320 != null && b.ft1320 > 0 ? b.ft1320 : Infinity;
-      if (ea !== eb) return ea - eb;
       return laneOrder(a.lane) - laneOrder(b.lane);
     });
     const runNumberMap = new Map<RunRow, number>();
@@ -412,9 +415,10 @@ export async function GET(request: NextRequest) {
 
     const isFourWide = maxPairSize > 2;
 
-    // Sort pairs by the lowest run_number in each pair. Since run_number
-    // is chronological by default but can be overridden, this lets a manual
-    // Run # move the pair to the right spot on the sheet.
+    // Sort pairs by the lowest run_number in each pair, most-recent first so
+    // the latest pair to run is at the top of the log sheet. Manual Run #
+    // overrides flow through here automatically, so a run nudged to a
+    // specific slot still lands in the right place relative to the rest.
     const pairMinRunNumber = (p: RoundPrintPair): number => {
       let min = Infinity;
       for (const r of p.runs) if (r.run_number > 0 && r.run_number < min) min = r.run_number;
@@ -424,10 +428,17 @@ export async function GET(request: NextRequest) {
       }
       return min;
     };
-    pairs.sort((a, b) => pairMinRunNumber(a) - pairMinRunNumber(b));
+    pairs.sort((a, b) => pairMinRunNumber(b) - pairMinRunNumber(a));
 
-    const firstTs = pairs[0]?.canonical_ts ?? null;
-    const lastTs = pairs[pairs.length - 1]?.canonical_ts ?? null;
+    // pairs is now sorted newest-first, but the header/footer still want the
+    // round's earliest and latest wall-clock times.
+    const sortedByTs = [...pairs].sort((a, b) => {
+      const da = parseTsToDate(a.canonical_ts);
+      const db = parseTsToDate(b.canonical_ts);
+      return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
+    });
+    const firstTs = sortedByTs[0]?.canonical_ts ?? null;
+    const lastTs = sortedByTs[sortedByTs.length - 1]?.canonical_ts ?? null;
     const firstDate = firstTs ? parseTsToDate(firstTs) : null;
     const lastDate = lastTs ? parseTsToDate(lastTs) : null;
 
