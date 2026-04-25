@@ -408,8 +408,8 @@ export async function GET(request: NextRequest) {
 
     const isFourWide = maxPairSize > 2;
 
-    // Sort pairs by the lowest run_number in each pair, most-recent first so
-    // the latest pair to run is at the top of the log sheet. Manual Run #
+    // Sort pairs by the lowest run_number in each pair, chronological order
+    // (oldest first) so the log reads top-to-bottom in time order. Manual Run #
     // overrides flow through here automatically, so a run nudged to a
     // specific slot still lands in the right place relative to the rest.
     const pairMinRunNumber = (p: RoundPrintPair): number => {
@@ -421,7 +421,7 @@ export async function GET(request: NextRequest) {
       }
       return min;
     };
-    pairs.sort((a, b) => pairMinRunNumber(b) - pairMinRunNumber(a));
+    pairs.sort((a, b) => pairMinRunNumber(a) - pairMinRunNumber(b));
 
     // pairs is now sorted newest-first, but the header/footer still want the
     // round's earliest and latest wall-clock times.
