@@ -1141,136 +1141,44 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
-    // Only hours 1-5 are guaranteed PM. ALL other hours (6-12) need context
-    // because racing can start as early as 6 AM and run as late as 11 PM.
+    // The NHRA data comes in chronological order. Sort by scrape sequence
+    // (when available) and walk: start AM, flip to PM when we first see
+    // an hour 1-5 run after morning hours. Hours 1-5 are always PM.
     //
-    // With scrape sequence: the NHRA data is chronological. Find where noon
-    // falls (the first hour-12 or hour-1-5 run in scrape order). Everything
-    // before that is AM, everything after is PM.
-    //
-    // Without scrape sequence: fall back to per-class round-weight heuristic.
+    // For data without scrape sequence, sort by raw 12-hour time using
+    // raceDaySortKey and apply the same walk.
 
     const hasScrapeSeq = dayRuns.some((r) => r._scrape_seq != null);
 
     if (hasScrapeSeq) {
-      // Find the scrape_seq of the FIRST definitely-PM run (hour 1-5 or 12).
-      // Hour 12 is always noon (PM) — it comes before hour 1 in the data.
-      let noonSeq = Infinity;
-      for (const run of dayRuns) {
-        const h = tsHour(run.timestamp!);
-        if (run._scrape_seq != null && (h === 12 || (h >= 1 && h <= 5))) {
-          if (run._scrape_seq < noonSeq) noonSeq = run._scrape_seq;
-        }
-      }
-
-      // Primary pass: hours 1-5 and 12 are always PM.
-      // Other hours: PM if they have a scrape_seq after the noon marker.
-      // Runs missing _scrape_seq default to AM (handled by secondary check).
-      for (const run of dayRuns) {
-        const h = tsHour(run.timestamp!);
-        if (h === 12 || (h >= 1 && h <= 5)) {
-          run.timestamp += " PM";
-        } else if (run._scrape_seq != null && noonSeq < Infinity && run._scrape_seq >= noonSeq) {
-          run.timestamp += " PM";
-        } else {
-          run.timestamp += " AM";
-        }
-      }
-
-      // Secondary pass per class: for classes where the primary check tagged
-      // everything AM (because ALL their runs fall before the noon marker),
-      // use round progression within the class. If a class has runs at
-      // multiple hours and later rounds appear at lower hour numbers, those
-      // later rounds must be PM (the clock wrapped through noon).
-      const byCategory = new Map<string, RunRow[]>();
-      for (const run of dayRuns) {
-        const cat = run.category || "";
-        if (!byCategory.has(cat)) byCategory.set(cat, []);
-        byCategory.get(cat)!.push(run);
-      }
-
-      for (const [, catRuns] of byCategory) {
-        // Only check classes where ALL runs are currently AM
-        const allAm = catRuns.every((r) => r.timestamp!.endsWith(" AM"));
-        if (!allAm) continue;
-        if (catRuns.length < 2) continue;
-
-        // Sort this class by scrape seq
-        const sorted = [...catRuns].sort((a, b) => (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0));
-
-        // Walk in scrape order tracking the highest hour seen. If the hour
-        // DROPS while rounds are progressing forward (or even same/higher),
-        // the clock wrapped through noon. Example: Q-3 at hour 10, then
-        // E1 at hour 6 — round went from 13→21 (up) but hour went 10→6
-        // (down), so E1 must be PM. Everything from that point on is PM,
-        // which correctly handles E1(h6) → E2(h7) → E3(h8) all as PM.
-        let maxHourSeen = 0;
-        let wrapDetected = false;
-
-        for (const run of sorted) {
-          const h = tsHour(run.timestamp!);
-
-          if (!wrapDetected && maxHourSeen > 0 && h < maxHourSeen) {
-            wrapDetected = true;
-          }
-
-          if (wrapDetected) {
-            run.timestamp = stripAmPm(run.timestamp!) + " PM";
-          }
-
-          if (h > maxHourSeen) maxHourSeen = h;
-
-          if (w > maxRoundSeen) {
-            maxRoundSeen = w;
-            maxHourForMaxRound = h;
-          }
-        }
-      }
+      dayRuns.sort((a, b) => (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0));
     } else {
-      // Fallback: hours 1-5 always PM, hour 12 PM, hours 6-11 use
-      // per-class round-weight heuristic.
-      const maxPmRoundByClass = new Map<string, number>();
-      const maxAmRoundByClass = new Map<string, number>();
-      for (const run of dayRuns) {
-        const h = tsHour(run.timestamp!);
-        const cat = run.category || "";
-        const w = roundSortWeight(run.round);
-        if (h >= 1 && h <= 5) {
-          const cur = maxPmRoundByClass.get(cat);
-          if (cur === undefined || w > cur) maxPmRoundByClass.set(cat, w);
-        } else if (h === 12) {
-          const cur = maxPmRoundByClass.get(cat);
-          if (cur === undefined || w > cur) maxPmRoundByClass.set(cat, w);
-        } else if (h >= 8 && h <= 11) {
-          const cur = maxAmRoundByClass.get(cat);
-          if (cur === undefined || w > cur) maxAmRoundByClass.set(cat, w);
-        }
-      }
-
-      const pmRuns = new Set<RunRow>();
-      for (const run of dayRuns) {
-        const h = tsHour(run.timestamp!);
-        if (h >= 1 && h <= 5) { pmRuns.add(run); continue; }
-        if (h === 12) { pmRuns.add(run); continue; }
-        // Hours 6-11: check per-class context
-        const cat = run.category || "";
-        const w = roundSortWeight(run.round);
-        const maxPm = maxPmRoundByClass.get(cat);
-        const maxAm = maxAmRoundByClass.get(cat);
-        if (maxPm !== undefined && w >= maxPm) pmRuns.add(run);
-        else if (maxPm === undefined && maxAm !== undefined && w > maxAm) pmRuns.add(run);
-      }
-
       dayRuns.sort((a, b) =>
-        raceDaySortKey(a.timestamp!, a.round, pmRuns.has(a)) -
-        raceDaySortKey(b.timestamp!, b.round, pmRuns.has(b))
+        raceDaySortKey(a.timestamp!, a.round, false) -
+        raceDaySortKey(b.timestamp!, b.round, false)
       );
+    }
 
-      for (const run of dayRuns) {
-        const h = tsHour(run.timestamp!);
-        if (h >= 1 && h <= 5) run.timestamp += " PM";
-        else if (h === 12) run.timestamp += " PM";
-        else run.timestamp += pmRuns.has(run) ? " PM" : " AM";
+    // Walk in order: AM until we see the first hour 1-5 run, then PM.
+    let passedNoon = pmStart;
+    let seenMorning = false;
+
+    for (const run of dayRuns) {
+      const h = tsHour(run.timestamp!);
+
+      // Track that we've seen morning hours (6-11)
+      if (h >= 6 && h <= 11) seenMorning = true;
+
+      // Noon crossing: first hour 1-5 after morning hours
+      if (!passedNoon && seenMorning && h >= 1 && h <= 5) {
+        passedNoon = true;
+      }
+
+      // Hours 1-5 are always PM regardless
+      if (h >= 1 && h <= 5) {
+        run.timestamp += " PM";
+      } else {
+        run.timestamp += passedNoon ? " PM" : " AM";
       }
     }
   }
