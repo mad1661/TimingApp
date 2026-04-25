@@ -145,19 +145,30 @@ export default function SharePage() {
   const event = data?.event;
   const sched = data?.schedule ?? [];
 
-  // Only show entries from the current local day.
+  // Group by day so today's runs show up under today's header even if the
+  // scraper just delivered them. Sort days oldest-first so the list reads
+  // top-to-bottom in race-day order.
   const today = todayKey();
-  const todaysEntries = sched.filter((s) => dayKey(s.firstTimestamp) === today);
-  todaysEntries.sort((a, b) => {
-    const da = parseTs(a.firstTimestamp);
-    const db = parseTs(b.firstTimestamp);
-    return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
-  });
+  const byDay = new Map<string, typeof sched>();
+  for (const s of sched) {
+    const k = dayKey(s.firstTimestamp);
+    const arr = byDay.get(k) ?? [];
+    arr.push(s);
+    byDay.set(k, arr);
+  }
+  const days = Array.from(byDay.entries()).sort(([a], [b]) => a.localeCompare(b));
+  for (const [, arr] of days) {
+    arr.sort((a, b) => {
+      const da = parseTs(a.firstTimestamp);
+      const db = parseTs(b.firstTimestamp);
+      return (da?.getTime() ?? 0) - (db?.getTime() ?? 0);
+    });
+  }
 
-  const totalPairs = todaysEntries.reduce((s, e) => s + e.pairCount, 0);
-  const totalCars = todaysEntries.reduce((s, e) => s + e.totalRuns, 0);
-  const distinctCategories = new Set(todaysEntries.map((e) => e.category)).size;
-  const distinctRounds = new Set(todaysEntries.map((e) => `${e.category}|${e.round}`)).size;
+  const totalPairs = sched.reduce((s, e) => s + e.pairCount, 0);
+  const totalCars = sched.reduce((s, e) => s + e.totalRuns, 0);
+  const distinctCategories = new Set(sched.map((e) => e.category)).size;
+  const distinctRounds = new Set(sched.map((e) => `${e.category}|${e.round}`)).size;
 
   return (
     <div className="min-h-screen bg-nhra-darker text-white">
@@ -198,9 +209,9 @@ export default function SharePage() {
           </div>
         )}
 
-        {todaysEntries.length === 0 ? (
+        {sched.length === 0 ? (
           <div className="bg-nhra-card border border-nhra-border rounded-xl p-8 text-center text-gray-500">
-            No runs recorded yet today.
+            No runs recorded yet for this event.
           </div>
         ) : (
           <>
@@ -224,40 +235,48 @@ export default function SharePage() {
               </div>
             </div>
 
-            <div className="mb-6">
-              <h2 className="text-base font-bold text-white mb-3">{fmtDateLabel(todaysEntries[0].firstTimestamp)}</h2>
-              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-x-auto">
-                <table className="w-full text-sm min-w-[640px]">
-                  <thead>
-                    <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
-                      <th className="text-left p-3">Start</th>
-                      <th className="text-left p-3">End</th>
-                      <th className="text-left p-3">Category</th>
-                      <th className="text-left p-3">Round</th>
-                      <th className="text-right p-3">Cars</th>
-                      <th className="text-right p-3 text-nhra-accent">Pairs Run</th>
-                      <th className="text-right p-3">Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {todaysEntries.map((s, i) => (
-                      <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
-                        <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
-                        <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
-                        <td className="p-3 text-white whitespace-nowrap">
-                          <span>{s.category}</span>
-                          <span className="ml-2 text-xs text-nhra-accent font-mono font-bold">{s.totalRuns} cars</span>
-                        </td>
-                        <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
-                        <td className="p-3 text-right font-mono text-gray-300">{s.totalRuns}</td>
-                        <td className="p-3 text-right font-mono text-white font-bold">{s.pairCount}</td>
-                        <td className="p-3 text-right font-mono text-gray-400 whitespace-nowrap">{fmtDuration(s.durationMinutes)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            {days.map(([day, entries]) => {
+              const isToday = day === today;
+              return (
+                <div key={day} className="mb-6">
+                  <h2 className={`text-base font-bold mb-3 ${isToday ? "text-nhra-accent" : "text-white"}`}>
+                    {fmtDateLabel(entries[0].firstTimestamp)}
+                    {isToday && <span className="ml-2 text-[10px] uppercase tracking-widest bg-nhra-accent/20 text-nhra-accent px-2 py-0.5 rounded">Today</span>}
+                  </h2>
+                  <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-x-auto">
+                    <table className="w-full text-sm min-w-[640px]">
+                      <thead>
+                        <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
+                          <th className="text-left p-3">Start</th>
+                          <th className="text-left p-3">End</th>
+                          <th className="text-left p-3">Category</th>
+                          <th className="text-left p-3">Round</th>
+                          <th className="text-right p-3">Cars</th>
+                          <th className="text-right p-3 text-nhra-accent">Pairs Run</th>
+                          <th className="text-right p-3">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {entries.map((s, i) => (
+                          <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
+                            <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
+                            <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
+                            <td className="p-3 text-white whitespace-nowrap">
+                              <span>{s.category}</span>
+                              <span className="ml-2 text-xs text-nhra-accent font-mono font-bold">{s.totalRuns} cars</span>
+                            </td>
+                            <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
+                            <td className="p-3 text-right font-mono text-gray-300">{s.totalRuns}</td>
+                            <td className="p-3 text-right font-mono text-white font-bold">{s.pairCount}</td>
+                            <td className="p-3 text-right font-mono text-gray-400 whitespace-nowrap">{fmtDuration(s.durationMinutes)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
           </>
         )}
 
