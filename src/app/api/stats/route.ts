@@ -108,6 +108,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ pair });
     }
 
+    if (type === "debug-timestamps") {
+      const runs = await getEventRuns(eventCode, season);
+      const data = runs
+        .filter((r) => r.timestamp)
+        .map((r) => ({ ts: r.timestamp, seq: r._scrape_seq ?? null, cat: r.category, round: r.round, name: r.name }))
+        .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      return NextResponse.json({ count: data.length, runs: data });
+    }
+
     if (type === "noshows") {
       const result = await getAllNoShows(eventCode, season);
       return NextResponse.json({ noShows: result.noShows, activeCategory: result.activeCategory });
