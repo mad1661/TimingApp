@@ -134,13 +134,13 @@ function BracketGrid({
       className="grid"
       style={{
         gridTemplateColumns:
-          "minmax(155px, 1fr) 22px minmax(110px, 1fr) 22px minmax(110px, 1fr) 22px minmax(110px, 1fr)",
+          "minmax(180px, 1fr) 22px minmax(140px, 1fr) 22px minmax(140px, 1fr) 22px minmax(140px, 1fr)",
         gridTemplateRows: `repeat(${N}, minmax(74px, 1fr))`,
       }}
     >
       {r1.map((q, k) => (
         <GridCell key={`r1-${k}`} col={1} rowStart={k + 1} rowSpan={1}>
-          <QuadBox quad={q} />
+          <QuadBox quad={q} variant="round1" />
         </GridCell>
       ))}
 
@@ -151,7 +151,7 @@ function BracketGrid({
       ))}
       {r2.map((q, i) => (
         <GridCell key={`r2-${i}`} col={3} rowStart={2 * i + 1} rowSpan={2}>
-          <QuadBox quad={q} />
+          <QuadBox quad={q} variant="blank" />
         </GridCell>
       ))}
 
@@ -162,7 +162,7 @@ function BracketGrid({
       ))}
       {r3.map((q, i) => (
         <GridCell key={`r3-${i}`} col={5} rowStart={4 * i + 1} rowSpan={4}>
-          <QuadBox quad={q} />
+          <QuadBox quad={q} variant="seeds" />
         </GridCell>
       ))}
 
@@ -204,45 +204,44 @@ function FinalCell({ quad }: { quad: QuadCell }) {
   return (
     <div className="flex flex-col w-full">
       <div className="text-center text-xs italic mb-1">** Champion **</div>
-      <QuadBox quad={quad} isFinal />
+      <QuadBox quad={quad} variant="blank" />
     </div>
   );
 }
 
-function QuadBox({ quad, isFinal }: { quad: QuadCell; isFinal?: boolean }) {
-  const isRound1 = quad.round === 1;
-  // Match the blank-reference layout: in round 1, hide bye lanes so each
-  // box only contains the active racing lanes (e.g. Q1 shows just two rows
-  // for seeds 1 & 16, Q2 shows three rows for 8/9/17). Later rounds keep
-  // all four lane slots since they represent a full 4-wide quad.
-  const lanesToShow = isRound1
-    ? quad.lanes.filter((l) => !l.isBye)
-    : quad.lanes;
+// Three rendering variants for quad boxes:
+//   round1 — show qualifier data (or just the seed if none loaded), and
+//            hide BYE lanes entirely so the box collapses to just the
+//            active racing lanes.
+//   seeds  — empty 4-lane box that prints the projected seeds (e.g. the
+//            semifinal box showing "1, 8, 4, 5").
+//   blank  — empty 4-lane box with no content (just the borders), used
+//            for round 2 and the final on the printed sheet.
+
+type QuadVariant = "round1" | "seeds" | "blank";
+
+function QuadBox({ quad, variant }: { quad: QuadCell; variant: QuadVariant }) {
+  const lanesToShow =
+    variant === "round1"
+      ? quad.lanes.filter((l) => !l.isBye)
+      : quad.lanes;
   return (
     <div className="border border-black bg-white w-full">
       {lanesToShow.map((lane, idx) => (
         <div
           key={idx}
           className={`px-1 py-0.5 ${idx > 0 ? "border-t border-black" : ""}`}
-          style={{ minHeight: isRound1 ? 22 : 16 }}
+          style={{ minHeight: variant === "round1" ? 22 : 16 }}
         >
-          <LaneRow lane={lane} showResult={isRound1} isFinal={isFinal} />
+          <LaneRow lane={lane} variant={variant} />
         </div>
       ))}
     </div>
   );
 }
 
-function LaneRow({
-  lane,
-  showResult,
-  isFinal,
-}: {
-  lane: Lane;
-  showResult: boolean;
-  isFinal?: boolean;
-}) {
-  if (showResult && lane.qualifier) {
+function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
+  if (variant === "round1" && lane.qualifier) {
     const q = lane.qualifier;
     return (
       <div className="text-[8px] leading-[1.1] font-mono">
@@ -264,8 +263,7 @@ function LaneRow({
     );
   }
 
-  if (showResult) {
-    // Round 1 cell with no qualifier loaded — show just the seed.
+  if (variant === "round1") {
     return (
       <div className="text-[9px] leading-tight font-mono">
         {lane.position != null ? <div>{lane.position}</div> : <div>&nbsp;</div>}
@@ -273,16 +271,16 @@ function LaneRow({
     );
   }
 
-  // Later rounds: print the projected seed number (ghost label).
-  return (
-    <div className="text-[9px] leading-tight font-mono">
-      {lane.position != null && !isFinal ? (
-        <div>{lane.position}</div>
-      ) : (
-        <div>&nbsp;</div>
-      )}
-    </div>
-  );
+  if (variant === "seeds") {
+    return (
+      <div className="text-[9px] leading-tight font-mono">
+        {lane.position != null ? <div>{lane.position}</div> : <div>&nbsp;</div>}
+      </div>
+    );
+  }
+
+  // variant === "blank": render the row but leave it empty.
+  return <div className="text-[9px] leading-tight">&nbsp;</div>;
 }
 
 // ─── Connector pair ────────────────────────────────────────────────────────
