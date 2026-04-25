@@ -1153,20 +1153,22 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
     const hasScrapeSeq = dayRuns.some((r) => r._scrape_seq != null);
 
     if (hasScrapeSeq) {
-      // Find the scrape_seq of the FIRST definitely-PM run (hour 1-5).
-      // In chronological NHRA data, this marks where the day crosses noon.
+      // Find the scrape_seq of the FIRST definitely-PM run (hour 1-5 or 12).
+      // Hour 12 is always noon (PM) — it comes before hour 1 in the data.
       let noonSeq = Infinity;
       for (const run of dayRuns) {
         const h = tsHour(run.timestamp!);
-        if (run._scrape_seq != null && h >= 1 && h <= 5) {
+        if (run._scrape_seq != null && (h === 12 || (h >= 1 && h <= 5))) {
           if (run._scrape_seq < noonSeq) noonSeq = run._scrape_seq;
         }
       }
 
-      // Primary pass: everything before the first 1-5 run is AM, after is PM
+      // Primary pass: hours 1-5 and 12 are always PM.
+      // Other hours: PM if they have a scrape_seq after the noon marker.
+      // Runs missing _scrape_seq default to AM (handled by secondary check).
       for (const run of dayRuns) {
         const h = tsHour(run.timestamp!);
-        if (h >= 1 && h <= 5) {
+        if (h === 12 || (h >= 1 && h <= 5)) {
           run.timestamp += " PM";
         } else if (run._scrape_seq != null && noonSeq < Infinity && run._scrape_seq >= noonSeq) {
           run.timestamp += " PM";
