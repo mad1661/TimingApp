@@ -25,9 +25,9 @@ export default function LadderSheet({ ladder, header }: LadderSheetProps) {
 
   return (
     <div className="ladder-sheet bg-white text-black font-serif">
-      <SheetHeader header={header} />
+      <SheetHeader header={header} fieldSize={ladder.fieldSize} />
 
-      <div className="px-6 pt-2 pb-4">
+      <div className="px-4 pt-1 pb-3">
         <div className="border border-black">
           <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} />
         </div>
@@ -40,28 +40,34 @@ export default function LadderSheet({ ladder, header }: LadderSheetProps) {
 
 // ─── Header banner ─────────────────────────────────────────────────────────
 
-function SheetHeader({ header }: { header?: LadderSheetHeader }) {
+function SheetHeader({
+  header,
+  fieldSize,
+}: {
+  header?: LadderSheetHeader;
+  fieldSize: number;
+}) {
   const h = header || {};
   return (
-    <div className="border-b border-black px-6 pt-4 pb-3 relative">
-      <div className="absolute right-6 top-3 text-[10px] italic">
+    <div className="border-b border-black px-4 pt-2 pb-2 relative">
+      <div className="absolute right-4 top-2 text-[9px] italic">
         {h.systemMark ?? ""}
       </div>
       {h.eventTitle && (
-        <div className="text-center text-sm italic leading-tight whitespace-pre-line">
+        <div className="text-center text-xs italic leading-tight whitespace-pre-line">
           {h.eventTitle}
         </div>
       )}
       {(h.venue || h.dateRange) && (
-        <div className="text-center text-sm italic leading-tight">
+        <div className="text-center text-xs italic leading-tight">
           {h.venue}
           {h.venue && h.dateRange ? " " : ""}
           {h.dateRange}
         </div>
       )}
 
-      <div className="flex items-end justify-between mt-3">
-        <div className="text-[10px] leading-tight">
+      <div className="flex items-end justify-between mt-1.5">
+        <div className="text-[9px] leading-tight">
           {(h.lowEt || h.topSpeed) && (
             <div>Qualified Positions for ....</div>
           )}
@@ -81,16 +87,19 @@ function SheetHeader({ header }: { header?: LadderSheetHeader }) {
 
         <div className="flex-1 text-center">
           {h.classTitle && (
-            <div className="text-base font-bold tracking-wide">{h.classTitle}</div>
+            <div className="text-sm font-bold tracking-wide">{h.classTitle}</div>
           )}
           {h.seriesBanner && (
-            <div className="text-sm font-bold tracking-wide mt-1">
+            <div className="text-xs font-bold tracking-wide">
               {h.seriesBanner}
             </div>
           )}
+          <div className="text-[10px] font-semibold mt-0.5">
+            {fieldSize}-car field
+          </div>
         </div>
 
-        <div className="text-[10px] leading-tight text-right whitespace-nowrap">
+        <div className="text-[9px] leading-tight text-right whitespace-nowrap">
           {h.runTime && <div>{h.runTime}</div>}
           {h.runDate && <div>{h.runDate}</div>}
         </div>
@@ -125,8 +134,8 @@ function BracketGrid({
       className="grid"
       style={{
         gridTemplateColumns:
-          "minmax(170px, 1fr) 28px minmax(130px, 1fr) 28px minmax(130px, 1fr) 28px minmax(130px, 1fr)",
-        gridTemplateRows: `repeat(${N}, minmax(108px, 1fr))`,
+          "minmax(155px, 1fr) 22px minmax(110px, 1fr) 22px minmax(110px, 1fr) 22px minmax(110px, 1fr)",
+        gridTemplateRows: `repeat(${N}, minmax(74px, 1fr))`,
       }}
     >
       {r1.map((q, k) => (
@@ -202,13 +211,20 @@ function FinalCell({ quad }: { quad: QuadCell }) {
 
 function QuadBox({ quad, isFinal }: { quad: QuadCell; isFinal?: boolean }) {
   const isRound1 = quad.round === 1;
+  // Match the blank-reference layout: in round 1, hide bye lanes so each
+  // box only contains the active racing lanes (e.g. Q1 shows just two rows
+  // for seeds 1 & 16, Q2 shows three rows for 8/9/17). Later rounds keep
+  // all four lane slots since they represent a full 4-wide quad.
+  const lanesToShow = isRound1
+    ? quad.lanes.filter((l) => !l.isBye)
+    : quad.lanes;
   return (
     <div className="border border-black bg-white w-full">
-      {quad.lanes.map((lane, idx) => (
+      {lanesToShow.map((lane, idx) => (
         <div
           key={idx}
-          className={`px-1.5 py-0.5 ${idx > 0 ? "border-t border-black" : ""}`}
-          style={{ minHeight: isRound1 ? 24 : 20 }}
+          className={`px-1 py-0.5 ${idx > 0 ? "border-t border-black" : ""}`}
+          style={{ minHeight: isRound1 ? 22 : 16 }}
         >
           <LaneRow lane={lane} showResult={isRound1} isFinal={isFinal} />
         </div>
@@ -226,49 +242,40 @@ function LaneRow({
   showResult: boolean;
   isFinal?: boolean;
 }) {
-  if (lane.isBye) {
-    return (
-      <div className="text-[10px] leading-tight">
-        <div>BYE</div>
-        <div className="text-[9px]">0</div>
-      </div>
-    );
-  }
-
   if (showResult && lane.qualifier) {
     const q = lane.qualifier;
     return (
-      <div className="text-[10px] leading-tight font-mono">
-        <div className="flex gap-1.5">
-          <span className="w-4 text-right">{q.position}</span>
-          <span className="w-10 text-right">{q.carNumber ?? ""}</span>
-          <span className="w-7">{q.classCode ?? ""}</span>
-          <span className="truncate">{q.driver ?? ""}</span>
+      <div className="text-[8px] leading-[1.1] font-mono">
+        <div className="flex gap-1">
+          <span className="w-3 text-right">{q.position}</span>
+          <span className="w-8 text-right">{q.carNumber ?? ""}</span>
+          <span className="flex-1 truncate">{q.driver ?? ""}</span>
         </div>
-        <div className="flex gap-1.5">
-          <span className="w-4" />
+        <div className="flex gap-1">
+          <span className="w-3" />
           <span className="w-10 text-right">
             {q.et != null ? q.et.toFixed(3) : ""}
           </span>
-          <span className="w-7" />
-          <span>{q.qMph != null ? q.qMph.toFixed(2) : ""}</span>
+          <span className="flex-1">
+            {q.qMph != null ? q.qMph.toFixed(2) : ""}
+          </span>
         </div>
       </div>
     );
   }
 
   if (showResult) {
-    // Round 1 cell with no qualifier seeded — show seed if present
+    // Round 1 cell with no qualifier loaded — show just the seed.
     return (
-      <div className="text-[10px] leading-tight font-mono">
+      <div className="text-[9px] leading-tight font-mono">
         {lane.position != null ? <div>{lane.position}</div> : <div>&nbsp;</div>}
       </div>
     );
   }
 
-  // Later rounds: just print the projected seed number (ghost label)
+  // Later rounds: print the projected seed number (ghost label).
   return (
-    <div className="text-[10px] leading-tight font-mono">
+    <div className="text-[9px] leading-tight font-mono">
       {lane.position != null && !isFinal ? (
         <div>{lane.position}</div>
       ) : (
