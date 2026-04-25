@@ -229,7 +229,10 @@ export default function SharePage() {
                       <tr key={`${s.category}-${s.round}-${i}`} className="border-b border-nhra-border/50 last:border-0">
                         <td className="p-3 font-mono text-gray-300 whitespace-nowrap">{fmtTime(s.firstTimestamp)}</td>
                         <td className="p-3 font-mono text-gray-400 whitespace-nowrap">{fmtTime(s.lastTimestamp)}</td>
-                        <td className="p-3 text-white whitespace-nowrap">{s.category}</td>
+                        <td className="p-3 text-white whitespace-nowrap">
+                          <span>{s.category}</span>
+                          <span className="ml-2 text-xs text-nhra-accent font-mono font-bold">{s.totalRuns} cars</span>
+                        </td>
                         <td className="p-3 text-gray-300 whitespace-nowrap">{roundLabel(s.round)}</td>
                         <td className="p-3 text-right font-mono text-gray-300">{s.totalRuns}</td>
                         <td className="p-3 text-right font-mono text-white font-bold">{s.pairCount}</td>
