@@ -368,14 +368,20 @@ export function parseRunsFromHtml(
   inferAmPm(runs);
 
   // Drop runs with timestamps in the future — these are NHRA pre-staging
-  // placeholders, not actual runs. They have no timing data and pollute
-  // the schedule and round logs.
+  // placeholders, not actual runs. Compare against current date+time.
   const now = new Date();
-  const todayStr = `${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}/${now.getFullYear()}`;
   for (let i = runs.length - 1; i >= 0; i--) {
-    if (runs[i].timestamp) {
-      const day = runs[i].timestamp!.split(" ")[0];
-      if (day > todayStr) runs.splice(i, 1);
+    if (!runs[i].timestamp) continue;
+    const ts = runs[i].timestamp!;
+    const m = ts.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+    if (!m) continue;
+    let h = parseInt(m[4], 10);
+    const ap = (m[7] || "").toUpperCase();
+    if (ap === "PM" && h !== 12) h += 12;
+    if (ap === "AM" && h === 12) h = 0;
+    const runDate = new Date(parseInt(m[3], 10), parseInt(m[1], 10) - 1, parseInt(m[2], 10), h, parseInt(m[5], 10), parseInt(m[6] || "0", 10));
+    if (runDate.getTime() > now.getTime()) {
+      runs.splice(i, 1);
     }
   }
   // Fix broken quad timestamps: in 4-wide racing, the NHRA timing system
