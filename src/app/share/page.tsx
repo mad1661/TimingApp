@@ -211,8 +211,8 @@ export default function SharePage() {
 
             <div className="mb-6">
               <h2 className="text-base font-bold text-white mb-3">{fmtDateLabel(todaysEntries[0].firstTimestamp)}</h2>
-              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-x-auto">
+                <table className="w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="border-b border-nhra-border text-xs uppercase tracking-wider text-gray-400">
                       <th className="text-left p-3">Start</th>
