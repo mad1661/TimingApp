@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loginAndFetch } from "@/lib/scraper";
+import { loginAndFetch, invalidateSession } from "@/lib/scraper";
 import { getEvents, insertEvent, insertRuns, getScheduleData, getDistinctRounds, getCategories, invalidateEventCache } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +52,10 @@ export async function POST(req: NextRequest) {
     // Drop this worker's in-memory cache before scraping so any runs written
     // by a different worker since this worker last loaded are observed too.
     invalidateEventCache(event.event_code, event.season);
+    // Also drop any cached scraper session so we don't reuse a session whose
+    // form state has a stuck dateFilter (e.g. the main app set it to Friday)
+    // that would prevent today's runs from being returned.
+    invalidateSession(username);
 
     let inserted = 0;
     let scrapeError: string | null = null;
@@ -64,6 +68,8 @@ export async function POST(req: NextRequest) {
         eventCode: event.event_code,
         startDate: event.start_date,
         eventName: event.event_name,
+        // Explicitly omit dateFilter so the scraper requests the event's full
+        // run table, not a single day filtered by the main app's saved value.
       });
       // Make sure the event row exists / re-register
       await insertEvent({

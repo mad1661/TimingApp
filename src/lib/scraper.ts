@@ -72,7 +72,7 @@ function selectionMatches(cached: CachedSession["selection"], opts: ScrapeOption
     && cached.dateFilter === (opts.dateFilter || "");
 }
 
-function invalidateSession(username: string): void {
+export function invalidateSession(username: string): void {
   _sessions.delete(sessionKey(username));
 }
 
