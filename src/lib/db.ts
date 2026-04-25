@@ -1153,16 +1153,17 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
     const hasScrapeSeq = dayRuns.some((r) => r._scrape_seq != null);
 
     if (hasScrapeSeq) {
-      // Find the scrape_seq of the FIRST definitely-PM run (hour 1-5 or 12).
+      // Find the scrape_seq of the FIRST definitely-PM run (hour 1-5).
       // In chronological NHRA data, this marks where the day crosses noon.
       let noonSeq = Infinity;
       for (const run of dayRuns) {
         const h = tsHour(run.timestamp!);
-        if (run._scrape_seq != null && (h === 12 || (h >= 1 && h <= 5))) {
+        if (run._scrape_seq != null && h >= 1 && h <= 5) {
           if (run._scrape_seq < noonSeq) noonSeq = run._scrape_seq;
         }
       }
 
+      // Primary pass: everything before the first 1-5 run is AM, after is PM
       for (const run of dayRuns) {
         const h = tsHour(run.timestamp!);
         if (h >= 1 && h <= 5) {
@@ -1171,6 +1172,56 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
           run.timestamp += " PM";
         } else {
           run.timestamp += " AM";
+        }
+      }
+
+      // Secondary pass per class: for classes where the primary check tagged
+      // everything AM (because ALL their runs fall before the noon marker),
+      // use round progression within the class. If a class has runs at
+      // multiple hours and later rounds appear at lower hour numbers, those
+      // later rounds must be PM (the clock wrapped through noon).
+      const byCategory = new Map<string, RunRow[]>();
+      for (const run of dayRuns) {
+        const cat = run.category || "";
+        if (!byCategory.has(cat)) byCategory.set(cat, []);
+        byCategory.get(cat)!.push(run);
+      }
+
+      for (const [, catRuns] of byCategory) {
+        // Only check classes where ALL runs are currently AM
+        const allAm = catRuns.every((r) => r.timestamp!.endsWith(" AM"));
+        if (!allAm) continue;
+        if (catRuns.length < 2) continue;
+
+        // Sort this class by scrape seq
+        const sorted = [...catRuns].sort((a, b) => (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0));
+
+        // Track the max round weight seen so far in scrape order.
+        // If a run has a round weight LOWER than one we already saw at
+        // a higher hour, the day wrapped and this run must be PM.
+        // More precisely: find the highest hour + round-weight in the
+        // first half, and any run after that with a lower hour is PM.
+        let maxRoundSeen = -1;
+        let maxHourForMaxRound = 0;
+        let wrapDetected = false;
+
+        for (const run of sorted) {
+          const h = tsHour(run.timestamp!);
+          const w = roundSortWeight(run.round);
+
+          if (!wrapDetected && w < maxRoundSeen && h < maxHourForMaxRound) {
+            // Round went DOWN and hour went DOWN — clock wrapped through noon
+            wrapDetected = true;
+          }
+
+          if (wrapDetected) {
+            run.timestamp = stripAmPm(run.timestamp!) + " PM";
+          }
+
+          if (w > maxRoundSeen) {
+            maxRoundSeen = w;
+            maxHourForMaxRound = h;
+          }
         }
       }
     } else {
