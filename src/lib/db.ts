@@ -186,16 +186,18 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
 
 export async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
   const cache = await ensureEventCache(eventCode, season);
-  // Mark runs with future timestamps as phantoms the first time we see
-  // them. Once marked, they stay hidden permanently even after the clock
-  // passes their timestamp — they were never real runs.
+  // Mark runs with future timestamps as phantoms — but only if they have
+  // no timing data. Runs WITH timing data are real runs that the NHRA system
+  // gave bogus timestamps (quad second-pairs). Those get fixed by the
+  // scraper's quad correction, not hidden.
   const now = Date.now();
   for (const r of cache.runs) {
     if (r._phantom) continue;
     if (!r.timestamp) continue;
     const d = parseTsToDateShared(r.timestamp);
     if (d && d.getTime() > now) {
-      r._phantom = true;
+      const hasData = r.rt != null || r.ft1320 != null || r.ft660 != null || r.ft60 != null;
+      if (!hasData) r._phantom = true;
     }
   }
   return cache.runs.filter((r) => !r._phantom);
