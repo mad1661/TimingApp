@@ -357,7 +357,12 @@ export async function insertRuns(
           run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner ||
           run.result !== existing.result || (!existing.name && run.name) ||
           run.timestamp !== existing.timestamp;
-        if (!changed) continue;
+        if (!changed) {
+          if (run._scrape_seq != null && existingIdx !== -1) {
+            cache.runs[existingIdx]._scrape_seq = run._scrape_seq;
+          }
+          continue;
+        }
       }
 
       const row: RunRow = {
