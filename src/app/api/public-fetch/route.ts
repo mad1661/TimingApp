@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch } from "@/lib/scraper";
-import { getEvents, insertEvent, insertRuns, getScheduleData, getDistinctRounds, getCategories } from "@/lib/db";
+import { getEvents, insertEvent, insertRuns, getScheduleData, getDistinctRounds, getCategories, invalidateEventCache } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +48,10 @@ export async function POST(req: NextRequest) {
       // Pick the most recently scheduled event (latest start_date).
       event = [...all].sort((a, b) => parseStartDate(b.start_date) - parseStartDate(a.start_date))[0];
     }
+
+    // Drop this worker's in-memory cache before scraping so any runs written
+    // by a different worker since this worker last loaded are observed too.
+    invalidateEventCache(event.event_code, event.season);
 
     let inserted = 0;
     let scrapeError: string | null = null;

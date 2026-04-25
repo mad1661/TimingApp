@@ -241,6 +241,19 @@ function removeResetEntries(runs: RunRow[]): RunRow[] {
   return runs;
 }
 
+// --------------- Cache invalidation ---------------
+
+/**
+ * Drop the in-memory cache for an event so the next read reloads from
+ * Firestore. Useful when another worker/process may have written runs that
+ * this worker hasn't observed yet, e.g. after a public-share refresh.
+ */
+export function invalidateEventCache(eventCode: string, season: string): void {
+  const key = eventKey(eventCode, season);
+  _cache.delete(key);
+  _loading.delete(key);
+}
+
 // --------------- Purge & Re-fetch ---------------
 
 export async function purgeEventRuns(eventCode: string, season: string): Promise<number> {
