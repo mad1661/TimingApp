@@ -145,6 +145,31 @@ function mergeActualsByClass(actuals: ScheduleEntry[]): Map<string, ScheduleEntr
       merged.set(key, { ...actual });
     }
   }
+
+  // Cap each merged entry's lastTimestamp so it doesn't extend past the
+  // start of the next round for the same category. E.g. if Q1 had a late
+  // makeup run during Q2, Q1's end shouldn't overlap Q2's start.
+  const byCategory = new Map<string, ScheduleEntry[]>();
+  for (const entry of merged.values()) {
+    const cat = normalizeCategoryName(entry.category);
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(entry);
+  }
+  for (const [, catEntries] of byCategory) {
+    if (catEntries.length < 2) continue;
+    catEntries.sort((a, b) => sortKey(a.firstTimestamp).localeCompare(sortKey(b.firstTimestamp)));
+    for (let i = 0; i < catEntries.length - 1; i++) {
+      const cur = catEntries[i];
+      const next = catEntries[i + 1];
+      if (sortKey(cur.lastTimestamp) > sortKey(next.firstTimestamp)) {
+        cur.lastTimestamp = cur.firstTimestamp;
+        const d1 = parseTs(cur.firstTimestamp);
+        const d2 = parseTs(cur.lastTimestamp);
+        cur.durationMinutes = d1 && d2 ? Math.max(0, Math.round((d2.getTime() - d1.getTime()) / 60000)) : 0;
+      }
+    }
+  }
+
   return merged;
 }
 
