@@ -368,26 +368,36 @@ export function parseRunsFromHtml(
   inferAmPm(runs);
 
   // Fix broken quad timestamps: in 4-wide racing, the NHRA timing system
-  // sometimes generates garbage timestamps for lanes 3&4 when lanes 1&2
-  // are at a second boundary (e.g. 8:59:59 → lanes 3&4 jump to 1:20:08
-  // on the next day). Detect consecutive same-category/round runs where
-  // the timestamp suddenly jumps to a different day, and correct them.
-  for (let i = 2; i < runs.length; i++) {
+  // sometimes posts the second pair (lanes 3&4) with a bogus future date.
+  // These appear scattered in the data, not necessarily adjacent to their
+  // quad partner. Detect any run whose date is an outlier (later than the
+  // surrounding runs in scrape order) and fix it by finding the nearest
+  // prior run of the same category + round and using that timestamp.
+  for (let i = 0; i < runs.length; i++) {
     const cur = runs[i];
-    const prev = runs[i - 2]; // check 2 back (pair before this pair)
-    if (!cur.timestamp || !prev.timestamp) continue;
-    if (cur.category !== prev.category || cur.round !== prev.round) continue;
+    if (!cur.timestamp) continue;
     const curDay = cur.timestamp.split(" ")[0];
-    const prevDay = prev.timestamp.split(" ")[0];
-    if (curDay !== prevDay) {
-      // Same category + round but different day — likely a quad glitch.
-      // Use the previous pair's timestamp.
-      cur.timestamp = prev.timestamp;
-      // Also fix the partner (i-1 if it has the same bad timestamp)
-      if (i - 1 >= 0 && runs[i - 1].timestamp) {
-        const partnerDay = runs[i - 1].timestamp!.split(" ")[0];
-        if (partnerDay === curDay || partnerDay !== prevDay) {
-          runs[i - 1].timestamp = prev.timestamp;
+
+    // Check if this run's date is an outlier: different from the runs
+    // before AND after it in scrape order (both neighbors on same date)
+    const prevDay = (i > 0 && runs[i - 1].timestamp) ? runs[i - 1].timestamp!.split(" ")[0] : null;
+    const nextDay = (i < runs.length - 1 && runs[i + 1]?.timestamp) ? runs[i + 1].timestamp!.split(" ")[0] : null;
+
+    const isOutlier = (prevDay && curDay !== prevDay && (!nextDay || nextDay === prevDay))
+      || (nextDay && curDay !== nextDay && (!prevDay || prevDay === nextDay));
+
+    if (!isOutlier) continue;
+
+    // Find the nearest earlier run of the same category + round on the
+    // "normal" date and use its timestamp
+    const normalDay = prevDay || nextDay;
+    for (let j = i - 1; j >= Math.max(0, i - 200); j--) {
+      if (!runs[j].timestamp) continue;
+      if (runs[j].category === cur.category && runs[j].round === cur.round) {
+        const jDay = runs[j].timestamp!.split(" ")[0];
+        if (jDay === normalDay) {
+          cur.timestamp = runs[j].timestamp;
+          break;
         }
       }
     }
