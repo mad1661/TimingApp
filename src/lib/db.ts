@@ -42,6 +42,7 @@ export interface RunRow {
   created_at?: string;
   _dedup_key?: string;
   _scrape_seq?: number;
+  _phantom?: boolean;
 }
 
 export interface EventRow {
@@ -185,14 +186,19 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
 
 export async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
   const cache = await ensureEventCache(eventCode, season);
-  // Filter out runs with timestamps in the future — these are NHRA
-  // pre-staging placeholders that haven't actually happened.
+  // Mark runs with future timestamps as phantoms the first time we see
+  // them. Once marked, they stay hidden permanently even after the clock
+  // passes their timestamp — they were never real runs.
   const now = Date.now();
-  return cache.runs.filter((r) => {
-    if (!r.timestamp) return true;
+  for (const r of cache.runs) {
+    if (r._phantom) continue;
+    if (!r.timestamp) continue;
     const d = parseTsToDateShared(r.timestamp);
-    return !d || d.getTime() <= now;
-  });
+    if (d && d.getTime() > now) {
+      r._phantom = true;
+    }
+  }
+  return cache.runs.filter((r) => !r._phantom);
 }
 
 // --------------- Dedup ---------------
@@ -372,9 +378,11 @@ export async function insertRuns(
         }
       }
 
+      const wasPhantom = existingIdx !== -1 && cache.runs[existingIdx]._phantom;
       const row: RunRow = {
         ...run,
         _dedup_key: key,
+        _phantom: wasPhantom || false,
         created_at: new Date().toISOString(),
       };
       if (existingIdx !== -1) cache.runs[existingIdx] = row;
