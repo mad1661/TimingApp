@@ -1173,8 +1173,8 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
         passedNoon = true;
       }
 
-      // Hours 1-5 are always PM regardless
-      if (h >= 1 && h <= 5) {
+      // Hours 12 and 1-5 are always PM regardless of context
+      if (h === 12 || (h >= 1 && h <= 5)) {
         run.timestamp += " PM";
       } else {
         run.timestamp += passedNoon ? " PM" : " AM";
