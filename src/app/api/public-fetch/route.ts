@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loginAndFetch, invalidateSession } from "@/lib/scraper";
-import { getEvents, insertEvent, insertRuns, getScheduleData, getDistinctRounds, getCategories, invalidateEventCache } from "@/lib/db";
+import { loginAndFetch, fetchEventDates, invalidateSession, type NhraEvent } from "@/lib/scraper";
+import { getEvents, insertEvent, insertRuns, getScheduleData, getDistinctRounds, getCategories, invalidateEventCache, type RunRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -59,18 +59,75 @@ export async function POST(req: NextRequest) {
 
     let inserted = 0;
     let scrapeError: string | null = null;
+    let scrapedRunCount = 0;
+    const scrapedDateCounts: Record<string, number> = {};
+    let scrapedLatestTimestamp: string | null = null;
+    const datesScraped: string[] = [];
     try {
-      const runs = await loginAndFetch({
-        username,
-        password,
-        season: event.season,
+      // Get the list of dates the event has in its date dropdown so we can
+      // fetch each one explicitly. Without this, getresults sometimes returns
+      // a single day's view (typically the originally-selected day) and we
+      // never see today's runs even after a full re-login.
+      const nhraEvent: NhraEvent = {
         eventType: event.event_type,
-        eventCode: event.event_code,
         startDate: event.start_date,
-        eventName: event.event_name,
-        // Explicitly omit dateFilter so the scraper requests the event's full
-        // run table, not a single day filtered by the main app's saved value.
-      });
+        eventCode: event.event_code,
+        season: event.season,
+        displayName: event.event_name,
+      };
+      let dates: { value: string; label: string }[] = [];
+      try {
+        dates = await fetchEventDates(username, password, nhraEvent);
+      } catch (err) {
+        console.error("[public-fetch] fetchEventDates failed:", err);
+      }
+
+      const allRuns: Omit<RunRow, "id" | "created_at">[] = [];
+
+      if (dates.length === 0) {
+        // Fall back to a single no-filter scrape if we couldn't enumerate dates.
+        const runs = await loginAndFetch({
+          username,
+          password,
+          season: event.season,
+          eventType: event.event_type,
+          eventCode: event.event_code,
+          startDate: event.start_date,
+          eventName: event.event_name,
+        });
+        allRuns.push(...runs);
+      } else {
+        for (const d of dates) {
+          datesScraped.push(d.value);
+          try {
+            const runs = await loginAndFetch({
+              username,
+              password,
+              season: event.season,
+              eventType: event.event_type,
+              eventCode: event.event_code,
+              startDate: event.start_date,
+              eventName: event.event_name,
+              dateFilter: d.value,
+            });
+            allRuns.push(...runs);
+          } catch (err) {
+            console.error(`[public-fetch] scrape failed for date ${d.value}:`, err);
+          }
+        }
+      }
+
+      scrapedRunCount = allRuns.length;
+      for (const r of allRuns) {
+        if (!r.timestamp) continue;
+        const day = r.timestamp.split(" ")[0] || "";
+        if (!day) continue;
+        scrapedDateCounts[day] = (scrapedDateCounts[day] || 0) + 1;
+        if (!scrapedLatestTimestamp || r.timestamp > scrapedLatestTimestamp) {
+          scrapedLatestTimestamp = r.timestamp;
+        }
+      }
+
       // Make sure the event row exists / re-register
       await insertEvent({
         event_code: event.event_code,
@@ -79,7 +136,7 @@ export async function POST(req: NextRequest) {
         season: event.season,
         start_date: event.start_date,
       });
-      inserted = await insertRuns(event.event_code, event.season, runs);
+      inserted = await insertRuns(event.event_code, event.season, allRuns);
     } catch (err) {
       scrapeError = err instanceof Error ? err.message : String(err);
       console.error("[public-fetch] scrape failed:", scrapeError);
@@ -98,6 +155,10 @@ export async function POST(req: NextRequest) {
       categories,
       inserted,
       scrapeError,
+      datesScraped,
+      scrapedRunCount,
+      scrapedDateCounts,
+      scrapedLatestTimestamp,
       fetchedAt: new Date().toISOString(),
     }, {
       headers: {
