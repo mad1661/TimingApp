@@ -367,6 +367,17 @@ export function parseRunsFromHtml(
   // day. Pre-existing AM/PM tokens are respected.
   inferAmPm(runs);
 
+  // Drop runs with timestamps in the future — these are NHRA pre-staging
+  // placeholders, not actual runs. They have no timing data and pollute
+  // the schedule and round logs.
+  const now = new Date();
+  const todayStr = `${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}/${now.getFullYear()}`;
+  for (let i = runs.length - 1; i >= 0; i--) {
+    if (runs[i].timestamp) {
+      const day = runs[i].timestamp!.split(" ")[0];
+      if (day > todayStr) runs.splice(i, 1);
+    }
+  }
   // Fix broken quad timestamps: in 4-wide racing, the NHRA timing system
   // sometimes posts the second pair (lanes 3&4) with a bogus future date.
   // Detect any run whose date differs from the majority of nearby runs and
