@@ -128,15 +128,31 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
         }
       });
 
+      const hasAmPm = (r: RunRow): boolean =>
+        !!r.timestamp && /\s+(AM|PM)\s*$/i.test(r.timestamp);
+      const dataRichness = (r: RunRow): number => {
+        let s = 0;
+        if (hasTimingData(r)) s += 10;
+        if (hasAmPm(r)) s += 1;
+        return s;
+      };
+
       const dedupMap = new Map<string, RunRow>();
       for (const run of rawRuns) {
-        const dk = run._dedup_key || dedupKey(run);
+        const dk = dedupKey(run);
         const existing = dedupMap.get(dk);
-        if (!existing || (!hasTimingData(existing) && hasTimingData(run))) {
+        if (!existing || dataRichness(run) > dataRichness(existing)) {
           dedupMap.set(dk, run);
         }
       }
       let runs = Array.from(dedupMap.values());
+
+      // Re-stamp _dedup_key on every cached run with the current normalized
+      // form so insertRuns recognises freshly scraped rows as matches even if
+      // the stored row was written under an older key shape.
+      for (const r of runs) {
+        r._dedup_key = dedupKey(r);
+      }
 
       backfillNames(runs);
 
@@ -174,7 +190,13 @@ export async function getEventRuns(eventCode: string, season: string): Promise<R
 // --------------- Dedup ---------------
 
 function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string {
-  return `${run.timestamp}|${run.car_number}|${run.round}|${run.lane}|${run.event_code}|${run.season}`;
+  // Strip the AM/PM marker from the timestamp so a row originally stored
+  // without one (because the source HTML omits it) and the same row scraped
+  // again with the inferred marker resolve to the same dedup key. Otherwise
+  // the AM/PM-augmented version would land as a duplicate row instead of
+  // overwriting the bare one.
+  const ts = (run.timestamp || "").replace(/\s+(AM|PM)\s*$/i, "").trim();
+  return `${ts}|${run.car_number}|${run.round}|${run.lane}|${run.event_code}|${run.season}`;
 }
 
 function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): boolean {
@@ -332,7 +354,8 @@ export async function insertRuns(
         const changed = run.rt !== existing.rt || run.ft1320 !== existing.ft1320 ||
           run.ft660 !== existing.ft660 || run.ft60 !== existing.ft60 ||
           run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner ||
-          run.result !== existing.result || (!existing.name && run.name);
+          run.result !== existing.result || (!existing.name && run.name) ||
+          run.timestamp !== existing.timestamp;
         if (!changed) continue;
       }
 
