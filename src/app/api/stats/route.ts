@@ -57,6 +57,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ name: racerName, runs, totalRuns: runs.length });
     }
 
+    if (type === "debug-timestamps") {
+      if (!eventCode || !season) return NextResponse.json({ error: "need event_code and season" }, { status: 400 });
+      const runs = await getEventRuns(eventCode, season);
+      const data = runs
+        .filter((r) => r.timestamp)
+        .map((r) => ({ ts: r.timestamp, seq: r._scrape_seq ?? null, cat: r.category, round: r.round, name: r.name }))
+        .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      return NextResponse.json({ eventCode, season, totalInCache: runs.length, withTimestamp: data.length, runs: data.slice(0, 100) });
+    }
+
     if (!eventCode || !season) {
       return NextResponse.json({ error: "event_code and season are required" }, { status: 400 });
     }
@@ -108,14 +118,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ pair });
     }
 
-    if (type === "debug-timestamps") {
-      const runs = await getEventRuns(eventCode, season);
-      const data = runs
-        .filter((r) => r.timestamp)
-        .map((r) => ({ ts: r.timestamp, seq: r._scrape_seq ?? null, cat: r.category, round: r.round, name: r.name }))
-        .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-      return NextResponse.json({ count: data.length, runs: data });
-    }
+
 
     if (type === "noshows") {
       const result = await getAllNoShows(eventCode, season);
