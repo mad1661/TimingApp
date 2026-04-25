@@ -367,6 +367,32 @@ export function parseRunsFromHtml(
   // day. Pre-existing AM/PM tokens are respected.
   inferAmPm(runs);
 
+  // Fix broken quad timestamps: in 4-wide racing, the NHRA timing system
+  // sometimes generates garbage timestamps for lanes 3&4 when lanes 1&2
+  // are at a second boundary (e.g. 8:59:59 → lanes 3&4 jump to 1:20:08
+  // on the next day). Detect consecutive same-category/round runs where
+  // the timestamp suddenly jumps to a different day, and correct them.
+  for (let i = 2; i < runs.length; i++) {
+    const cur = runs[i];
+    const prev = runs[i - 2]; // check 2 back (pair before this pair)
+    if (!cur.timestamp || !prev.timestamp) continue;
+    if (cur.category !== prev.category || cur.round !== prev.round) continue;
+    const curDay = cur.timestamp.split(" ")[0];
+    const prevDay = prev.timestamp.split(" ")[0];
+    if (curDay !== prevDay) {
+      // Same category + round but different day — likely a quad glitch.
+      // Use the previous pair's timestamp.
+      cur.timestamp = prev.timestamp;
+      // Also fix the partner (i-1 if it has the same bad timestamp)
+      if (i - 1 >= 0 && runs[i - 1].timestamp) {
+        const partnerDay = runs[i - 1].timestamp!.split(" ")[0];
+        if (partnerDay === curDay || partnerDay !== prevDay) {
+          runs[i - 1].timestamp = prev.timestamp;
+        }
+      }
+    }
+  }
+
   return runs;
 }
 
