@@ -369,33 +369,44 @@ export function parseRunsFromHtml(
 
   // Fix broken quad timestamps: in 4-wide racing, the NHRA timing system
   // sometimes posts the second pair (lanes 3&4) with a bogus future date.
-  // These appear scattered in the data, not necessarily adjacent to their
-  // quad partner. Detect any run whose date is an outlier (later than the
-  // surrounding runs in scrape order) and fix it by finding the nearest
-  // prior run of the same category + round and using that timestamp.
+  // Detect any run whose date differs from the majority of nearby runs and
+  // fix it by finding the nearest prior run of the same category + round.
+  //
+  // First pass: find the dominant date for each region of the data.
+  // A run is an outlier if its date differs from the dominant date of the
+  // surrounding ~20 runs.
   for (let i = 0; i < runs.length; i++) {
     const cur = runs[i];
     if (!cur.timestamp) continue;
     const curDay = cur.timestamp.split(" ")[0];
 
-    // Check if this run's date is an outlier: different from the runs
-    // before AND after it in scrape order (both neighbors on same date)
-    const prevDay = (i > 0 && runs[i - 1].timestamp) ? runs[i - 1].timestamp!.split(" ")[0] : null;
-    const nextDay = (i < runs.length - 1 && runs[i + 1]?.timestamp) ? runs[i + 1].timestamp!.split(" ")[0] : null;
+    // Count dates in a window around this run
+    const windowStart = Math.max(0, i - 10);
+    const windowEnd = Math.min(runs.length, i + 10);
+    const dateCounts = new Map<string, number>();
+    for (let w = windowStart; w < windowEnd; w++) {
+      if (w === i || !runs[w].timestamp) continue;
+      const d = runs[w].timestamp!.split(" ")[0];
+      dateCounts.set(d, (dateCounts.get(d) || 0) + 1);
+    }
 
-    const isOutlier = (prevDay && curDay !== prevDay && (!nextDay || nextDay === prevDay))
-      || (nextDay && curDay !== nextDay && (!prevDay || prevDay === nextDay));
+    // Find the dominant date in the window
+    let dominantDay = curDay;
+    let maxCount = 0;
+    for (const [d, n] of dateCounts) {
+      if (n > maxCount) { dominantDay = d; maxCount = n; }
+    }
 
-    if (!isOutlier) continue;
+    // If this run's date differs from the dominant date, it's an outlier
+    if (curDay === dominantDay) continue;
 
     // Find the nearest earlier run of the same category + round on the
-    // "normal" date and use its timestamp
-    const normalDay = prevDay || nextDay;
+    // dominant date and use its timestamp
     for (let j = i - 1; j >= Math.max(0, i - 200); j--) {
       if (!runs[j].timestamp) continue;
       if (runs[j].category === cur.category && runs[j].round === cur.round) {
         const jDay = runs[j].timestamp!.split(" ")[0];
-        if (jDay === normalDay) {
+        if (jDay === dominantDay) {
           cur.timestamp = runs[j].timestamp;
           break;
         }
