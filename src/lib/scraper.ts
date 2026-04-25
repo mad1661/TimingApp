@@ -306,8 +306,18 @@ export function parseRunsFromHtml(
 
     const getText = (i: number) => {
       const cell = cells.eq(i);
+      const cellText = cell.text().trim();
       const span = cell.find("span");
-      return span.length ? span.text().trim() : cell.text().trim();
+      // Some cells render the value inside a <span>, but a sibling text node
+      // sometimes carries extra info (e.g. an "AM/PM" marker after the
+      // timestamp). Prefer the full cell text whenever it strictly contains
+      // more than the span alone.
+      if (span.length) {
+        const spanText = span.text().trim();
+        if (cellText.length > spanText.length) return cellText;
+        return spanText;
+      }
+      return cellText;
     };
 
     const timestamp = cleanText(getText(0));

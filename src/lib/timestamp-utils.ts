@@ -4,25 +4,31 @@
  */
 
 export function parseTsToDate(ts: string): Date | null {
+  if (!ts) return null;
   try {
-    const parts = ts.split(" ");
-    const datePart = parts[0];
-    const timePart = parts[1];
-    const ampm = parts[2]?.toUpperCase();
-    const [month, day, year] = datePart.split("/");
-    const [hh, mm, ss] = timePart.split(":");
-    let hour = parseInt(hh, 10);
+    // Tolerate stray whitespace and the optional AM/PM marker being attached
+    // to the seconds (no space) or having extra spaces.
+    const cleaned = ts.trim().replace(/\s+/g, " ");
+    const m = cleaned.match(
+      /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i,
+    );
+    if (!m) return null;
+    const [, moStr, dStr, yStr, hhStr, mmStr, ssStr, apStr] = m;
+    let year = parseInt(yStr, 10);
+    if (year < 100) year += 2000;
+    const ampm = apStr?.toUpperCase();
+    let hour = parseInt(hhStr, 10);
 
     if (ampm === "PM" && hour !== 12) hour += 12;
     else if (ampm === "AM" && hour === 12) hour = 0;
 
     return new Date(
-      parseInt(year),
-      parseInt(month) - 1,
-      parseInt(day),
+      year,
+      parseInt(moStr, 10) - 1,
+      parseInt(dStr, 10),
       hour,
-      parseInt(mm),
-      parseInt(ss || "0")
+      parseInt(mmStr, 10),
+      parseInt(ssStr || "0", 10),
     );
   } catch {
     return null;
