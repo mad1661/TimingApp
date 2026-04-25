@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
         .filter((r) => r.timestamp)
         .map((r) => ({ ts: r.timestamp, seq: r._scrape_seq ?? null, cat: r.category, round: r.round, name: r.name }))
         .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-      return NextResponse.json({ eventCode, season, totalInCache: runs.length, withTimestamp: data.length, runs: data.slice(0, 100) });
+      return NextResponse.json({ eventCode, season, totalInCache: runs.length, withTimestamp: data.length, runs: data });
     }
 
     if (!eventCode || !season) {
