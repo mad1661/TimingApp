@@ -367,9 +367,12 @@ export function parseRunsFromHtml(
   // day. Pre-existing AM/PM tokens are respected.
   inferAmPm(runs);
 
-  // Drop runs with timestamps in the future — these are NHRA pre-staging
-  // placeholders, not actual runs. Compare against current date+time.
+  // Drop runs whose timestamp is clearly in the far future (NHRA pre-staging
+  // placeholders). Use a 24h cushion against the server's clock so a track in
+  // a different timezone or a brief clock skew doesn't cause us to drop
+  // today's actually-already-happened runs.
   const now = new Date();
+  const futureCutoff = now.getTime() + 24 * 60 * 60 * 1000;
   for (let i = runs.length - 1; i >= 0; i--) {
     if (!runs[i].timestamp) continue;
     const ts = runs[i].timestamp!;
@@ -380,7 +383,7 @@ export function parseRunsFromHtml(
     if (ap === "PM" && h !== 12) h += 12;
     if (ap === "AM" && h === 12) h = 0;
     const runDate = new Date(parseInt(m[3], 10), parseInt(m[1], 10) - 1, parseInt(m[2], 10), h, parseInt(m[5], 10), parseInt(m[6] || "0", 10));
-    if (runDate.getTime() > now.getTime()) {
+    if (runDate.getTime() > futureCutoff) {
       runs.splice(i, 1);
     }
   }

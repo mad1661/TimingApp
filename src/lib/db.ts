@@ -186,16 +186,18 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
 
 export async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
   const cache = await ensureEventCache(eventCode, season);
-  // Mark runs with future timestamps as phantoms — but only if they have
-  // no timing data. Runs WITH timing data are real runs that the NHRA system
-  // gave bogus timestamps (quad second-pairs). Those get fixed by the
-  // scraper's quad correction, not hidden.
-  const now = Date.now();
+  // Mark runs with timestamps clearly in the future as phantoms — but only if
+  // they have no timing data. Runs WITH timing data are real runs that the
+  // NHRA system gave bogus timestamps (quad second-pairs). Those get fixed by
+  // the scraper's quad correction, not hidden. Use a 24h cushion so timezone
+  // skew between the server and the track can't accidentally hide today's
+  // morning runs.
+  const cutoff = Date.now() + 24 * 60 * 60 * 1000;
   for (const r of cache.runs) {
     if (r._phantom) continue;
     if (!r.timestamp) continue;
     const d = parseTsToDateShared(r.timestamp);
-    if (d && d.getTime() > now) {
+    if (d && d.getTime() > cutoff) {
       const hasData = r.rt != null || r.ft1320 != null || r.ft660 != null || r.ft60 != null;
       if (!hasData) r._phantom = true;
     }
