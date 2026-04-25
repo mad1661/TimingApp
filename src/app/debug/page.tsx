@@ -29,6 +29,8 @@ export default function DebugPage() {
   const [message, setMessage] = useState("");
   const [copied, setCopied] = useState(false);
 
+  const [purging, setPurging] = useState(false);
+
   // Load available events
   useEffect(() => {
     fetch("/api/runs?limit=1")
@@ -104,6 +106,43 @@ export default function DebugPage() {
     }
   }
 
+  async function purgeAndRescrape() {
+    const ev = getSelected();
+    if (!ev || !live.config) return;
+    if (!confirm(`This will DELETE all stored data for "${ev.event_name}" and re-scrape from NHRA. Continue?`)) return;
+    setPurging(true);
+    setMessage("Purging old data...");
+    try {
+      const fetchRes = await fetch("/api/fetch-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: live.config.username,
+          password: live.config.password,
+          season: ev.season,
+          eventType: ev.event_type,
+          eventCode: ev.event_code,
+          startDate: ev.start_date,
+          eventName: ev.event_name,
+          purge: true,
+        }),
+      });
+      const fetchData = await fetchRes.json();
+      if (fetchData.error) { setMessage(`Error: ${fetchData.error}`); setPurging(false); return; }
+      setMessage(`Purged & re-scraped: ${fetchData.totalParsed} runs, ${fetchData.inserted} inserted. Loading...`);
+
+      const debugRes = await fetch(`/api/stats?type=debug-timestamps&event_code=${encodeURIComponent(ev.event_code)}&season=${encodeURIComponent(ev.season)}`);
+      const debugData = await debugRes.json();
+      setInfo({ eventCode: debugData.eventCode, season: debugData.season, totalInCache: debugData.totalInCache, withTimestamp: debugData.withTimestamp });
+      setRuns(debugData.runs || []);
+      setMessage(`Purged & re-scraped: ${fetchData.totalParsed} runs. All data is fresh with scrape sequences.`);
+    } catch (err) {
+      setMessage(`Error: ${err}`);
+    } finally {
+      setPurging(false);
+    }
+  }
+
   function copyData() {
     const header = "#\tSeq\tTimestamp\tCategory\tRound\tName";
     const rows = runs.map((r, i) => `${i + 1}\t${r.seq ?? ""}\t${r.ts}\t${r.cat}\t${r.round}\t${r.name}`);
@@ -144,6 +183,14 @@ export default function DebugPage() {
           >
             {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
             Scrape Fresh & Show
+          </button>
+          <button
+            onClick={purgeAndRescrape}
+            disabled={loading || purging || !selectedEvent || !live.config}
+            className="px-5 py-2.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-lg text-sm disabled:opacity-50 flex items-center gap-2"
+          >
+            {purging ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
+            Purge & Re-scrape
           </button>
           <button
             onClick={showCached}
