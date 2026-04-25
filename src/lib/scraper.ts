@@ -403,6 +403,53 @@ export function parseRunsFromHtml(
     }
   }
 
+  // Second fix: time outliers on the same day. If a small group of runs
+  // (1-2 pairs) for a category/round is isolated by > 1 hour from the
+  // main cluster of that category/round on the same day, it's a quad
+  // second-pair with a bogus time. Fix it to match the main cluster.
+  const byCatRound = new Map<string, typeof runs>();
+  for (const run of runs) {
+    if (!run.timestamp || !run.category || !run.round) continue;
+    const key = `${run.timestamp.split(" ")[0]}|${run.category}|${run.round}`;
+    if (!byCatRound.has(key)) byCatRound.set(key, []);
+    byCatRound.get(key)!.push(run);
+  }
+
+  for (const [, group] of byCatRound) {
+    if (group.length < 6) continue; // need enough runs to identify a cluster
+    // Parse all timestamps to minutes for comparison
+    const withMin = group.map((r) => {
+      const parts = r.timestamp!.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+      if (!parts) return { run: r, min: 0 };
+      let h = parseInt(parts[1], 10);
+      const m = parseInt(parts[2], 10);
+      const ap = (parts[4] || "").toUpperCase();
+      if (ap === "PM" && h !== 12) h += 12;
+      if (ap === "AM" && h === 12) h = 0;
+      return { run: r, min: h * 60 + m };
+    });
+
+    // Find the main cluster: sort by time, the cluster with the most runs
+    const sorted = [...withMin].sort((a, b) => a.min - b.min);
+    // Median time of the group
+    const medianMin = sorted[Math.floor(sorted.length / 2)].min;
+
+    for (const { run, min } of withMin) {
+      // If this run is > 60 min from the median AND there are very few
+      // runs near its time, it's an outlier
+      if (Math.abs(min - medianMin) > 60) {
+        const nearbyCount = withMin.filter((w) => Math.abs(w.min - min) <= 5).length;
+        if (nearbyCount <= 4) {
+          // Find the closest run to the median in this group and use its timestamp
+          const closest = sorted.find((s) => Math.abs(s.min - medianMin) <= 5);
+          if (closest) {
+            run.timestamp = closest.run.timestamp;
+          }
+        }
+      }
+    }
+  }
+
   return runs;
 }
 
