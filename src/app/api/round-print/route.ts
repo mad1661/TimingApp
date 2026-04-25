@@ -161,18 +161,11 @@ export async function GET(request: NextRequest) {
 
     const allRuns = await getEventRuns(eventCode, season);
 
-    // Assign run numbers scoped to the current round (and category, when one
-    // is selected). This keeps the printed Run # column compact and free of
-    // gaps when other classes ran in between this round's pairs. Sort by
-    // chronological timestamp, with lane order as a tie-breaker so adjacent
-    // lanes in a quad get adjacent numbers.
-    const scope = (r: RunRow): boolean => {
-      if (r.round !== round) return false;
-      if (category && r.category !== category) return false;
-      if (classFilter && (r.class_index || "").trim() !== classFilter) return false;
-      return true;
-    };
-    const sortedByTime = allRuns.filter(scope).sort((a, b) => {
+    // Assign run numbers event-wide and chronologically: the very first run of
+    // the event is #1, the last run on the last day is the highest number.
+    // Manual overrides (handled below) can insert a run at a specific slot
+    // and shift everything after by +1.
+    const sortedByTime = [...allRuns].sort((a, b) => {
       const da = a.timestamp ? parseTsToDate(a.timestamp) : null;
       const db = b.timestamp ? parseTsToDate(b.timestamp) : null;
       const ta = da ? da.getTime() : 0;
