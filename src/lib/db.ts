@@ -1196,27 +1196,27 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
         // Sort this class by scrape seq
         const sorted = [...catRuns].sort((a, b) => (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0));
 
-        // Track the max round weight seen so far in scrape order.
-        // If a run has a round weight LOWER than one we already saw at
-        // a higher hour, the day wrapped and this run must be PM.
-        // More precisely: find the highest hour + round-weight in the
-        // first half, and any run after that with a lower hour is PM.
-        let maxRoundSeen = -1;
-        let maxHourForMaxRound = 0;
+        // Walk in scrape order tracking the highest hour seen. If the hour
+        // DROPS while rounds are progressing forward (or even same/higher),
+        // the clock wrapped through noon. Example: Q-3 at hour 10, then
+        // E1 at hour 6 — round went from 13→21 (up) but hour went 10→6
+        // (down), so E1 must be PM. Everything from that point on is PM,
+        // which correctly handles E1(h6) → E2(h7) → E3(h8) all as PM.
+        let maxHourSeen = 0;
         let wrapDetected = false;
 
         for (const run of sorted) {
           const h = tsHour(run.timestamp!);
-          const w = roundSortWeight(run.round);
 
-          if (!wrapDetected && w < maxRoundSeen && h < maxHourForMaxRound) {
-            // Round went DOWN and hour went DOWN — clock wrapped through noon
+          if (!wrapDetected && maxHourSeen > 0 && h < maxHourSeen) {
             wrapDetected = true;
           }
 
           if (wrapDetected) {
             run.timestamp = stripAmPm(run.timestamp!) + " PM";
           }
+
+          if (h > maxHourSeen) maxHourSeen = h;
 
           if (w > maxRoundSeen) {
             maxRoundSeen = w;
