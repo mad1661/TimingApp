@@ -358,7 +358,59 @@ export function parseRunsFromHtml(
     });
   });
 
+  // CompuLink omits the AM/PM marker on bare timestamps. Infer it: race days
+  // start in the morning, so each day starts in AM. Flip to PM the first time
+  // we hit hour 12 (noon) or the hour suddenly drops (e.g. 11 -> 1, meaning
+  // we crossed noon). Once flipped to PM we stay there for the rest of the
+  // day. Pre-existing AM/PM tokens are respected.
+  inferAmPm(runs);
+
   return runs;
+}
+
+interface MutableTimestampRow { timestamp: string | null }
+
+function inferAmPm(rows: MutableTimestampRow[]): void {
+  const TIME_RE = /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*$/i;
+  const byDay = new Map<string, MutableTimestampRow[]>();
+  for (const r of rows) {
+    if (!r.timestamp) continue;
+    const m = r.timestamp.trim().replace(/\s+/g, " ").match(TIME_RE);
+    if (!m) continue;
+    const day = m[1];
+    const arr = byDay.get(day) || [];
+    arr.push(r);
+    byDay.set(day, arr);
+  }
+
+  for (const [, dayRuns] of byDay) {
+    let state: "AM" | "PM" = "AM";
+    let prevHour: number | null = null;
+
+    for (const r of dayRuns) {
+      const ts = (r.timestamp || "").trim().replace(/\s+/g, " ");
+      const m = ts.match(TIME_RE);
+      if (!m) continue;
+      const [, day, hhStr, mmStr, ssStr, apStr] = m;
+      const hour = parseInt(hhStr, 10);
+      if (isNaN(hour)) continue;
+
+      if (apStr) {
+        // Already labeled. Trust it and update state.
+        state = apStr.toUpperCase() as "AM" | "PM";
+      } else {
+        // Infer based on chronological progression.
+        if (state === "AM") {
+          if (hour === 12) state = "PM";
+          else if (prevHour !== null && hour < prevHour) state = "PM";
+        }
+        // Re-emit with the inferred marker.
+        r.timestamp = `${day} ${hhStr}:${mmStr}${ssStr ? `:${ssStr}` : ""} ${state}`;
+      }
+
+      prevHour = hour;
+    }
+  }
 }
 
 function extractCookies(headers: Headers): string {
