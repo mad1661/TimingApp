@@ -383,9 +383,36 @@ function inferAmPm(rows: MutableTimestampRow[]): void {
     byDay.set(day, arr);
   }
 
-  for (const [, dayRuns] of byDay) {
+  const hourOf = (r: MutableTimestampRow): number | null => {
+    const ts = (r.timestamp || "").trim().replace(/\s+/g, " ");
+    const m = ts.match(TIME_RE);
+    if (!m) return null;
+    const h = parseInt(m[2], 10);
+    return isNaN(h) ? null : h;
+  };
+
+  for (const [, dayRunsRaw] of byDay) {
+    // CompuLink can list rows newest-first or oldest-first. We need to walk
+    // them in chronological (oldest-first) order so the state machine flips
+    // AM -> PM when we cross noon, not the reverse. Detect the direction by
+    // counting how often hour increases vs decreases between adjacent rows;
+    // if it decreases more often, reverse the array before walking.
+    let dayRuns = dayRunsRaw;
+    if (dayRuns.length >= 2) {
+      let up = 0, down = 0;
+      for (let i = 1; i < dayRuns.length; i++) {
+        const a = hourOf(dayRuns[i - 1]);
+        const b = hourOf(dayRuns[i]);
+        if (a == null || b == null) continue;
+        if (b > a) up++;
+        else if (b < a) down++;
+      }
+      if (down > up) dayRuns = [...dayRunsRaw].reverse();
+    }
+
     let state: "AM" | "PM" = "AM";
     let prevHour: number | null = null;
+    let sawMorning = false;
 
     for (const r of dayRuns) {
       const ts = (r.timestamp || "").trim().replace(/\s+/g, " ");
@@ -396,15 +423,24 @@ function inferAmPm(rows: MutableTimestampRow[]): void {
       if (isNaN(hour)) continue;
 
       if (apStr) {
-        // Already labeled. Trust it and update state.
         state = apStr.toUpperCase() as "AM" | "PM";
+        if (state === "AM") sawMorning = true;
       } else {
         // Infer based on chronological progression.
         if (state === "AM") {
-          if (hour === 12) state = "PM";
-          else if (prevHour !== null && hour < prevHour) state = "PM";
+          if (hour === 12) {
+            state = "PM";
+          } else if (prevHour !== null && hour < prevHour) {
+            // Hour dropped: we crossed noon (e.g. 11 -> 1).
+            state = "PM";
+          } else if (!sawMorning && (hour <= 7 || hour === 12)) {
+            // The very first run of the day is too early to be morning racing
+            // (hours 1-7) or is noon -> assume PM.
+            state = "PM";
+          } else {
+            sawMorning = true;
+          }
         }
-        // Re-emit with the inferred marker.
         r.timestamp = `${day} ${hhStr}:${mmStr}${ssStr ? `:${ssStr}` : ""} ${state}`;
       }
 
