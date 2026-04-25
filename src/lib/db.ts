@@ -1159,18 +1159,17 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       );
     }
 
-    // Walk in order: AM until we see the first hour 1-5 run, then PM.
+    // Walk in order: AM until we see hour 12 or 1-5, then PM.
     let passedNoon = pmStart;
     let seenMorning = false;
 
     for (const run of dayRuns) {
       const h = tsHour(run.timestamp!);
 
-      // Track that we've seen morning hours (6-11)
       if (h >= 6 && h <= 11) seenMorning = true;
 
-      // Noon crossing: first hour 1-5 after morning hours
-      if (!passedNoon && seenMorning && h >= 1 && h <= 5) {
+      // Noon crossing: hour 12 or 1-5 after we've seen morning hours
+      if (!passedNoon && seenMorning && (h === 12 || (h >= 1 && h <= 5))) {
         passedNoon = true;
       }
 
