@@ -299,6 +299,7 @@ export function parseRunsFromHtml(
   }
 
   const rows = table.find("tr").slice(1);
+  let seq = 0;
 
   rows.each((_, row) => {
     const cells = $(row).find("td");
@@ -355,6 +356,7 @@ export function parseRunsFromHtml(
       event_type: meta.eventType,
       season: meta.season,
       start_date: meta.startDate,
+      _scrape_seq: seq++,
     });
   });
 

@@ -41,6 +41,7 @@ export interface RunRow {
   manual_entry?: number | null;
   created_at?: string;
   _dedup_key?: string;
+  _scrape_seq?: number;
 }
 
 export interface EventRow {
@@ -1135,69 +1136,67 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   }
 
   for (const [, dayRuns] of byDay) {
-    // Hours 6-7 are ambiguous (could be early AM or late PM).
-    // Use same-day context PER CLASS, since round numbers progress monotonically
-    // in time within a class but NOT across classes (bracket classes can be on
-    // R-6 while pros are still on Q-3). Compare each ambiguous-hour run's round
-    // against the max round of other same-class runs at KNOWN time-of-day hours
-    // (AM 8-11 or PM 12, 1-5). If its round is greater, it must be later in the
-    // day → PM. Otherwise → AM.
-    const maxAmRoundByClass = new Map<string, number>(); // hours 8-11
-    const maxPmRoundByClass = new Map<string, number>(); // hours 12, 1-5
-    for (const run of dayRuns) {
-      const h = tsHour(run.timestamp!);
-      const cat = run.category || "";
-      const w = roundSortWeight(run.round);
-      if (h >= 8 && h <= 11) {
-        const cur = maxAmRoundByClass.get(cat);
-        if (cur === undefined || w > cur) maxAmRoundByClass.set(cat, w);
-      } else if (h === 12 || (h >= 1 && h <= 5)) {
-        const cur = maxPmRoundByClass.get(cat);
-        if (cur === undefined || w > cur) maxPmRoundByClass.set(cat, w);
+    // Prefer scrape sequence order — the NHRA website presents data
+    // chronologically, so the scrape order IS the time order. This
+    // handles all AM/PM cases correctly including the same class/round
+    // running at both 7 AM and 7 PM on the same day.
+    const hasScrapeSeq = dayRuns.some((r) => r._scrape_seq != null);
+
+    if (hasScrapeSeq) {
+      // Sort by scrape sequence (chronological order from NHRA)
+      dayRuns.sort((a, b) => (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0));
+
+      // Walk in scrape order: AM until hour 12 or hours drop from
+      // high (11) to low (1), indicating noon crossing.
+      let passedNoon = pmStart;
+
+      for (const run of dayRuns) {
+        const h = tsHour(run.timestamp!);
+        if (h === 12) passedNoon = true;
+        else if (!passedNoon && h >= 1 && h <= 5) passedNoon = true;
+        run.timestamp = run.timestamp + (passedNoon ? " PM" : " AM");
       }
-    }
-
-    const pmRuns = new Set<RunRow>();
-    for (const run of dayRuns) {
-      const h = tsHour(run.timestamp!);
-      if (h !== 6 && h !== 7) continue;
-      const cat = run.category || "";
-      const w = roundSortWeight(run.round);
-      const maxPm = maxPmRoundByClass.get(cat);
-      const maxAm = maxAmRoundByClass.get(cat);
-      // Round at or later than any same-class PM-hour round → PM
-      // (>= handles qualifying sessions that span into hour 6, e.g. Q-4
-      // running from 5:44 PM into 6:02 PM with the same round label)
-      if (maxPm !== undefined && w >= maxPm) {
-        pmRuns.add(run);
-      }
-      // No PM-hour reference, but later than same-class morning rounds → PM
-      else if (maxPm === undefined && maxAm !== undefined && w > maxAm) {
-        pmRuns.add(run);
-      }
-    }
-
-    // Sort by time, with round as tiebreaker
-    dayRuns.sort((a, b) =>
-      raceDaySortKey(a.timestamp!, a.round, pmRuns.has(a)) -
-      raceDaySortKey(b.timestamp!, b.round, pmRuns.has(b))
-    );
-
-    // Walk sorted runs: before hour 12 = AM, hour 12 onward = PM.
-    // Hours 1-5 are also unambiguously PM (they sort after morning hours),
-    // so flip to PM when we see them too — handles days with no hour-12 run.
-    let passedNoon = pmStart;
-
-    for (const run of dayRuns) {
-      const timePart = run.timestamp!.split(" ")[1];
-      if (!timePart) continue;
-      const h = parseInt(timePart.split(":")[0], 10);
-
-      if (h === 12 || (!passedNoon && h >= 1 && h <= 5)) {
-        passedNoon = true;
+    } else {
+      // Fallback for data without scrape sequence: use per-class round
+      // weight heuristic for hours 6-7.
+      const maxAmRoundByClass = new Map<string, number>();
+      const maxPmRoundByClass = new Map<string, number>();
+      for (const run of dayRuns) {
+        const h = tsHour(run.timestamp!);
+        const cat = run.category || "";
+        const w = roundSortWeight(run.round);
+        if (h >= 8 && h <= 11) {
+          const cur = maxAmRoundByClass.get(cat);
+          if (cur === undefined || w > cur) maxAmRoundByClass.set(cat, w);
+        } else if (h === 12 || (h >= 1 && h <= 5)) {
+          const cur = maxPmRoundByClass.get(cat);
+          if (cur === undefined || w > cur) maxPmRoundByClass.set(cat, w);
+        }
       }
 
-      run.timestamp = run.timestamp + (passedNoon ? " PM" : " AM");
+      const pmRunSet = new Set<RunRow>();
+      for (const run of dayRuns) {
+        const h = tsHour(run.timestamp!);
+        if (h !== 6 && h !== 7) continue;
+        const cat = run.category || "";
+        const w = roundSortWeight(run.round);
+        const maxPm = maxPmRoundByClass.get(cat);
+        const maxAm = maxAmRoundByClass.get(cat);
+        if (maxPm !== undefined && w >= maxPm) pmRunSet.add(run);
+        else if (maxPm === undefined && maxAm !== undefined && w > maxAm) pmRunSet.add(run);
+      }
+
+      dayRuns.sort((a, b) =>
+        raceDaySortKey(a.timestamp!, a.round, pmRunSet.has(a)) -
+        raceDaySortKey(b.timestamp!, b.round, pmRunSet.has(b))
+      );
+
+      let passedNoon = pmStart;
+      for (const run of dayRuns) {
+        const h = tsHour(run.timestamp!);
+        if (h === 12 || (!passedNoon && h >= 1 && h <= 5)) passedNoon = true;
+        run.timestamp = run.timestamp + (passedNoon ? " PM" : " AM");
+      }
     }
   }
 }
