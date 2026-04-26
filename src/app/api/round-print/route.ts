@@ -243,6 +243,55 @@ export async function GET(request: NextRequest) {
       pairMap.set(canonical, arr);
     }
 
+    // Drag racing is at most 4-wide. If our timestamp grouping produced a
+    // "pair" with 5+ runs, the underlying timestamps got mangled (usually
+    // by an older version of the scraper's quad-fix heuristics) and every
+    // pair in this round collapsed onto one timestamp. Split those oversized
+    // groups back into 2-car pairs by walking through the runs in scrape
+    // order and re-pairing adjacent L / R rows. Each split sub-pair gets its
+    // own synthetic canonical key so downstream rendering treats it as a
+    // distinct pair on the log sheet.
+    const normalLane = (l: string | null | undefined): "L" | "R" | "X" => {
+      const v = (l || "").trim().toUpperCase();
+      if (v === "L" || v === "L1" || v === "1") return "L";
+      if (v === "R" || v === "L2" || v === "2") return "R";
+      return "X";
+    };
+    const scrapeOrderKey = (r: RunRow): string => {
+      const seq = (r._scrape_seq ?? 1e9).toString().padStart(10, "0");
+      return `${seq}|${r.timestamp || ""}`;
+    };
+    for (const [canonical, runs] of Array.from(pairMap.entries())) {
+      if (runs.length <= 4) continue;
+      const sorted = [...runs].sort((a, b) =>
+        scrapeOrderKey(a).localeCompare(scrapeOrderKey(b)),
+      );
+      const subPairs: RunRow[][] = [];
+      let cur: RunRow[] = [];
+      const lanesUsed = new Set<"L" | "R" | "X">();
+      for (const r of sorted) {
+        const ln = normalLane(r.lane);
+        if (cur.length >= 2 || (ln !== "X" && lanesUsed.has(ln))) {
+          subPairs.push(cur);
+          cur = [];
+          lanesUsed.clear();
+        }
+        cur.push(r);
+        lanesUsed.add(ln);
+      }
+      if (cur.length > 0) subPairs.push(cur);
+
+      pairMap.delete(canonical);
+      subPairs.forEach((subPair, idx) => {
+        // Tag each split pair with a unique key so it shows as its own row
+        // group on the sheet. Use the first run's timestamp as the display
+        // time when available, falling back to the merged canonical.
+        const firstTs = subPair[0]?.timestamp || canonical;
+        const key = `${firstTs}#split-${idx.toString().padStart(3, "0")}`;
+        pairMap.set(key, subPair);
+      });
+    }
+
     const pairs: RoundPrintPair[] = [];
     let maxPairSize = 0;
 
@@ -318,7 +367,14 @@ export async function GET(request: NextRequest) {
       const effectiveLane = (r: RunRow): string | null => laneRemap.get(r) ?? r.lane;
       runs.sort((a, b) => laneOrder(effectiveLane(a)) - laneOrder(effectiveLane(b)));
       if (runs.length > maxPairSize) maxPairSize = runs.length;
-      const date = parseTsToDate(canonical);
+      // For split sub-pairs the canonical key carries a "#split-NNN" suffix
+      // we use to keep them distinct in the map; the displayed timestamp
+      // should come from the actual first run, not the synthetic key.
+      const displayCanonical =
+        canonical.includes("#split-")
+          ? (runs[0]?.timestamp || canonical.split("#split-")[0])
+          : canonical;
+      const date = parseTsToDate(displayCanonical);
       const timeLabel = fmtClock(date);
 
       // Pair-level MOV
@@ -361,7 +417,7 @@ export async function GET(request: NextRequest) {
 
       const hasManualEntry = runs.some((r) => r.manual_entry === 1);
       pairs.push({
-        canonical_ts: canonical,
+        canonical_ts: displayCanonical,
         time_label: timeLabel,
         pair_mov: pairMov,
         winner_car: winner?.car_number ?? null,
