@@ -307,9 +307,7 @@ function PodiumBox({
             </div>
           </div>
         ) : (
-          <span className="text-[10px] italic text-gray-400">
-            (pick after final runs)
-          </span>
+          <span>&nbsp;</span>
         )}
       </div>
     </div>
