@@ -2327,6 +2327,46 @@ export async function getLadderRoundResults(
     pairMap.set(canonical, arr);
   }
 
+  // Old corrupted scrape data sometimes collapses every run of a round onto
+  // one canonical timestamp. Drag racing tops out at 4-wide, so any pair
+  // with 5+ runs is split back into 2-car sub-pairs by walking adjacent
+  // L / R runs in scrape order — same trick as the round-print page.
+  const normalLane = (l: string | null | undefined): "L" | "R" | "X" => {
+    const v = (l || "").trim().toUpperCase();
+    if (v === "L" || v === "L1" || v === "1") return "L";
+    if (v === "R" || v === "L2" || v === "2") return "R";
+    return "X";
+  };
+  const scrapeOrderKey = (r: RunRow): string => {
+    const seq = (r._scrape_seq ?? 1e9).toString().padStart(10, "0");
+    return `${seq}|${r.timestamp || ""}`;
+  };
+  for (const [canonical, runs] of Array.from(pairMap.entries())) {
+    if (runs.length <= 4) continue;
+    const sorted = [...runs].sort((a, b) =>
+      scrapeOrderKey(a).localeCompare(scrapeOrderKey(b)),
+    );
+    const subPairs: RunRow[][] = [];
+    let cur: RunRow[] = [];
+    const lanesUsed = new Set<"L" | "R" | "X">();
+    for (const r of sorted) {
+      const ln = normalLane(r.lane);
+      if (cur.length >= 2 || (ln !== "X" && lanesUsed.has(ln))) {
+        subPairs.push(cur);
+        cur = [];
+        lanesUsed.clear();
+      }
+      cur.push(r);
+      lanesUsed.add(ln);
+    }
+    if (cur.length > 0) subPairs.push(cur);
+    pairMap.delete(canonical);
+    subPairs.forEach((subPair, idx) => {
+      const firstTs = subPair[0]?.timestamp || canonical;
+      pairMap.set(`${firstTs}#split-${idx}`, subPair);
+    });
+  }
+
   const dataScore = (r: RunRow): number => {
     let n = 0;
     if (r.rt != null) n++;

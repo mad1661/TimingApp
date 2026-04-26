@@ -447,15 +447,16 @@ export default function LadderBuilderPage() {
           const seedCars = new Set(eligibleSeeds.map((e) => e.car));
           const carToSeed = new Map(eligibleSeeds.map((e) => [e.car, e.seed]));
           const seedToCar = new Map(eligibleSeeds.map((e) => [e.seed, e.car]));
-          // Find the pair containing the *most* seeded cars (so a 4-wide quad
-          // doesn't accidentally match a different pair sharing one car).
+          // Require a *full* match — every eligible seed of this quad must be
+          // in the same E-round pair. A partial overlap means the auto-fill
+          // would advance whoever happens to be in that other pair, not the
+          // ones who actually raced the four lanes that fed this quad.
           let matchedPair: typeof pairs[number] | null = null;
-          let bestOverlap = 0;
           for (const p of pairs) {
             const overlap = p.cars.filter((c) => seedCars.has(c)).length;
-            if (overlap > bestOverlap && overlap >= 2) {
-              bestOverlap = overlap;
+            if (overlap >= eligibleSeeds.length) {
               matchedPair = p;
+              break;
             }
           }
 
@@ -465,12 +466,18 @@ export default function LadderBuilderPage() {
             rankedSeeds = matchedPair.finishOrder
               .map((e) => carToSeed.get(e.car))
               .filter((s): s is number => typeof s === "number");
-          } else {
-            // No joint pair — bye situation (or split race we can't reconcile).
-            // Both top seeds advance, in seed order.
+          } else if (eligibleSeeds.length === 2) {
+            // Bye / split run — both top seeds advance, in seed order. The
+            // bye fallback only fires for 2-seed R1 quads where the lane
+            // partner was BYE; 3+ seed quads need a real pair to advance.
             rankedSeeds = [...eligibleSeeds]
               .sort((a, b) => a.seed - b.seed)
               .map((e) => e.seed);
+          } else {
+            // Couldn't reconcile this quad to a single E-round pair — leave
+            // the existing advancers / seedResults alone so a previous good
+            // run isn't overwritten with a guess.
+            continue;
           }
           if (rankedSeeds.length < 2) continue;
 
