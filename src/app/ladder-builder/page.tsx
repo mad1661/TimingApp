@@ -413,24 +413,46 @@ export default function LadderBuilderPage() {
         const data = await res.json();
         const pairs: Array<{
           cars: string[];
-          finishOrder: Array<{ car: string; et: number | null; mph: number | null }>;
+          finishOrder: Array<{
+            car: string;
+            et: number | null;
+            mph: number | null;
+            result: string | null;
+          }>;
         }> = data.results || [];
         if (pairs.length === 0) {
           setAutoFillStatus(`No ${eventRound} runs found for ${autoFillCategory}. Refresh the data and try again.`);
           return;
         }
 
-        // Index every seeded car's run stats once. For bye situations (top
-        // seeds racing solo) the car shows up in a pair containing only that
-        // car — we still want their ET/MPH captured.
-        const carRunStats = new Map<string, { et: number | null; mph: number | null }>();
+        // Index every car's run info once (ET / MPH / W-R-3-4 result). NHRA
+        // marks the W / R / 3 / 4 column on each row, so we can rank the
+        // ladder quad's seeds purely by that column without depending on
+        // how the underlying scrape happened to split the 4-wide race into
+        // pairs of rows.
+        const carInfo = new Map<
+          string,
+          { et: number | null; mph: number | null; result: string | null }
+        >();
         for (const p of pairs) {
           for (const entry of p.finishOrder) {
-            if (!carRunStats.has(entry.car)) {
-              carRunStats.set(entry.car, { et: entry.et, mph: entry.mph });
+            if (!carInfo.has(entry.car)) {
+              carInfo.set(entry.car, {
+                et: entry.et,
+                mph: entry.mph,
+                result: entry.result,
+              });
             }
           }
         }
+        const resultPos = (res: string | null): number => {
+          const r = (res || "").trim().toUpperCase();
+          if (r === "W") return 1;
+          if (r === "R") return 2;
+          if (r === "3") return 3;
+          if (r === "4") return 4;
+          return 99;
+        };
 
         let filled = 0;
         const updated: AdvancerMap = { ...advancers };
@@ -444,60 +466,45 @@ export default function LadderBuilderPage() {
             }));
           if (eligibleSeeds.length < 2) continue;
 
-          const seedCars = new Set(eligibleSeeds.map((e) => e.car));
-          const carToSeed = new Map(eligibleSeeds.map((e) => [e.car, e.seed]));
-          const seedToCar = new Map(eligibleSeeds.map((e) => [e.seed, e.car]));
-          // Require a *full* match — every eligible seed of this quad must be
-          // in the same E-round pair. A partial overlap means the auto-fill
-          // would advance whoever happens to be in that other pair, not the
-          // ones who actually raced the four lanes that fed this quad.
-          let matchedPair: typeof pairs[number] | null = null;
-          for (const p of pairs) {
-            const overlap = p.cars.filter((c) => seedCars.has(c)).length;
-            if (overlap >= eligibleSeeds.length) {
-              matchedPair = p;
-              break;
-            }
-          }
+          // Look up each seed's individual run info. A seed without a hit
+          // didn't race in this round at all (DNS / no-show); rank it last.
+          const ranked = eligibleSeeds
+            .map((es) => {
+              const info = carInfo.get(es.car);
+              return {
+                seed: es.seed,
+                car: es.car,
+                et: info?.et ?? null,
+                mph: info?.mph ?? null,
+                result: info?.result ?? null,
+                rank: info ? resultPos(info.result) : 100,
+              };
+            })
+            .sort((a, b) => {
+              if (a.rank !== b.rank) return a.rank - b.rank;
+              // Both have the same W / R / 3 / 4 (typically: both null on
+              // bye runs, or both DNS) — fall back to seed order so the
+              // higher seed advances first.
+              return a.seed - b.seed;
+            });
 
-          let rankedSeeds: number[] = [];
-          if (matchedPair) {
-            // Real race — finish order of the seeded cars decides W / 2nd.
-            rankedSeeds = matchedPair.finishOrder
-              .map((e) => carToSeed.get(e.car))
-              .filter((s): s is number => typeof s === "number");
-          } else if (eligibleSeeds.length === 2) {
-            // Bye / split run — both top seeds advance, in seed order. The
-            // bye fallback only fires for 2-seed R1 quads where the lane
-            // partner was BYE; 3+ seed quads need a real pair to advance.
-            rankedSeeds = [...eligibleSeeds]
-              .sort((a, b) => a.seed - b.seed)
-              .map((e) => e.seed);
-          } else {
-            // Couldn't reconcile this quad to a single E-round pair — leave
-            // the existing advancers / seedResults alone so a previous good
-            // run isn't overwritten with a guess.
-            continue;
-          }
-          if (rankedSeeds.length < 2) continue;
+          if (ranked.length < 2) continue;
+          // Don't write advancers if we have zero data on these cars at all
+          // — that means E-round results haven't been scraped yet for any
+          // of them, leave any previous good values alone.
+          if (ranked.every((r) => r.rank === 100)) continue;
 
           updated[advancerKey(ladderRound, quad.quadIndex)] = [
-            rankedSeeds[0],
-            rankedSeeds[1],
+            ranked[0].seed,
+            ranked[1].seed,
           ];
-          // Capture each advancer's actual round ET / MPH from this round so
-          // the next round's lanes print what they ran here. carRunStats was
-          // built from every pair (including byes), so it works for both.
-          for (const seed of rankedSeeds.slice(0, 2)) {
-            const car = seedToCar.get(seed);
-            if (!car) continue;
-            const stats = carRunStats.get(car);
-            if (stats) {
-              updatedResults[seedResultKey(ladderRound, seed)] = {
-                et: stats.et,
-                mph: stats.mph,
-              };
-            }
+          // Capture each advancer's actual round ET / MPH so the next
+          // round's lanes print what they ran here.
+          for (const r of ranked.slice(0, 2)) {
+            updatedResults[seedResultKey(ladderRound, r.seed)] = {
+              et: r.et,
+              mph: r.mph,
+            };
           }
           filled++;
         }

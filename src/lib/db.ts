@@ -2296,6 +2296,10 @@ export interface LadderRoundResultEntry {
   car: string;
   et: number | null;
   mph: number | null;
+  // W / R / 3 / 4 from the timing system, when present. Auto-fill prefers
+  // this over per-pair finish order so split / merged scrape pairs don't
+  // change the answer.
+  result: string | null;
 }
 
 export interface LadderRoundResultPair {
@@ -2422,6 +2426,7 @@ export async function getLadderRoundResults(
           car: (r.car_number as string).trim(),
           et: r.ft1320,
           mph: r.mph_1320,
+          result: r.result ?? null,
         })),
       timestamp: canonical,
     });
