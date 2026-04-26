@@ -33,7 +33,7 @@ interface ManualRow {
 
 const FIELD_SIZE_OPTIONS = [
   { size: 17, label: "17-Car Quad Ladder", supported: true },
-  { size: 16, label: "16-Car Quad Ladder", supported: false },
+  { size: 16, label: "16-Car Quad Ladder", supported: true },
   { size: 15, label: "15-Car Quad Ladder", supported: false },
   { size: 14, label: "14-Car Quad Ladder", supported: false },
 ];
@@ -400,9 +400,10 @@ export default function LadderBuilderPage() {
       runMph: sr?.mph ?? null,
     };
   }
-  const finalPicks = advancers[advancerKey(4, 1)] || null;
-  const championLane = finalPicks ? laneFromSeed(finalPicks[0], 4) : null;
-  const runnerUpLane = finalPicks ? laneFromSeed(finalPicks[1], 4) : null;
+  const finalRoundNum = ladder ? ladder.rounds.length : 0;
+  const finalPicks = finalRoundNum > 0 ? advancers[advancerKey(finalRoundNum, 1)] || null : null;
+  const championLane = finalPicks ? laneFromSeed(finalPicks[0], finalRoundNum) : null;
+  const runnerUpLane = finalPicks ? laneFromSeed(finalPicks[1], finalRoundNum) : null;
 
   function setQuadAdvancers(round: number, quadIndex: number, picks: [number, number] | null) {
     setAdvancers((prev) => {
@@ -947,14 +948,13 @@ export default function LadderBuilderPage() {
             <div className="space-y-5">
               {ladder.rounds.map((round, ri) => {
                 const roundNum = ri + 1;
-                const roundLabel =
-                  roundNum === 1
-                    ? "Round 1 → Round 2"
-                    : roundNum === 2
-                      ? "Round 2 → Semifinals"
-                      : roundNum === 3
-                        ? "Semifinals → Final"
-                        : "Final → Champion";
+                const totalRounds = ladder.rounds.length;
+                const roundLabel = (() => {
+                  if (roundNum === totalRounds) return "Final → Champion";
+                  if (roundNum === totalRounds - 1) return "Semifinals → Final";
+                  if (roundNum === totalRounds - 2) return `Round ${roundNum} → Semifinals`;
+                  return `Round ${roundNum} → Round ${roundNum + 1}`;
+                })();
                 const elimRoundOptions = availableRounds.filter((r) => r.startsWith("E") || r === "F" || r === "SF");
                 return (
                   <div key={roundNum}>
@@ -962,31 +962,33 @@ export default function LadderBuilderPage() {
                       <h3 className="text-xs uppercase tracking-wider text-gray-500">
                         {roundLabel}
                       </h3>
-                      {inputMode === "event" && eventCode && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] uppercase text-gray-500">Auto-fill from</span>
-                          <select
-                            value={autoFillRound[roundNum] || "E1"}
-                            onChange={(e) => setAutoFillRoundFor(roundNum, e.target.value)}
-                            className="px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-white text-xs focus:outline-none focus:border-nhra-accent"
-                          >
-                            {elimRoundOptions.length === 0 && (
-                              <option value={autoFillRound[roundNum] || "E1"}>{autoFillRound[roundNum] || "E1"}</option>
-                            )}
-                            {elimRoundOptions.map((r) => (
-                              <option key={r} value={r}>{r}</option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() =>
-                              autoFillFromEvent(roundNum, autoFillRound[roundNum] || "E1")
-                            }
-                            className="px-3 py-1 bg-nhra-red text-white rounded text-xs font-medium hover:bg-red-700"
-                          >
-                            Auto-fill
-                          </button>
-                        </div>
-                      )}
+                      {inputMode === "event" && eventCode && (() => {
+                        const defaultRound = roundNum === totalRounds ? "F" : `E${roundNum}`;
+                        const value = autoFillRound[roundNum] || defaultRound;
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] uppercase text-gray-500">Auto-fill from</span>
+                            <select
+                              value={value}
+                              onChange={(e) => setAutoFillRoundFor(roundNum, e.target.value)}
+                              className="px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-white text-xs focus:outline-none focus:border-nhra-accent"
+                            >
+                              {elimRoundOptions.length === 0 && (
+                                <option value={value}>{value}</option>
+                              )}
+                              {elimRoundOptions.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => autoFillFromEvent(roundNum, value)}
+                              className="px-3 py-1 bg-nhra-red text-white rounded text-xs font-medium hover:bg-red-700"
+                            >
+                              Auto-fill
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {round.map((quad) => (

@@ -24,14 +24,16 @@ interface LadderSheetProps {
 }
 
 export default function LadderSheet({ ladder, header, champion, runnerUp }: LadderSheetProps) {
-  const [r1, r2, r3, r4] = ladder.rounds;
-
   return (
     <div className="ladder-sheet bg-white text-black font-serif">
       <SheetHeader header={header} fieldSize={ladder.fieldSize} />
 
       <div className="px-2 pt-1 pb-1">
-        <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} champion={champion ?? null} runnerUp={runnerUp ?? null} />
+        <BracketGrid
+          rounds={ladder.rounds}
+          champion={champion ?? null}
+          runnerUp={runnerUp ?? null}
+        />
       </div>
 
       <PrintStyles />
@@ -130,65 +132,86 @@ function SheetHeader({
 // connector lines line up.
 
 function BracketGrid({
-  r1,
-  r2,
-  r3,
-  r4,
+  rounds,
   champion,
   runnerUp,
 }: {
-  r1: QuadCell[];
-  r2: QuadCell[];
-  r3: QuadCell[];
-  r4: QuadCell[];
+  rounds: QuadCell[][];
   champion: Lane | null;
   runnerUp: Lane | null;
 }) {
-  const N = r1.length; // 8 for the 17-car ladder
+  const numRounds = rounds.length;
+  const N = rounds[0].length; // R1 quad count = total rows in the grid
+  // Layout: round col, connector col, round col, ..., final round col.
+  const gridCols: string[] = [];
+  for (let r = 0; r < numRounds; r++) {
+    if (r === 0) gridCols.push("minmax(190px, 1fr)");
+    else if (r === numRounds - 1) gridCols.push("minmax(170px, 1fr)");
+    else gridCols.push("minmax(150px, 1fr)");
+    if (r < numRounds - 1) gridCols.push("24px");
+  }
 
   return (
     <div
       className="grid"
       style={{
-        gridTemplateColumns:
-          "minmax(190px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr) 24px minmax(160px, 1fr)",
+        gridTemplateColumns: gridCols.join(" "),
         gridTemplateRows: `repeat(${N}, minmax(94px, 1fr))`,
       }}
     >
-      {r1.map((q, k) => (
-        <GridCell key={`r1-${k}`} col={1} rowStart={k + 1} rowSpan={1}>
-          <QuadBox quad={q} variant="round1" />
-        </GridCell>
-      ))}
+      {rounds.map((round, ri) => {
+        const col = 2 * ri + 1;
+        const rowsPerQuad = N / round.length;
+        const isFinal = ri === numRounds - 1;
+        return round.map((quad, i) => {
+          const rowStart = i * rowsPerQuad + 1;
+          if (isFinal) {
+            return (
+              <GridCell
+                key={`r${ri}-${i}`}
+                col={col}
+                rowStart={1}
+                rowSpan={N}
+              >
+                <FinalCell
+                  quad={quad}
+                  champion={champion}
+                  runnerUp={runnerUp}
+                />
+              </GridCell>
+            );
+          }
+          return (
+            <GridCell
+              key={`r${ri}-${i}`}
+              col={col}
+              rowStart={rowStart}
+              rowSpan={rowsPerQuad}
+            >
+              <QuadBox
+                quad={quad}
+                variant={ri === 0 ? "round1" : "advanced"}
+              />
+            </GridCell>
+          );
+        });
+      })}
 
-      {r2.map((_, i) => (
-        <GridCell key={`c12-${i}`} col={2} rowStart={2 * i + 1} rowSpan={2}>
-          <ConnectorPair />
-        </GridCell>
-      ))}
-      {r2.map((q, i) => (
-        <GridCell key={`r2-${i}`} col={3} rowStart={2 * i + 1} rowSpan={2}>
-          <QuadBox quad={q} variant="advanced" />
-        </GridCell>
-      ))}
-
-      {r3.map((_, i) => (
-        <GridCell key={`c23-${i}`} col={4} rowStart={4 * i + 1} rowSpan={4}>
-          <ConnectorPair />
-        </GridCell>
-      ))}
-      {r3.map((q, i) => (
-        <GridCell key={`r3-${i}`} col={5} rowStart={4 * i + 1} rowSpan={4}>
-          <QuadBox quad={q} variant="advanced" />
-        </GridCell>
-      ))}
-
-      <GridCell col={6} rowStart={1} rowSpan={N}>
-        <ConnectorPair />
-      </GridCell>
-      <GridCell col={7} rowStart={1} rowSpan={N}>
-        <FinalCell quad={r4[0]} champion={champion} runnerUp={runnerUp} />
-      </GridCell>
+      {rounds.slice(0, -1).map((source, ri) => {
+        const col = 2 * ri + 2;
+        const rowsPerSource = N / source.length;
+        const numConnectors = source.length / 2;
+        return Array.from({ length: numConnectors }, (_, i) => (
+          <GridCell
+            key={`c${ri}-${i}`}
+            col={col}
+            rowStart={i * 2 * rowsPerSource + 1}
+            rowSpan={rowsPerSource * 2}
+          >
+            <ConnectorPair />
+          </GridCell>
+        ));
+      })}
     </div>
   );
 }
@@ -226,12 +249,19 @@ function FinalCell({
   champion: Lane | null;
   runnerUp: Lane | null;
 }) {
+  // Champion + Runner-Up sit at the top of the column. The Final quad stays
+  // vertically centered in the remaining space so it lines up with the
+  // semifinal connector lines like the original NHRA sheet.
   return (
-    <div className="flex flex-col w-full gap-2">
-      <PodiumBox label="Champion" lane={champion} accent="champion" />
-      <PodiumBox label="Runner-Up" lane={runnerUp} accent="runner" />
-      <div className="mt-1">
-        <div className="text-center text-[10px] italic tracking-widest mb-1">— FINAL —</div>
+    <div className="flex flex-col w-full h-full">
+      <div className="flex flex-col gap-2">
+        <PodiumBox label="Champion" lane={champion} accent="champion" />
+        <PodiumBox label="Runner-Up" lane={runnerUp} accent="runner" />
+      </div>
+      <div className="flex-1 flex flex-col justify-center min-h-0">
+        <div className="text-center text-[10px] italic tracking-widest mb-1">
+          — FINAL —
+        </div>
         <QuadBox quad={quad} variant="advanced" />
       </div>
     </div>

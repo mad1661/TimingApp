@@ -93,6 +93,36 @@ const ACTIVE_LANES_17: Record<number, number[]> = {
   8: [1, 3],
 };
 
+// ─── 16-car NHRA Four-Wide Professional ladder ─────────────────────────────
+//
+// Round 1 four-quad seeding (no byes — every quad is full):
+//   Q1: [ 1,  8,  9, 16 ]
+//   Q2: [ 4,  5, 12, 13 ]
+//   Q3: [ 2,  7, 10, 15 ]
+//   Q4: [ 3,  6, 11, 14 ]
+//
+// Round 2 (semis) is fed by Q1+Q2 → SF1 and Q3+Q4 → SF2. Final is fed by both
+// semis. Top 2 finishers of each feeder advance.
+
+const SEEDING_16: Record<number, { quad: number; lane: number }> = {
+  1:  { quad: 1, lane: 1 },
+  8:  { quad: 1, lane: 2 },
+  9:  { quad: 1, lane: 3 },
+  16: { quad: 1, lane: 4 },
+  4:  { quad: 2, lane: 1 },
+  5:  { quad: 2, lane: 2 },
+  12: { quad: 2, lane: 3 },
+  13: { quad: 2, lane: 4 },
+  2:  { quad: 3, lane: 1 },
+  7:  { quad: 3, lane: 2 },
+  10: { quad: 3, lane: 3 },
+  15: { quad: 3, lane: 4 },
+  3:  { quad: 4, lane: 1 },
+  6:  { quad: 4, lane: 2 },
+  11: { quad: 4, lane: 3 },
+  14: { quad: 4, lane: 4 },
+};
+
 export function buildLadder(
   qualifiers: Qualifier[],
   advancers?: AdvancerMap,
@@ -102,8 +132,10 @@ export function buildLadder(
   const fieldSize = sorted.length;
   if (fieldSize === 17)
     return build17QuadLadder(sorted, advancers ?? {}, seedResults ?? {});
+  if (fieldSize === 16)
+    return build16QuadLadder(sorted, advancers ?? {}, seedResults ?? {});
   throw new Error(
-    `Field size ${fieldSize} not yet supported (only 17-car quad ladder is implemented)`
+    `Field size ${fieldSize} not supported (only 16-car and 17-car quad ladders are implemented)`
   );
 }
 
@@ -145,6 +177,40 @@ function build17QuadLadder(
   const r4 = buildNextRound(r3, 4, advancers, byPos, seedResults);
 
   return { fieldSize: 17, format: "quad", rounds: [r1, r2, r3, r4] };
+}
+
+function build16QuadLadder(
+  qs: Qualifier[],
+  advancers: AdvancerMap,
+  seedResults: SeedResultMap,
+): Ladder {
+  // 4 R1 quads, every lane active (no byes).
+  const r1: QuadCell[] = Array.from({ length: 4 }, (_, i) => ({
+    round: 1,
+    quadIndex: i + 1,
+    lanes: [
+      { position: null, isBye: false },
+      { position: null, isBye: false },
+      { position: null, isBye: false },
+      { position: null, isBye: false },
+    ],
+  }));
+
+  for (const q of qs) {
+    const seed = SEEDING_16[q.position];
+    if (!seed) continue;
+    r1[seed.quad - 1].lanes[seed.lane - 1] = {
+      position: q.position,
+      qualifier: q,
+      isBye: false,
+    };
+  }
+
+  const byPos = new Map<number, Qualifier>(qs.map((q) => [q.position, q]));
+  const r2 = buildNextRound(r1, 2, advancers, byPos, seedResults); // semis
+  const r3 = buildNextRound(r2, 3, advancers, byPos, seedResults); // final
+
+  return { fieldSize: 16, format: "quad", rounds: [r1, r2, r3] };
 }
 
 // Each next-round quad pulls 2 advancers from each feeder quad. If the user
@@ -217,7 +283,7 @@ function padTo4(lanes: Lane[]): Lane[] {
 }
 
 // Field sizes that the builder currently supports.
-export const SUPPORTED_FIELD_SIZES: number[] = [17];
+export const SUPPORTED_FIELD_SIZES: number[] = [16, 17];
 
 // Map of "round-quadIndex" → [winnerPosition, runnerUpPosition]. Positions
 // reference the original qualifier seed (1..fieldSize), which carries the
