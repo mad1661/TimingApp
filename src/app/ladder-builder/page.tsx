@@ -441,13 +441,15 @@ export default function LadderBuilderPage() {
       if (!targetRound) return;
       setAutoFillStatus(`Loading ${eventRound}…`);
       try {
-        // Try the picked round first; if it comes back empty try common
-        // alternatives (NHRA's final shows up as F / FINAL / E{N} depending
-        // on the meet) so the user doesn't have to guess.
+        // Try the picked round first; if it comes back empty try just the
+        // synonymous final names (F / FINAL). Earlier elim rounds are NOT
+        // alternatives — using E3 in place of F would silently fill the
+        // Champion / RU boxes with the semi's ETs, which is exactly what
+        // we want to avoid.
         const candidates = [eventRound];
         const upper = eventRound.toUpperCase();
         if (upper === "F" || upper === "FINAL") {
-          for (const alt of ["F", "FINAL", "E4", "E3"]) {
+          for (const alt of ["F", "FINAL"]) {
             if (!candidates.includes(alt)) candidates.push(alt);
           }
         }
