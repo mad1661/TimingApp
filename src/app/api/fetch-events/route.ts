@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchEventList, fetchEventDates } from "@/lib/scraper";
+import { fetchEventList, fetchEventDates, invalidateSession } from "@/lib/scraper";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,6 +11,11 @@ export async function POST(request: NextRequest) {
     if (!username || !password) {
       return NextResponse.json({ error: "Username and password are required" }, { status: 400 });
     }
+
+    // Don't reuse a stale session for either dropdown call — those cached
+    // cookies sometimes belong to a different worker / earlier event and
+    // cause the dashboard to come back empty.
+    invalidateSession(username);
 
     if (action === "dates" && event) {
       const dates = await fetchEventDates(username, password, event);

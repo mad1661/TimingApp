@@ -388,16 +388,25 @@ export function parseRunsFromHtml(
     }
   }
   // Fix broken quad timestamps: in 4-wide racing, the NHRA timing system
-  // sometimes posts the second pair (lanes 3&4) with a bogus future date.
-  // Detect any run whose date differs from the majority of nearby runs and
-  // fix it by finding the nearest prior run of the same category + round.
-  //
+  // sometimes posts the second pair (lanes 3&4) with a bogus future date or
+  // time. The fixes below ONLY apply to category+rounds where we have direct
+  // evidence of 4-wide structure (3+ runs at the same exact timestamp from a
+  // legitimate quad). Without this gate the heuristics misfire on plain
+  // 2-wide rounds and merge unrelated pairs together — which then shows up
+  // as bogus extra rows on the round log sheet.
+  const fourWideRounds = detectFourWideRounds(runs);
+  const isFourWideRound = (r: { category: string | null; round: string | null }): boolean => {
+    if (!r.category || !r.round) return false;
+    return fourWideRounds.has(`${r.category}|${r.round}`);
+  };
+
   // First pass: find the dominant date for each region of the data.
   // A run is an outlier if its date differs from the dominant date of the
   // surrounding ~20 runs.
   for (let i = 0; i < runs.length; i++) {
     const cur = runs[i];
     if (!cur.timestamp) continue;
+    if (!isFourWideRound(cur)) continue;
     const curDay = cur.timestamp.split(" ")[0];
 
     // Count dates in a window around this run
@@ -441,6 +450,7 @@ export function parseRunsFromHtml(
   const byCatRound = new Map<string, typeof runs>();
   for (const run of runs) {
     if (!run.timestamp || !run.category || !run.round) continue;
+    if (!isFourWideRound(run)) continue;
     const key = `${run.timestamp.split(" ")[0]}|${run.category}|${run.round}`;
     if (!byCatRound.has(key)) byCatRound.set(key, []);
     byCatRound.get(key)!.push(run);
@@ -482,6 +492,37 @@ export function parseRunsFromHtml(
   }
 
   return runs;
+}
+
+// A category+round is treated as 4-wide only if the scrape contains at least
+// one timestamp shared by 3+ runs in that round — i.e. an actually-recorded
+// quad. The broken-timestamp heuristics in parseRunsFromHtml only fire on
+// rounds that pass this check, so 2-wide pairs aren't mis-merged when one
+// pair runs unusually late or on an off day.
+function detectFourWideRounds(
+  runs: { timestamp: string | null; category: string | null; round: string | null }[],
+): Set<string> {
+  const counts = new Map<string, Map<string, number>>();
+  for (const r of runs) {
+    if (!r.timestamp || !r.category || !r.round) continue;
+    const key = `${r.category}|${r.round}`;
+    let inner = counts.get(key);
+    if (!inner) {
+      inner = new Map();
+      counts.set(key, inner);
+    }
+    inner.set(r.timestamp, (inner.get(r.timestamp) ?? 0) + 1);
+  }
+  const out = new Set<string>();
+  for (const [key, inner] of counts) {
+    for (const c of inner.values()) {
+      if (c >= 3) {
+        out.add(key);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 interface MutableTimestampRow { timestamp: string | null }
@@ -637,6 +678,10 @@ export async function fetchEventList(
   });
   const pageHtml = await pageRes.text();
 
+  if (responseLooksLoggedOut(pageHtml)) {
+    throw new Error("NHRA login failed. Double-check the username and password.");
+  }
+
   const formData = collectFormFields(pageHtml);
   formData["__EVENTTARGET"] = "eventTypeDropDown";
   formData["__EVENTARGUMENT"] = "";
@@ -653,6 +698,10 @@ export async function fetchEventList(
     body: new URLSearchParams(formData).toString(),
   });
   const resultHtml = await postRes.text();
+
+  if (responseLooksLoggedOut(resultHtml)) {
+    throw new Error("NHRA login failed. Double-check the username and password.");
+  }
 
   return parseEventDropdown(resultHtml);
 }

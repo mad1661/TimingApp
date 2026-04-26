@@ -476,7 +476,7 @@ export default function SetupPage() {
                 </div>
               ) : events.length === 0 ? (
                 <div className="px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-gray-500 text-sm">
-                  No events found for this season and type
+                  No events found for {season} &middot; {EVENT_TYPES.find((t) => t.value === eventType)?.label || eventType}. Try a different season or event type above.
                 </div>
               ) : (
                 <select value={selectedEventIdx} onChange={(e) => handleEventSelect(Number(e.target.value))} aria-label="Event"
