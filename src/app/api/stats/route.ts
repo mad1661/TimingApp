@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -128,6 +128,12 @@ export async function GET(request: NextRequest) {
     if (type === "didnotrace") {
       const results = await getDidNotRace(eventCode, season);
       return NextResponse.json({ didNotRace: results });
+    }
+
+    if (type === "missing-elims") {
+      const eventName = params.get("event_name") || undefined;
+      const results = await getMissingFromEliminations(eventCode, season, eventName);
+      return NextResponse.json({ missing: results });
     }
 
     if (type === "best-losing-package") {

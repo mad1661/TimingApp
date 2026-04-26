@@ -1033,6 +1033,189 @@ export async function getDidNotRace(eventCode: string, season: string): Promise<
   return results.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
+// ─── Tech-card-based "didn't show" detection ──────────────────────────────
+//
+// Combines two sources to surface every entered car that's missing from
+// elimination racing for the current event:
+//
+//   1. Cars that posted Q/T runs but never ran an E round (the same set
+//      that `getDidNotRace` returns).
+//   2. Cars that have a tech card on file but no runs at this event at all
+//      — uploaded but never even staged for qualifying.
+//
+// Tech-card matching is by car number + (class_name OR category code), so
+// scrape categories like "SUPER STREET" line up with tech-card entries that
+// store "Super Street" / "SST".
+
+export interface MissingEntry {
+  name: string;
+  car_number: string;
+  category: string;          // best-guess display category (run category if seen, else tech-card class)
+  lastRound: string | null;  // "Q3" / "T1" if any qualifying ran, null if entered but never ran
+  source: "qualifying" | "tech_card" | "both";
+}
+
+const CATEGORY_CODE_TABLE: Record<string, string> = (() => {
+  // Inline copy keyed by uppercase-normalized name → code, populated from
+  // schedule-classes.ts lazily without importing it (db.ts is server-only).
+  // Kept up-to-date with the few pro/sportsman classes that matter for
+  // tech-card matching; unknown classes fall through to a name match.
+  const m: Record<string, string> = {};
+  const pairs: Array<[string, string]> = [
+    ["TOP FUEL", "TF"], ["FUNNY CAR", "FC"], ["PRO STOCK", "PS"],
+    ["PRO STOCK MOTORCYCLE", "PSM"], ["PRO MOD", "PM"],
+    ["TOP ALCOHOL DRAGSTER", "TAD"], ["TOP ALCOHOL FUNNY CAR", "TAFC"],
+    ["TOP DRAGSTER", "TD"], ["TOP SPORTSMAN", "TS"],
+    ["FACTORY STOCK SHOWDOWN", "FSS"], ["MOUNTAIN MOTOR PRO STOCK", "MMPS"],
+    ["COMPETITION ELIMINATOR", "COMP"], ["COMP ELIMINATOR", "COMP"],
+    ["SUPER COMP", "SC"], ["SUPER GAS", "SG"], ["SUPER STREET", "SST"],
+    ["SUPER STOCK", "SS"], ["STOCK ELIMINATOR", "STK"], ["STOCK", "STK"],
+    ["SUPER PRO", "SPRO"], ["PRO ET", "PRO"], ["SPORTSMAN", "SPTM"],
+    ["SPORTSMAN MOTORCYCLE", "SMC"], ["JR DRAGSTER", "JR"], ["JR STREET", "JS"],
+    ["TOP FUEL MOTORCYCLE", "TFM"], ["HEMI CHALLENGE", "HC"],
+  ];
+  for (const [name, code] of pairs) m[name] = code;
+  return m;
+})();
+
+function normalizeCat(s: string | null | undefined): string {
+  return (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function categoryCodeFromName(name: string | null | undefined): string {
+  return CATEGORY_CODE_TABLE[normalizeCat(name)] || "";
+}
+
+function categoriesMatch(tcCategory: string, tcClassName: string, runCategory: string): boolean {
+  const runNorm = normalizeCat(runCategory);
+  if (!runNorm) return false;
+  if (tcClassName && normalizeCat(tcClassName) === runNorm) return true;
+  const tcNorm = normalizeCat(tcCategory);
+  if (!tcNorm) return false;
+  if (tcNorm === runNorm) return true;
+  const runCode = categoryCodeFromName(runCategory);
+  if (runCode && tcNorm === runCode) return true;
+  return false;
+}
+
+export async function getMissingFromEliminations(
+  eventCode: string,
+  season: string,
+  eventName?: string,
+): Promise<MissingEntry[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+
+  // Per-category index of every car number that appears in any run of that
+  // category, separated by elim vs qualifying.
+  const elimCars = new Map<string, Set<string>>();
+  const qualCars = new Map<string, Map<string, { name: string; lastRound: string }>>();
+  const everyCarsByCategory = new Map<string, Set<string>>();
+
+  for (const run of allRuns) {
+    if (!run.car_number || !run.category || !run.round) continue;
+    const carNum = run.car_number.trim();
+    const cat = run.category;
+    if (!everyCarsByCategory.has(cat)) everyCarsByCategory.set(cat, new Set());
+    everyCarsByCategory.get(cat)!.add(carNum);
+
+    if (run.round.startsWith("E")) {
+      if (!elimCars.has(cat)) elimCars.set(cat, new Set());
+      elimCars.get(cat)!.add(carNum);
+    } else if (run.round.startsWith("Q") || run.round.startsWith("T")) {
+      const catMap = qualCars.get(cat) || new Map();
+      const key = carNum;
+      const existing = catMap.get(key);
+      if (!existing || run.round > existing.lastRound) {
+        catMap.set(key, { name: run.name || "", lastRound: run.round });
+      }
+      qualCars.set(cat, catMap);
+    }
+  }
+
+  const results: MissingEntry[] = [];
+  const seenKeys = new Set<string>();
+  const addEntry = (e: MissingEntry) => {
+    const key = `${e.category}|${e.car_number}`;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    results.push(e);
+  };
+
+  // Source 1: cars that ran Q/T but never an E round in their category.
+  for (const [category, catMap] of qualCars) {
+    const elimSet = elimCars.get(category) || new Set();
+    if (elimSet.size === 0) continue; // category never started elims
+    for (const [carNum, info] of catMap) {
+      if (elimSet.has(carNum)) continue;
+      addEntry({
+        name: info.name,
+        car_number: carNum,
+        category,
+        lastRound: info.lastRound,
+        source: "qualifying",
+      });
+    }
+  }
+
+  // Source 2: tech card entries with no runs at all for this event.
+  let techCards: TechCardEntry[] = [];
+  try {
+    const db = getDb();
+    const snap = await db.collection("tech_cards").get();
+    techCards = snap.docs.map((d) => ({ id: d.id, ...d.data() } as TechCardEntry));
+  } catch (err) {
+    console.error("[DB] Failed to load tech cards:", err);
+  }
+  const tcForEvent = eventName
+    ? techCards.filter((tc) => !tc.event_name || tc.event_name === eventName)
+    : techCards;
+
+  for (const tc of tcForEvent) {
+    if (!tc.car_number || !tc.car_number.trim()) continue;
+    const carNum = tc.car_number.trim();
+    // Pick the best-matching scraped category for display, if the tech card
+    // class lines up with one we already saw at this event.
+    let matchedRunCategory: string | null = null;
+    for (const [runCat] of everyCarsByCategory) {
+      if (categoriesMatch(tc.category, tc.class_name, runCat)) {
+        matchedRunCategory = runCat;
+        break;
+      }
+    }
+    const displayCategory = matchedRunCategory || tc.class_name || tc.category || "Unknown";
+    if (!matchedRunCategory) {
+      // Tech-card class never even appeared at this event — definitely a
+      // no-show. Mark as no-runs entry.
+      addEntry({
+        name: `${tc.first_name || ""} ${tc.last_name || ""}`.trim(),
+        car_number: carNum,
+        category: displayCategory,
+        lastRound: null,
+        source: "tech_card",
+      });
+      continue;
+    }
+    const everySet = everyCarsByCategory.get(matchedRunCategory) || new Set();
+    if (everySet.has(carNum)) {
+      // Car raced in this category somewhere — already covered by the
+      // qualifying loop above (or actually made elims, in which case skip).
+      continue;
+    }
+    addEntry({
+      name: `${tc.first_name || ""} ${tc.last_name || ""}`.trim(),
+      car_number: carNum,
+      category: matchedRunCategory,
+      lastRound: null,
+      source: "tech_card",
+    });
+  }
+
+  return results.sort(
+    (a, b) =>
+      a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
+  );
+}
+
 export async function getFetchLog(): Promise<{ id: string; event_code: string; season: string; event_type: string; fetched_at: string; run_count: number }[]> {
   try {
     const db = getDb();
