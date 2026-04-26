@@ -419,6 +419,19 @@ export default function LadderBuilderPage() {
           setAutoFillStatus(`No ${eventRound} runs found for ${autoFillCategory}. Refresh the data and try again.`);
           return;
         }
+
+        // Index every seeded car's run stats once. For bye situations (top
+        // seeds racing solo) the car shows up in a pair containing only that
+        // car — we still want their ET/MPH captured.
+        const carRunStats = new Map<string, { et: number | null; mph: number | null }>();
+        for (const p of pairs) {
+          for (const entry of p.finishOrder) {
+            if (!carRunStats.has(entry.car)) {
+              carRunStats.set(entry.car, { et: entry.et, mph: entry.mph });
+            }
+          }
+        }
+
         let filled = 0;
         const updated: AdvancerMap = { ...advancers };
         const updatedResults: SeedResultMap = { ...seedResults };
@@ -430,31 +443,54 @@ export default function LadderBuilderPage() {
               car: (l.qualifier!.carNumber as string).trim(),
             }));
           if (eligibleSeeds.length < 2) continue;
+
           const seedCars = new Set(eligibleSeeds.map((e) => e.car));
-          const matchedPair = pairs.find(
-            (p) => p.cars.filter((c) => seedCars.has(c)).length >= 2,
-          );
-          if (!matchedPair) continue;
           const carToSeed = new Map(eligibleSeeds.map((e) => [e.car, e.seed]));
-          const rankedEntries = matchedPair.finishOrder
-            .map((entry) => {
-              const seed = carToSeed.get(entry.car);
-              if (typeof seed !== "number") return null;
-              return { seed, et: entry.et, mph: entry.mph };
-            })
-            .filter((e): e is { seed: number; et: number | null; mph: number | null } => e !== null);
-          if (rankedEntries.length < 2) continue;
+          const seedToCar = new Map(eligibleSeeds.map((e) => [e.seed, e.car]));
+          // Find the pair containing the *most* seeded cars (so a 4-wide quad
+          // doesn't accidentally match a different pair sharing one car).
+          let matchedPair: typeof pairs[number] | null = null;
+          let bestOverlap = 0;
+          for (const p of pairs) {
+            const overlap = p.cars.filter((c) => seedCars.has(c)).length;
+            if (overlap > bestOverlap && overlap >= 2) {
+              bestOverlap = overlap;
+              matchedPair = p;
+            }
+          }
+
+          let rankedSeeds: number[] = [];
+          if (matchedPair) {
+            // Real race — finish order of the seeded cars decides W / 2nd.
+            rankedSeeds = matchedPair.finishOrder
+              .map((e) => carToSeed.get(e.car))
+              .filter((s): s is number => typeof s === "number");
+          } else {
+            // No joint pair — bye situation (or split race we can't reconcile).
+            // Both top seeds advance, in seed order.
+            rankedSeeds = [...eligibleSeeds]
+              .sort((a, b) => a.seed - b.seed)
+              .map((e) => e.seed);
+          }
+          if (rankedSeeds.length < 2) continue;
+
           updated[advancerKey(ladderRound, quad.quadIndex)] = [
-            rankedEntries[0].seed,
-            rankedEntries[1].seed,
+            rankedSeeds[0],
+            rankedSeeds[1],
           ];
-          // Capture each advancer's run stats from this round so the next
-          // round's lanes print the actual ET / MPH they posted to advance.
-          for (const e of rankedEntries.slice(0, 2)) {
-            updatedResults[seedResultKey(ladderRound, e.seed)] = {
-              et: e.et,
-              mph: e.mph,
-            };
+          // Capture each advancer's actual round ET / MPH from this round so
+          // the next round's lanes print what they ran here. carRunStats was
+          // built from every pair (including byes), so it works for both.
+          for (const seed of rankedSeeds.slice(0, 2)) {
+            const car = seedToCar.get(seed);
+            if (!car) continue;
+            const stats = carRunStats.get(car);
+            if (stats) {
+              updatedResults[seedResultKey(ladderRound, seed)] = {
+                et: stats.et,
+                mph: stats.mph,
+              };
+            }
           }
           filled++;
         }
