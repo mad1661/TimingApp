@@ -347,6 +347,32 @@ export default function LadderBuilderPage() {
             }}
             placeholder="6:05 PM 24/APR/2026"
           />
+          <HeaderField
+            label="Round #"
+            value={header.roundNumber || ""}
+            onChange={(v) => setHeader({ ...header, roundNumber: v })}
+            placeholder="1"
+          />
+          <HeaderField
+            label="System Mark"
+            value={header.systemMark || ""}
+            onChange={(v) => setHeader({ ...header, systemMark: v })}
+            placeholder="CompuLink StarTrak"
+          />
+        </div>
+
+        {/* Low E.T. and Top Speed callouts */}
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CalloutGroup
+            label="Low E.T."
+            value={header.lowEt}
+            onChange={(v) => setHeader({ ...header, lowEt: v })}
+          />
+          <CalloutGroup
+            label="Top Speed"
+            value={header.topSpeed}
+            onChange={(v) => setHeader({ ...header, topSpeed: v })}
+          />
         </div>
       </div>
 
@@ -624,5 +650,45 @@ function ManualInput({
       onChange={(e) => onChange(e.target.value)}
       className={`${width} px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-white`}
     />
+  );
+}
+
+function CalloutGroup({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value?: { value: string; carNumber: string; driver: string };
+  onChange: (v: { value: string; carNumber: string; driver: string }) => void;
+}) {
+  const v = value || { value: "", carNumber: "", driver: "" };
+  return (
+    <div>
+      <label className="block text-xs text-gray-400 mb-1">{label}</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={v.value}
+          onChange={(e) => onChange({ ...v, value: e.target.value })}
+          placeholder="value"
+          className="w-20 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-white text-sm"
+        />
+        <input
+          type="text"
+          value={v.carNumber}
+          onChange={(e) => onChange({ ...v, carNumber: e.target.value })}
+          placeholder="car #"
+          className="w-16 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-white text-sm"
+        />
+        <input
+          type="text"
+          value={v.driver}
+          onChange={(e) => onChange({ ...v, driver: e.target.value })}
+          placeholder="driver"
+          className="flex-1 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-white text-sm"
+        />
+      </div>
+    </div>
   );
 }

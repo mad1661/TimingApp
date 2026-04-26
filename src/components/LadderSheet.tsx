@@ -3,13 +3,14 @@
 import type { Ladder, QuadCell, Lane } from "@/lib/ladder";
 
 export interface LadderSheetHeader {
-  eventTitle?: string; // e.g. "NHRA and MISSION FOODS welcome you to the 16th Annual 4-Wide Nationals"
-  venue?: string; // e.g. "zMAX Dragway"
-  dateRange?: string; // e.g. "April 23-26, 2026"
-  classTitle?: string; // e.g. "FACTORY STOCK SHOWDOWN"
-  seriesBanner?: string; // e.g. "FLEXJET NHRA FACTORY STOCK SHOWDOWN"
+  eventTitle?: string;
+  venue?: string;
+  dateRange?: string;
+  classTitle?: string; // e.g. "TOP ALCOHOL DRAGSTER"
+  seriesBanner?: string; // e.g. "NHRA LUCAS OIL DRAG RACING SERIES"
   runTime?: string; // e.g. "6:05 PM"
   runDate?: string; // e.g. "24/APR/2026"
+  roundNumber?: string; // e.g. "1"
   lowEt?: { value: string; carNumber: string; driver: string };
   topSpeed?: { value: string; carNumber: string; driver: string };
   systemMark?: string; // e.g. "CompuLink StarTrak"
@@ -47,61 +48,73 @@ function SheetHeader({
 }) {
   const h = header || {};
   return (
-    <div className="border-b border-black px-4 pt-1 pb-1 relative">
-      <div className="absolute right-4 top-2 text-[9px] italic">
-        {h.systemMark ?? ""}
-      </div>
-      {h.eventTitle && (
-        <div className="text-center text-xs italic leading-tight whitespace-pre-line">
-          {h.eventTitle}
+    <div className="px-3 pt-1 pb-1">
+      {/* Top row: date / field / round on the left, series banner on the right */}
+      <div className="flex items-start gap-3">
+        <div className="text-[9px] leading-tight whitespace-nowrap">
+          {h.runDate && <div>{h.runDate}</div>}
+          <div>{fieldSize} car field</div>
+          <div>Round # {h.roundNumber || "1"}</div>
         </div>
-      )}
-      {(h.venue || h.dateRange) && (
-        <div className="text-center text-xs italic leading-tight">
-          {h.venue}
-          {h.venue && h.dateRange ? " " : ""}
-          {h.dateRange}
-        </div>
-      )}
-
-      <div className="flex items-end justify-between mt-1.5">
-        <div className="text-[9px] leading-tight">
-          {(h.lowEt || h.topSpeed) && (
-            <div>Qualified Positions for ....</div>
-          )}
-          {h.lowEt && (
-            <div>
-              Low E.T. ........ {h.lowEt.value} Sec &nbsp;&nbsp; {h.lowEt.carNumber}{" "}
-              {h.lowEt.driver}
-            </div>
-          )}
-          {h.topSpeed && (
-            <div>
-              Top Speed ... {h.topSpeed.value} MPH &nbsp;&nbsp; {h.topSpeed.carNumber}{" "}
-              {h.topSpeed.driver}
-            </div>
-          )}
-        </div>
-
         <div className="flex-1 text-center">
-          {h.classTitle && (
-            <div className="text-sm font-bold tracking-wide">{h.classTitle}</div>
-          )}
           {h.seriesBanner && (
-            <div className="text-xs font-bold tracking-wide">
+            <div className="text-base font-bold tracking-wide">
               {h.seriesBanner}
             </div>
           )}
-          <div className="text-[10px] font-semibold mt-0.5">
-            {fieldSize}-car field
-          </div>
-        </div>
-
-        <div className="text-[9px] leading-tight text-right whitespace-nowrap">
-          {h.runTime && <div>{h.runTime}</div>}
-          {h.runDate && <div>{h.runDate}</div>}
+          {h.eventTitle && (
+            <div className="text-[10px] italic leading-tight whitespace-pre-line">
+              {h.eventTitle}
+            </div>
+          )}
+          {(h.venue || h.dateRange) && (
+            <div className="text-[10px] italic leading-tight">
+              {h.venue}
+              {h.venue && h.dateRange ? " " : ""}
+              {h.dateRange}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Class title row with trailing dotted line and system mark */}
+      <div className="flex items-baseline gap-2 mt-1">
+        {h.classTitle && (
+          <div className="text-base font-bold tracking-wide">
+            {h.classTitle}
+          </div>
+        )}
+        <div className="flex-1 border-b border-dotted border-black mb-0.5" />
+        {h.systemMark && (
+          <div className="text-[10px] italic">{h.systemMark}</div>
+        )}
+      </div>
+
+      {/* Low E.T. / Top Speed callouts (right-aligned) */}
+      {(h.lowEt || h.topSpeed) && (
+        <div className="flex justify-end mt-1">
+          <table className="text-[10px] leading-tight">
+            <tbody>
+              {h.lowEt && (
+                <tr>
+                  <td className="pr-3">Low E.T.</td>
+                  <td className="pr-3 text-right">{h.lowEt.value}</td>
+                  <td className="pr-3"># {h.lowEt.carNumber}</td>
+                  <td>{h.lowEt.driver}</td>
+                </tr>
+              )}
+              {h.topSpeed && (
+                <tr>
+                  <td className="pr-3">Top Speed</td>
+                  <td className="pr-3 text-right">{h.topSpeed.value}</td>
+                  <td className="pr-3"># {h.topSpeed.carNumber}</td>
+                  <td>{h.topSpeed.driver}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -254,8 +267,8 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
       <div className="text-[9px] leading-[1.1] font-mono">
         <div className="flex gap-1">
           <span className="w-3 text-right">&nbsp;</span>
-          <span className="w-8 text-right">{q.carNumber ?? ""}</span>
-          <span className="flex-1 truncate">{q.driver ?? ""}</span>
+          <span className="w-9 text-right font-bold">{q.carNumber ?? ""}</span>
+          <span className="flex-1 truncate font-bold">{q.driver ?? ""}</span>
         </div>
         <div className="flex gap-1">
           <span className="w-3 text-right">{q.position}</span>
