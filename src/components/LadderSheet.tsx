@@ -27,10 +27,8 @@ export default function LadderSheet({ ladder, header }: LadderSheetProps) {
     <div className="ladder-sheet bg-white text-black font-serif">
       <SheetHeader header={header} fieldSize={ladder.fieldSize} />
 
-      <div className="px-4 pt-1 pb-3">
-        <div className="border border-black">
-          <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} />
-        </div>
+      <div className="px-3 pt-2 pb-3">
+        <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} />
       </div>
 
       <PrintStyles />
@@ -134,8 +132,8 @@ function BracketGrid({
       className="grid"
       style={{
         gridTemplateColumns:
-          "minmax(180px, 1fr) 22px minmax(140px, 1fr) 22px minmax(140px, 1fr) 22px minmax(140px, 1fr)",
-        gridTemplateRows: `repeat(${N}, minmax(74px, 1fr))`,
+          "minmax(190px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr)",
+        gridTemplateRows: `repeat(${N}, minmax(112px, 1fr))`,
       }}
     >
       {r1.map((q, k) => (
@@ -210,9 +208,8 @@ function FinalCell({ quad }: { quad: QuadCell }) {
 }
 
 // Three rendering variants for quad boxes:
-//   round1 — show qualifier data (or just the seed if none loaded), and
-//            hide BYE lanes entirely so the box collapses to just the
-//            active racing lanes.
+//   round1 — full 4-lane quad box, with active lanes showing qualifier
+//            data and BYE lanes labeled "BYE / 0".
 //   seeds  — empty 4-lane box that prints the projected seeds (e.g. the
 //            semifinal box showing "1, 8, 4, 5").
 //   blank  — empty 4-lane box with no content (just the borders), used
@@ -221,17 +218,13 @@ function FinalCell({ quad }: { quad: QuadCell }) {
 type QuadVariant = "round1" | "seeds" | "blank";
 
 function QuadBox({ quad, variant }: { quad: QuadCell; variant: QuadVariant }) {
-  const lanesToShow =
-    variant === "round1"
-      ? quad.lanes.filter((l) => !l.isBye)
-      : quad.lanes;
   return (
     <div className="border border-black bg-white w-full">
-      {lanesToShow.map((lane, idx) => (
+      {quad.lanes.map((lane, idx) => (
         <div
           key={idx}
           className={`px-1 py-0.5 ${idx > 0 ? "border-t border-black" : ""}`}
-          style={{ minHeight: variant === "round1" ? 22 : 16 }}
+          style={{ minHeight: variant === "round1" ? 26 : 18 }}
         >
           <LaneRow lane={lane} variant={variant} />
         </div>
@@ -241,17 +234,31 @@ function QuadBox({ quad, variant }: { quad: QuadCell; variant: QuadVariant }) {
 }
 
 function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
+  if (variant === "round1" && lane.isBye) {
+    return (
+      <div className="text-[9px] leading-[1.1] font-mono">
+        <div className="flex gap-1">
+          <span className="w-3 text-right">&nbsp;</span>
+          <span>BYE</span>
+        </div>
+        <div className="flex gap-1">
+          <span className="w-3 text-right">0</span>
+        </div>
+      </div>
+    );
+  }
+
   if (variant === "round1" && lane.qualifier) {
     const q = lane.qualifier;
     return (
-      <div className="text-[8px] leading-[1.1] font-mono">
+      <div className="text-[9px] leading-[1.1] font-mono">
         <div className="flex gap-1">
-          <span className="w-3 text-right">{q.position}</span>
+          <span className="w-3 text-right">&nbsp;</span>
           <span className="w-8 text-right">{q.carNumber ?? ""}</span>
           <span className="flex-1 truncate">{q.driver ?? ""}</span>
         </div>
         <div className="flex gap-1">
-          <span className="w-3" />
+          <span className="w-3 text-right">{q.position}</span>
           <span className="w-10 text-right">
             {q.et != null ? q.et.toFixed(3) : ""}
           </span>
@@ -264,6 +271,7 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
   }
 
   if (variant === "round1") {
+    // Round 1 active lane with no qualifier loaded — show just the seed.
     return (
       <div className="text-[9px] leading-tight font-mono">
         {lane.position != null ? <div>{lane.position}</div> : <div>&nbsp;</div>}
