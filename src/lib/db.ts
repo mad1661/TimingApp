@@ -2041,3 +2041,64 @@ export async function saveLadderHeader(
     .doc(ladderHeaderKey(eventCode, season, category))
     .set(header, { merge: true });
 }
+
+// ─── Ladder state storage (qualifiers + advancers per event/class) ────────
+//
+// Persists everything needed to redraw the user's working ladder when they
+// come back to /ladder-builder. Saved per (event, season, category).
+
+export interface LadderStateQualifier {
+  position: number;
+  carNumber?: string | null;
+  driver?: string | null;
+  classCode?: string | null;
+  hometown?: string | null;
+  car?: string | null;
+  motor?: string | null;
+  et?: number | null;
+  qMph?: number | null;
+  topMph?: number | null;
+}
+
+export interface LadderStateRecord {
+  fieldSize: number;
+  qualifiers: LadderStateQualifier[];
+  // Map of "round-quadIndex" → [winnerPosition, runnerUpPosition]
+  advancers: Record<string, [number, number]>;
+  // Manual mode keeps its own classCode separate from the qualifier rows; we
+  // store it so the page can rehydrate it.
+  classCode?: string;
+}
+
+export async function getLadderState(
+  eventCode: string,
+  season: string,
+  category: string,
+): Promise<LadderStateRecord | null> {
+  if (!eventCode || !season || !category) return null;
+  try {
+    const db = getDb();
+    const doc = await db
+      .collection("ladder_states")
+      .doc(ladderHeaderKey(eventCode, season, category))
+      .get();
+    if (doc.exists) return doc.data() as LadderStateRecord;
+  } catch (err) {
+    console.error("[DB] Failed to load ladder state:", err);
+  }
+  return null;
+}
+
+export async function saveLadderState(
+  eventCode: string,
+  season: string,
+  category: string,
+  state: LadderStateRecord,
+): Promise<void> {
+  if (!eventCode || !season || !category) return;
+  const db = getDb();
+  await db
+    .collection("ladder_states")
+    .doc(ladderHeaderKey(eventCode, season, category))
+    .set(state, { merge: false });
+}

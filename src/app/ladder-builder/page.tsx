@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLiveData } from "@/components/LiveDataProvider";
 import LadderSheet, { LadderSheetHeader } from "@/components/LadderSheet";
-import { buildLadder, Qualifier, SUPPORTED_FIELD_SIZES } from "@/lib/ladder";
+import { buildLadder, Qualifier, SUPPORTED_FIELD_SIZES, advancerKey, type AdvancerMap } from "@/lib/ladder";
 
 interface QualifyingEntry {
   position: number;
@@ -91,6 +91,13 @@ export default function LadderBuilderPage() {
 
   // Built data
   const [qualifiers, setQualifiers] = useState<Qualifier[]>([]);
+  // Per-quad winner / runner-up picks. Key is "round-quadIndex" (e.g. "1-3"),
+  // value is [winnerSeedPosition, runnerUpSeedPosition].
+  const [advancers, setAdvancers] = useState<AdvancerMap>({});
+  // Suppresses the auto-save side effect during rehydrate so we don't
+  // immediately overwrite the doc we just loaded with our empty initial
+  // state on the very first render after a category switch.
+  const [stateLoaded, setStateLoaded] = useState(false);
 
   // Load event filters
   useEffect(() => {
@@ -154,6 +161,80 @@ export default function LadderBuilderPage() {
     }, 800);
     return () => clearTimeout(t);
   }, [eventCode, season, headerCategoryKey, header, canPersistHeader]);
+
+  // Load saved ladder state (qualifiers + advancers) whenever the
+  // (event, season, class) changes. Resets the in-memory state first so a
+  // category switch doesn't bleed the previous class's qualifiers through.
+  useEffect(() => {
+    setStateLoaded(false);
+    setQualifiers([]);
+    setAdvancers({});
+    if (!canPersistHeader) return;
+    let cancelled = false;
+    fetch(
+      `/api/stats?type=ladder-state&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(headerCategoryKey)}`
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const s = data.state;
+        if (s && Array.isArray(s.qualifiers) && s.qualifiers.length > 0) {
+          setQualifiers(s.qualifiers as Qualifier[]);
+          setAdvancers(s.advancers && typeof s.advancers === "object" ? s.advancers : {});
+          if (inputMode === "manual" && typeof s.classCode === "string" && s.classCode) {
+            setClassCode(s.classCode);
+          }
+          if (typeof s.fieldSize === "number" && SUPPORTED_FIELD_SIZES.includes(s.fieldSize)) {
+            setFieldSize(s.fieldSize);
+          }
+        }
+      })
+      .catch(console.error)
+      .finally(() => {
+        if (!cancelled) setStateLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // intentionally not depending on inputMode / classCode / fieldSize — we
+    // only want to reload when the (event, season, class) trio changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventCode, season, headerCategoryKey, canPersistHeader]);
+
+  // Debounced save of qualifiers + advancers.
+  useEffect(() => {
+    if (!canPersistHeader || !stateLoaded) return;
+    const t = setTimeout(() => {
+      fetch("/api/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "save-ladder-state",
+          event_code: eventCode,
+          season,
+          category: headerCategoryKey,
+          state: {
+            fieldSize,
+            qualifiers,
+            advancers,
+            classCode: inputMode === "manual" ? classCode : undefined,
+          },
+        }),
+      }).catch(console.error);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [
+    eventCode,
+    season,
+    headerCategoryKey,
+    canPersistHeader,
+    stateLoaded,
+    qualifiers,
+    advancers,
+    fieldSize,
+    inputMode,
+    classCode,
+  ]);
 
   // Resize manual rows when fieldSize changes
   useEffect(() => {
@@ -280,10 +361,26 @@ export default function LadderBuilderPage() {
   let buildError: string | null = null;
   if (qualifiers.length > 0 && isSupported) {
     try {
-      ladder = buildLadder(qualifiers);
+      ladder = buildLadder(qualifiers, advancers);
     } catch (err) {
       buildError = err instanceof Error ? err.message : "Failed to build ladder";
     }
+  }
+
+  const qualifierByPosition = useMemo(() => {
+    const m = new Map<number, Qualifier>();
+    for (const q of qualifiers) m.set(q.position, q);
+    return m;
+  }, [qualifiers]);
+
+  function setQuadAdvancers(round: number, quadIndex: number, picks: [number, number] | null) {
+    setAdvancers((prev) => {
+      const next = { ...prev };
+      const k = advancerKey(round, quadIndex);
+      if (picks == null) delete next[k];
+      else next[k] = picks;
+      return next;
+    });
   }
 
   return (
@@ -654,8 +751,153 @@ export default function LadderBuilderPage() {
           <div className="bg-white rounded-lg overflow-hidden shadow-2xl">
             <LadderSheet ladder={ladder} header={header} />
           </div>
+
+          <div className="no-print mt-6 bg-nhra-card border border-nhra-border rounded-xl p-5 mb-6">
+            <h2 className="text-sm font-semibold text-white mb-1">
+              Advance Winners
+            </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              Pick the winner and runner-up of each quad. They&apos;ll fill the
+              corresponding lanes in the next round automatically. Saved per
+              event + class — close the page and come back, it&apos;s still here.
+            </p>
+            <div className="space-y-5">
+              {ladder.rounds.slice(0, 3).map((round, ri) => {
+                const roundNum = ri + 1;
+                const roundLabel =
+                  roundNum === 1
+                    ? "Round 1 → Round 2"
+                    : roundNum === 2
+                      ? "Round 2 → Semifinals"
+                      : "Semifinals → Final";
+                return (
+                  <div key={roundNum}>
+                    <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2">
+                      {roundLabel}
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {round.map((quad) => (
+                        <QuadAdvancePicker
+                          key={`${roundNum}-${quad.quadIndex}`}
+                          round={roundNum}
+                          quadIndex={quad.quadIndex}
+                          eligible={quad.lanes
+                            .filter((l) => !l.isBye && l.position != null)
+                            .map((l) => l.position as number)}
+                          byPosition={qualifierByPosition}
+                          picks={advancers[advancerKey(roundNum, quad.quadIndex)] || null}
+                          onChange={(picks) => setQuadAdvancers(roundNum, quad.quadIndex, picks)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                onClick={() => setAdvancers({})}
+                disabled={Object.keys(advancers).length === 0}
+                className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-400 rounded-md text-xs hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Clear all advancers
+              </button>
+            </div>
+          </div>
         </>
       )}
+    </div>
+  );
+}
+
+function QuadAdvancePicker({
+  round,
+  quadIndex,
+  eligible,
+  byPosition,
+  picks,
+  onChange,
+}: {
+  round: number;
+  quadIndex: number;
+  eligible: number[];
+  byPosition: Map<number, Qualifier>;
+  picks: [number, number] | null;
+  onChange: (picks: [number, number] | null) => void;
+}) {
+  const [first, second] = picks || [0, 0];
+  const labelFor = (pos: number) => {
+    const q = byPosition.get(pos);
+    if (!q) return `Seed ${pos}`;
+    const car = q.carNumber ? `#${q.carNumber} ` : "";
+    const driver = q.driver || "";
+    return `${pos}. ${car}${driver}`.trim();
+  };
+
+  function update(slot: 0 | 1, value: number) {
+    let nextFirst = slot === 0 ? value : first;
+    let nextSecond = slot === 1 ? value : second;
+    // Don't let the same seed sit in both slots.
+    if (slot === 0 && nextFirst && nextFirst === nextSecond) nextSecond = 0;
+    if (slot === 1 && nextSecond && nextSecond === nextFirst) nextFirst = 0;
+    if (!nextFirst || !nextSecond) {
+      onChange(null);
+    } else {
+      onChange([nextFirst, nextSecond]);
+    }
+  }
+
+  return (
+    <div className="bg-nhra-darker border border-nhra-border rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-gray-300">
+          R{round} Quad {quadIndex}
+        </span>
+        {picks && (
+          <button
+            onClick={() => onChange(null)}
+            className="text-[10px] text-gray-500 hover:text-red-400"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[10px] uppercase text-gray-500 mb-1">
+            1st (Winner)
+          </label>
+          <select
+            value={first || 0}
+            onChange={(e) => update(0, parseInt(e.target.value, 10))}
+            className="w-full px-2 py-1.5 bg-nhra-card border border-nhra-border rounded text-white text-xs focus:outline-none focus:border-nhra-accent"
+          >
+            <option value={0}>—</option>
+            {eligible.map((p) => (
+              <option key={p} value={p}>
+                {labelFor(p)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase text-gray-500 mb-1">
+            2nd (Runner-up)
+          </label>
+          <select
+            value={second || 0}
+            onChange={(e) => update(1, parseInt(e.target.value, 10))}
+            className="w-full px-2 py-1.5 bg-nhra-card border border-nhra-border rounded text-white text-xs focus:outline-none focus:border-nhra-accent"
+          >
+            <option value={0}>—</option>
+            {eligible.map((p) => (
+              <option key={p} value={p}>
+                {labelFor(p)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
     </div>
   );
 }

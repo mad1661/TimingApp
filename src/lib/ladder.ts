@@ -88,16 +88,19 @@ const ACTIVE_LANES_17: Record<number, number[]> = {
   8: [1, 3],
 };
 
-export function buildLadder(qualifiers: Qualifier[]): Ladder {
+export function buildLadder(
+  qualifiers: Qualifier[],
+  advancers?: AdvancerMap,
+): Ladder {
   const sorted = [...qualifiers].sort((a, b) => a.position - b.position);
   const fieldSize = sorted.length;
-  if (fieldSize === 17) return build17QuadLadder(sorted);
+  if (fieldSize === 17) return build17QuadLadder(sorted, advancers ?? {});
   throw new Error(
     `Field size ${fieldSize} not yet supported (only 17-car quad ladder is implemented)`
   );
 }
 
-function build17QuadLadder(qs: Qualifier[]): Ladder {
+function build17QuadLadder(qs: Qualifier[], advancers: AdvancerMap): Ladder {
   const r1: QuadCell[] = Array.from({ length: 8 }, (_, i) => ({
     round: 1,
     quadIndex: i + 1,
@@ -125,21 +128,33 @@ function build17QuadLadder(qs: Qualifier[]): Ladder {
     };
   }
 
-  const r2 = buildNextRound(r1, 2);
-  const r3 = buildNextRound(r2, 3);
-  const r4 = buildNextRound(r3, 4);
+  const byPos = new Map<number, Qualifier>(qs.map((q) => [q.position, q]));
+  const r2 = buildNextRound(r1, 2, advancers, byPos);
+  const r3 = buildNextRound(r2, 3, advancers, byPos);
+  const r4 = buildNextRound(r3, 4, advancers, byPos);
 
   return { fieldSize: 17, format: "quad", rounds: [r1, r2, r3, r4] };
 }
 
-// Each next-round quad pulls the top-2 projected seeds from two consecutive
-// feeder quads — this is the "lines on the bracket" rule.
-function buildNextRound(prev: QuadCell[], roundNum: number): QuadCell[] {
+// Each next-round quad pulls 2 advancers from each feeder quad. If the user
+// has marked actual winner / runner-up via the advancers map, those fill the
+// lanes (with full qualifier data). Otherwise we fall back to "projected
+// top-2 by seed" so the printed ladder shows the ghost seeds (e.g. the
+// semifinal box's classic "1, 8, 4, 5") until results are entered.
+function buildNextRound(
+  prev: QuadCell[],
+  roundNum: number,
+  advancers: AdvancerMap,
+  byPos: Map<number, Qualifier>,
+): QuadCell[] {
   const out: QuadCell[] = [];
   for (let i = 0; i < prev.length; i += 2) {
     const a = prev[i];
     const b = prev[i + 1];
-    const lanes = padTo4([...projectTop2(a), ...projectTop2(b)]);
+    const lanes = padTo4([
+      ...advancersOrProjected(a, advancers, byPos),
+      ...advancersOrProjected(b, advancers, byPos),
+    ]);
     out.push({
       round: roundNum,
       quadIndex: out.length + 1,
@@ -148,6 +163,22 @@ function buildNextRound(prev: QuadCell[], roundNum: number): QuadCell[] {
     });
   }
   return out;
+}
+
+function advancersOrProjected(
+  quad: QuadCell,
+  advancers: AdvancerMap,
+  byPos: Map<number, Qualifier>,
+): Lane[] {
+  const key = advancerKey(quad.round, quad.quadIndex);
+  const picked = advancers[key];
+  if (picked && picked.length === 2) {
+    return picked.map((p) => ({
+      position: p,
+      qualifier: byPos.get(p) ?? null,
+    }));
+  }
+  return projectTop2(quad);
 }
 
 function projectTop2(quad: QuadCell): Lane[] {
@@ -166,3 +197,12 @@ function padTo4(lanes: Lane[]): Lane[] {
 
 // Field sizes that the builder currently supports.
 export const SUPPORTED_FIELD_SIZES: number[] = [17];
+
+// Map of "round-quadIndex" → [winnerPosition, runnerUpPosition]. Positions
+// reference the original qualifier seed (1..fieldSize), which carries the
+// driver/car/ET data through to later rounds.
+export type AdvancerMap = Record<string, [number, number]>;
+
+export function advancerKey(round: number, quadIndex: number): string {
+  return `${round}-${quadIndex}`;
+}

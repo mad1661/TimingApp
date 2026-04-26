@@ -162,7 +162,7 @@ function BracketGrid({
       ))}
       {r2.map((q, i) => (
         <GridCell key={`r2-${i}`} col={3} rowStart={2 * i + 1} rowSpan={2}>
-          <QuadBox quad={q} variant="blank" />
+          <QuadBox quad={q} variant="advanced" />
         </GridCell>
       ))}
 
@@ -173,7 +173,7 @@ function BracketGrid({
       ))}
       {r3.map((q, i) => (
         <GridCell key={`r3-${i}`} col={5} rowStart={4 * i + 1} rowSpan={4}>
-          <QuadBox quad={q} variant="seeds" />
+          <QuadBox quad={q} variant="advanced" />
         </GridCell>
       ))}
 
@@ -215,29 +215,31 @@ function FinalCell({ quad }: { quad: QuadCell }) {
   return (
     <div className="flex flex-col w-full">
       <div className="text-center text-xs italic mb-1">** Champion **</div>
-      <QuadBox quad={quad} variant="blank" />
+      <QuadBox quad={quad} variant="advanced" />
     </div>
   );
 }
 
-// Three rendering variants for quad boxes:
-//   round1 — full 4-lane quad box, with active lanes showing qualifier
-//            data and BYE lanes labeled "BYE / 0".
-//   seeds  — empty 4-lane box that prints the projected seeds (e.g. the
-//            semifinal box showing "1, 8, 4, 5").
-//   blank  — empty 4-lane box with no content (just the borders), used
-//            for round 2 and the final on the printed sheet.
+// Two rendering variants:
+//   round1   — full 4-lane quad box, active lanes show qualifier data,
+//              BYE lanes are labeled "BYE / 0".
+//   advanced — used for R2/R3/Final. If a lane has a qualifier object
+//              (because the user advanced winner / runner-up into it) we
+//              show the same qualifier line; if the lane has only a
+//              projected seed, we print just the seed; otherwise blank.
 
-type QuadVariant = "round1" | "seeds" | "blank";
+type QuadVariant = "round1" | "advanced";
 
 function QuadBox({ quad, variant }: { quad: QuadCell; variant: QuadVariant }) {
+  const hasAnyAdvanced = quad.lanes.some((l) => l.qualifier);
+  const minHeight = variant === "round1" || hasAnyAdvanced ? 21 : 14;
   return (
     <div className="border border-black bg-white w-full">
       {quad.lanes.map((lane, idx) => (
         <div
           key={idx}
           className={`px-1 py-0.5 ${idx > 0 ? "border-t border-black" : ""}`}
-          style={{ minHeight: variant === "round1" ? 21 : 14 }}
+          style={{ minHeight }}
         >
           <LaneRow lane={lane} variant={variant} />
         </div>
@@ -261,7 +263,7 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
     );
   }
 
-  if (variant === "round1" && lane.qualifier) {
+  if (lane.qualifier) {
     const q = lane.qualifier;
     return (
       <div className="text-[9px] leading-[1.1] font-mono">
@@ -292,15 +294,9 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
     );
   }
 
-  if (variant === "seeds") {
-    return (
-      <div className="text-[9px] leading-tight font-mono">
-        {lane.position != null ? <div>{lane.position}</div> : <div>&nbsp;</div>}
-      </div>
-    );
-  }
-
-  // variant === "blank": render the row but leave it empty.
+  // variant === "advanced": no qualifier yet → leave the cell blank so the
+  // user has the printable sheet to fill in by hand if they want, while
+  // any lanes that have been advanced still print real data above.
   return <div className="text-[9px] leading-tight">&nbsp;</div>;
 }
 
