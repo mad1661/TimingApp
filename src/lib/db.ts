@@ -2102,3 +2102,90 @@ export async function saveLadderState(
     .doc(ladderHeaderKey(eventCode, season, category))
     .set(state, { merge: false });
 }
+
+// Returns each pair / quad of an elimination round with its finish order, so
+// the Ladder Builder can auto-fill winner / runner-up into the next round.
+export interface LadderRoundResultPair {
+  cars: string[];
+  finishOrder: string[]; // sorted: winner first, then 2nd, 3rd, 4th
+  timestamp: string | null;
+}
+
+export async function getLadderRoundResults(
+  eventCode: string,
+  season: string,
+  category: string,
+  round: string,
+): Promise<LadderRoundResultPair[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+  const filtered = allRuns.filter(
+    (r) => r.category === category && r.round === round,
+  );
+  if (filtered.length === 0) return [];
+
+  const allTs = filtered.map((r) => r.timestamp).filter(Boolean) as string[];
+  const tsGroups = buildTimestampGroups(allTs);
+  const pairMap = new Map<string, RunRow[]>();
+  for (const run of filtered) {
+    if (!run.timestamp) continue;
+    const canonical = tsGroups.get(run.timestamp) || run.timestamp;
+    const arr = pairMap.get(canonical) || [];
+    arr.push(run);
+    pairMap.set(canonical, arr);
+  }
+
+  const dataScore = (r: RunRow): number => {
+    let n = 0;
+    if (r.rt != null) n++;
+    if (r.ft60 != null) n++;
+    if (r.ft1320 != null) n++;
+    if (r.mph_1320 != null) n++;
+    return n;
+  };
+  const resultPos = (res: string | null | undefined): number | null => {
+    const r = (res || "").trim().toUpperCase();
+    if (r === "W") return 1;
+    if (r === "R") return 2;
+    if (r === "3") return 3;
+    if (r === "4") return 4;
+    return null;
+  };
+
+  const results: LadderRoundResultPair[] = [];
+  for (const [canonical, runs] of pairMap) {
+    const byLaneCar = new Map<string, RunRow>();
+    for (const run of runs) {
+      const key = `${(run.lane || "").toUpperCase()}|${(run.car_number || "").trim()}`;
+      const existing = byLaneCar.get(key);
+      if (!existing || dataScore(run) > dataScore(existing)) {
+        byLaneCar.set(key, run);
+      }
+    }
+    const dedup = Array.from(byLaneCar.values()).filter(
+      (r) => r.car_number && r.car_number.trim(),
+    );
+    if (dedup.length === 0) continue;
+
+    const allHaveResult = dedup.every((r) => resultPos(r.result) !== null);
+    let ordered: RunRow[];
+    if (allHaveResult) {
+      ordered = [...dedup].sort(
+        (a, b) => (resultPos(a.result) || 99) - (resultPos(b.result) || 99),
+      );
+    } else {
+      const finished = dedup.filter(
+        (r) => r.ft1320 != null && r.ft1320 > 0 && !r.is_dq,
+      );
+      const unfinished = dedup.filter((r) => !finished.includes(r));
+      finished.sort((a, b) => (a.ft1320 ?? 0) - (b.ft1320 ?? 0));
+      ordered = [...finished, ...unfinished];
+    }
+
+    results.push({
+      cars: dedup.map((r) => (r.car_number || "").trim()).filter(Boolean),
+      finishOrder: ordered.map((r) => (r.car_number || "").trim()).filter(Boolean),
+      timestamp: canonical,
+    });
+  }
+  return results;
+}

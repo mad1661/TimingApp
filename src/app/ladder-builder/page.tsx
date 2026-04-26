@@ -383,6 +383,78 @@ export default function LadderBuilderPage() {
     });
   }
 
+  // Pull each ladder quad's winner / runner-up from the live event data for
+  // a given elimination round. Matches by car number against each pair / quad
+  // in the timing sheet for that round.
+  const [autoFillStatus, setAutoFillStatus] = useState<string | null>(null);
+  const autoFillCategory = inputMode === "event" ? selectedCategory : "";
+  const autoFillFromEvent = useCallback(
+    async (ladderRound: number, eventRound: string) => {
+      if (!ladder) return;
+      if (!eventCode || !season || !autoFillCategory) {
+        setAutoFillStatus("Auto-fill needs an event-loaded ladder (event mode).");
+        return;
+      }
+      const targetRound = ladder.rounds[ladderRound - 1];
+      if (!targetRound) return;
+      setAutoFillStatus(`Loading ${eventRound}…`);
+      try {
+        const res = await fetch(
+          `/api/stats?type=ladder-results&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(autoFillCategory)}&round=${encodeURIComponent(eventRound)}`,
+        );
+        const data = await res.json();
+        const pairs: Array<{ cars: string[]; finishOrder: string[] }> = data.results || [];
+        if (pairs.length === 0) {
+          setAutoFillStatus(`No ${eventRound} runs found for ${autoFillCategory}. Refresh the data and try again.`);
+          return;
+        }
+        let filled = 0;
+        const updated: AdvancerMap = { ...advancers };
+        for (const quad of targetRound) {
+          const eligibleSeeds = quad.lanes
+            .filter((l) => !l.isBye && l.position != null && l.qualifier?.carNumber)
+            .map((l) => ({
+              seed: l.position as number,
+              car: (l.qualifier!.carNumber as string).trim(),
+            }));
+          if (eligibleSeeds.length < 2) continue;
+          const seedCars = new Set(eligibleSeeds.map((e) => e.car));
+          const matchedPair = pairs.find(
+            (p) => p.cars.filter((c) => seedCars.has(c)).length >= 2,
+          );
+          if (!matchedPair) continue;
+          const carToSeed = new Map(eligibleSeeds.map((e) => [e.car, e.seed]));
+          const ranked = matchedPair.finishOrder
+            .map((c) => carToSeed.get(c))
+            .filter((s): s is number => typeof s === "number");
+          if (ranked.length < 2) continue;
+          updated[advancerKey(ladderRound, quad.quadIndex)] = [ranked[0], ranked[1]];
+          filled++;
+        }
+        setAdvancers(updated);
+        setAutoFillStatus(
+          filled === 0
+            ? `${eventRound} loaded but no quads matched the ladder cars.`
+            : `Filled ${filled} quad${filled === 1 ? "" : "s"} from ${eventRound}.`,
+        );
+      } catch (err) {
+        console.error(err);
+        setAutoFillStatus("Failed to load round results.");
+      }
+    },
+    [ladder, eventCode, season, autoFillCategory, advancers],
+  );
+
+  // Default elim-round name suggestion per ladder transition: R1→R2 = E1, etc.
+  const [autoFillRound, setAutoFillRound] = useState<Record<number, string>>({
+    1: "E1",
+    2: "E2",
+    3: "E3",
+  });
+  function setAutoFillRoundFor(r: number, value: string) {
+    setAutoFillRound((prev) => ({ ...prev, [r]: value }));
+  }
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="no-print mb-8">
@@ -761,6 +833,9 @@ export default function LadderBuilderPage() {
               corresponding lanes in the next round automatically. Saved per
               event + class — close the page and come back, it&apos;s still here.
             </p>
+            {autoFillStatus && (
+              <p className="text-xs text-nhra-accent mb-3">{autoFillStatus}</p>
+            )}
             <div className="space-y-5">
               {ladder.rounds.slice(0, 3).map((round, ri) => {
                 const roundNum = ri + 1;
@@ -770,11 +845,39 @@ export default function LadderBuilderPage() {
                     : roundNum === 2
                       ? "Round 2 → Semifinals"
                       : "Semifinals → Final";
+                const elimRoundOptions = availableRounds.filter((r) => r.startsWith("E") || r === "F" || r === "SF");
                 return (
                   <div key={roundNum}>
-                    <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2">
-                      {roundLabel}
-                    </h3>
+                    <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                      <h3 className="text-xs uppercase tracking-wider text-gray-500">
+                        {roundLabel}
+                      </h3>
+                      {inputMode === "event" && eventCode && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] uppercase text-gray-500">Auto-fill from</span>
+                          <select
+                            value={autoFillRound[roundNum] || "E1"}
+                            onChange={(e) => setAutoFillRoundFor(roundNum, e.target.value)}
+                            className="px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-white text-xs focus:outline-none focus:border-nhra-accent"
+                          >
+                            {elimRoundOptions.length === 0 && (
+                              <option value={autoFillRound[roundNum] || "E1"}>{autoFillRound[roundNum] || "E1"}</option>
+                            )}
+                            {elimRoundOptions.map((r) => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() =>
+                              autoFillFromEvent(roundNum, autoFillRound[roundNum] || "E1")
+                            }
+                            className="px-3 py-1 bg-nhra-red text-white rounded text-xs font-medium hover:bg-red-700"
+                          >
+                            Auto-fill
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {round.map((quad) => (
                         <QuadAdvancePicker
@@ -837,10 +940,11 @@ function QuadAdvancePicker({
   function update(slot: 0 | 1, value: number) {
     let nextFirst = slot === 0 ? value : first;
     let nextSecond = slot === 1 ? value : second;
-    // Don't let the same seed sit in both slots.
+    // Don't let the same seed sit in both slots — bump the other to 0.
     if (slot === 0 && nextFirst && nextFirst === nextSecond) nextSecond = 0;
     if (slot === 1 && nextSecond && nextSecond === nextFirst) nextFirst = 0;
-    if (!nextFirst || !nextSecond) {
+    // Persist partial picks too — only clear the entry when both are 0.
+    if (!nextFirst && !nextSecond) {
       onChange(null);
     } else {
       onChange([nextFirst, nextSecond]);

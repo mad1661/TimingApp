@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -230,6 +230,16 @@ export async function GET(request: NextRequest) {
       const category = params.get("category") || "";
       const state = await getLadderState(eventCode, season, category);
       return NextResponse.json({ state });
+    }
+
+    if (type === "ladder-results") {
+      const category = params.get("category") || "";
+      const round = params.get("round") || "";
+      if (!eventCode || !season || !category || !round) {
+        return NextResponse.json({ error: "event_code, season, category, round required" }, { status: 400 });
+      }
+      const results = await getLadderRoundResults(eventCode, season, category, round);
+      return NextResponse.json({ results });
     }
 
     return NextResponse.json({ error: "Invalid stats type" }, { status: 400 });

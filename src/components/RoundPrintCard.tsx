@@ -121,16 +121,45 @@ function Banner({ roundHeader, startTime, date, category, isFourWide }: { roundH
   );
 }
 
-function ColumnHeader() {
+function ColumnHeader({ isFourWide }: { isFourWide: boolean }) {
+  if (isFourWide) {
+    return (
+      <thead>
+        <tr>
+          <HeaderCell w="4%">Lane</HeaderCell>
+          <HeaderCell align="right" w="4%">#</HeaderCell>
+          <HeaderCell w="5%">CLASS</HeaderCell>
+          <HeaderCell w="5%">Idx/Rec</HeaderCell>
+          <HeaderCell align="right" w="5%">Ov/Un</HeaderCell>
+          <HeaderCell align="right" w="4%">R/T</HeaderCell>
+          <HeaderCell align="right" w="5%">60&apos;</HeaderCell>
+          <HeaderCell align="right" w="5%">330</HeaderCell>
+          <HeaderCell align="right" w="5%">1/8</HeaderCell>
+          <HeaderCell align="right" w="5%">MPH</HeaderCell>
+          <HeaderCell align="right" w="5%">1000</HeaderCell>
+          <HeaderCell align="right" w="5%">ET</HeaderCell>
+          <HeaderCell align="right" w="5%">MPH</HeaderCell>
+          <HeaderCell align="right" w="4%">Run #</HeaderCell>
+          <HeaderCell align="right" w="5%">Finish</HeaderCell>
+          <HeaderCell w="6%">WINpos</HeaderCell>
+          <HeaderCell align="right" w="4%">MOV</HeaderCell>
+          <HeaderCell w="5%">TIME</HeaderCell>
+          <HeaderCell w="7%">Remarks</HeaderCell>
+        </tr>
+      </thead>
+    );
+  }
+  // 2-wide CompuLink StarTrak layout: no Lane / Finish / WINpos columns; each
+  // pair prints as two stacked rows; "1st MOV" combines the precise (4-dec)
+  // and rounded (2-dec) margin of victory on the winner's row only.
   return (
     <thead>
       <tr>
-        <HeaderCell w="4%">Lane</HeaderCell>
-        <HeaderCell align="right" w="4%">#</HeaderCell>
+        <HeaderCell align="right" w="5%">#</HeaderCell>
         <HeaderCell w="5%">CLASS</HeaderCell>
-        <HeaderCell w="5%">Idx/Rec</HeaderCell>
-        <HeaderCell align="right" w="5%">Ov/Un</HeaderCell>
-        <HeaderCell align="right" w="4%">R/T</HeaderCell>
+        <HeaderCell w="6%">Idx/Rec</HeaderCell>
+        <HeaderCell align="right" w="6%">Ov/Un D/I</HeaderCell>
+        <HeaderCell align="right" w="5%">R/T</HeaderCell>
         <HeaderCell align="right" w="5%">60&apos;</HeaderCell>
         <HeaderCell align="right" w="5%">330</HeaderCell>
         <HeaderCell align="right" w="5%">1/8</HeaderCell>
@@ -138,27 +167,59 @@ function ColumnHeader() {
         <HeaderCell align="right" w="5%">1000</HeaderCell>
         <HeaderCell align="right" w="5%">ET</HeaderCell>
         <HeaderCell align="right" w="5%">MPH</HeaderCell>
-        <HeaderCell align="right" w="4%">Run #</HeaderCell>
-        <HeaderCell align="right" w="5%">Finish</HeaderCell>
-        <HeaderCell w="6%">WINpos</HeaderCell>
-        <HeaderCell align="right" w="4%">MOV</HeaderCell>
-        <HeaderCell w="5%">TIME</HeaderCell>
-        <HeaderCell w="7%">Remarks</HeaderCell>
+        <HeaderCell align="right" w="5%">Run #</HeaderCell>
+        <HeaderCell w="9%">1st MOV</HeaderCell>
+        <HeaderCell w="7%">TIME</HeaderCell>
+        <HeaderCell w="8%">Remarks</HeaderCell>
       </tr>
     </thead>
   );
 }
 
-function PairRows({ pair }: { pair: RoundPrintPair }) {
+function PairRows({ pair, isFourWide }: { pair: RoundPrintPair; isFourWide: boolean }) {
   const winnerCar = pair.winner_car;
+  // For 2-wide we want a stable top/bottom order by lane (1/L on top, 2/R on
+  // bottom) regardless of who won, matching the CompuLink StarTrak layout.
+  const orderedRuns = isFourWide
+    ? pair.runs
+    : [...pair.runs].sort((a, b) => laneOrderCmp(a.lane, b.lane));
+  const colSpan = isFourWide ? 19 : 16;
+
   return (
     <>
-      {pair.runs.map((run, ri) => {
+      {orderedRuns.map((run, ri) => {
         const isWinner = run.car_number != null && run.car_number === winnerCar;
         const showTime = ri === 0;
+        if (isFourWide) {
+          return (
+            <tr key={`${pair.canonical_ts}-${run.run_number}-${ri}`} className="align-baseline">
+              <DataCell>{laneDisplay(run.lane)}</DataCell>
+              <DataCell align="right">{run.car_number ?? ""}</DataCell>
+              <DataCell>{run.class_index ?? ""}</DataCell>
+              <DataCell>{fmtIndex(run)}</DataCell>
+              <DataCell align="right">{fmtOverUnder(run.over_under_thou)}</DataCell>
+              <DataCell align="right">{fmtRT(run.rt)}</DataCell>
+              <DataCell align="right">{fmt3(run.ft60)}</DataCell>
+              <DataCell align="right">{fmt3(run.ft330)}</DataCell>
+              <DataCell align="right">{fmt3(run.ft660)}</DataCell>
+              <DataCell align="right">{fmt2(run.mph_660)}</DataCell>
+              <DataCell align="right">{fmt3(run.ft1000)}</DataCell>
+              <DataCell align="right">{fmt3(run.ft1320)}</DataCell>
+              <DataCell align="right">{fmt2(run.mph_1320)}</DataCell>
+              <DataCell align="right">{String(run.run_number)}</DataCell>
+              <DataCell align="right">{run.finish != null ? String(run.finish) : ""}</DataCell>
+              <DataCell>{run.winpos}</DataCell>
+              <DataCell align="right">{isWinner ? fmtMov(pair.pair_mov, 2) : ""}</DataCell>
+              <DataCell>{showTime ? pair.time_label : ""}</DataCell>
+              <DataCell>{run.remarks}</DataCell>
+            </tr>
+          );
+        }
+        const movLabel = isWinner && pair.pair_mov != null
+          ? `${fmtMov(pair.pair_mov, 4)} ${fmtMov(pair.pair_mov, 2)}`
+          : "";
         return (
           <tr key={`${pair.canonical_ts}-${run.run_number}-${ri}`} className="align-baseline">
-            <DataCell>{laneDisplay(run.lane)}</DataCell>
             <DataCell align="right">{run.car_number ?? ""}</DataCell>
             <DataCell>{run.class_index ?? ""}</DataCell>
             <DataCell>{fmtIndex(run)}</DataCell>
@@ -172,19 +233,29 @@ function PairRows({ pair }: { pair: RoundPrintPair }) {
             <DataCell align="right">{fmt3(run.ft1320)}</DataCell>
             <DataCell align="right">{fmt2(run.mph_1320)}</DataCell>
             <DataCell align="right">{String(run.run_number)}</DataCell>
-            <DataCell align="right">{run.finish != null ? String(run.finish) : ""}</DataCell>
-            <DataCell>{run.winpos}</DataCell>
-            <DataCell align="right">{isWinner ? fmtMov(pair.pair_mov, 2) : ""}</DataCell>
+            <DataCell>{movLabel}</DataCell>
             <DataCell>{showTime ? pair.time_label : ""}</DataCell>
             <DataCell>{run.remarks}</DataCell>
           </tr>
         );
       })}
       <tr aria-hidden="true">
-        <td colSpan={19} className="py-2" />
+        <td colSpan={colSpan} className="py-2" />
       </tr>
     </>
   );
+}
+
+function laneOrderCmp(a: string | null | undefined, b: string | null | undefined): number {
+  const norm = (l: string | null | undefined): number => {
+    const v = (l || "").trim().toUpperCase();
+    if (v === "L" || v === "L1" || v === "1") return 1;
+    if (v === "R" || v === "L2" || v === "2") return 2;
+    if (v === "L3" || v === "3") return 3;
+    if (v === "L4" || v === "4") return 4;
+    return 99;
+  };
+  return norm(a) - norm(b);
 }
 
 export default function RoundPrintCard({ data, categoryLabel, footerLabel }: Props) {
@@ -222,11 +293,11 @@ export default function RoundPrintCard({ data, categoryLabel, footerLabel }: Pro
             )}
 
             <table className="w-full border-collapse text-[11px] leading-tight">
-              <ColumnHeader />
+              <ColumnHeader isFourWide={data.is_four_wide} />
               <tbody>
                 {chunk.map((pair, pi) => (
                   <Fragment key={`${pair.canonical_ts}-${pageIdx}-${pi}`}>
-                    <PairRows pair={pair} />
+                    <PairRows pair={pair} isFourWide={data.is_four_wide} />
                   </Fragment>
                 ))}
               </tbody>

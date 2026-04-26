@@ -172,7 +172,7 @@ function advancersOrProjected(
 ): Lane[] {
   const key = advancerKey(quad.round, quad.quadIndex);
   const picked = advancers[key];
-  if (picked && picked.length === 2) {
+  if (picked && picked.length === 2 && picked[0] > 0 && picked[1] > 0) {
     return picked.map((p) => ({
       position: p,
       qualifier: byPos.get(p) ?? null,
@@ -200,7 +200,8 @@ export const SUPPORTED_FIELD_SIZES: number[] = [17];
 
 // Map of "round-quadIndex" → [winnerPosition, runnerUpPosition]. Positions
 // reference the original qualifier seed (1..fieldSize), which carries the
-// driver/car/ET data through to later rounds.
+// driver/car/ET data through to later rounds. A `0` slot means "not picked
+// yet"; both slots must be non-zero for the next round's quad to populate.
 export type AdvancerMap = Record<string, [number, number]>;
 
 export function advancerKey(round: number, quadIndex: number): string {
