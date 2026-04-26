@@ -27,7 +27,7 @@ export default function LadderSheet({ ladder, header }: LadderSheetProps) {
     <div className="ladder-sheet bg-white text-black font-serif">
       <SheetHeader header={header} fieldSize={ladder.fieldSize} />
 
-      <div className="px-3 pt-2 pb-3">
+      <div className="px-2 pt-1 pb-1">
         <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} />
       </div>
 
@@ -47,7 +47,7 @@ function SheetHeader({
 }) {
   const h = header || {};
   return (
-    <div className="border-b border-black px-4 pt-2 pb-2 relative">
+    <div className="border-b border-black px-4 pt-1 pb-1 relative">
       <div className="absolute right-4 top-2 text-[9px] italic">
         {h.systemMark ?? ""}
       </div>
@@ -133,7 +133,7 @@ function BracketGrid({
       style={{
         gridTemplateColumns:
           "minmax(190px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr)",
-        gridTemplateRows: `repeat(${N}, minmax(112px, 1fr))`,
+        gridTemplateRows: `repeat(${N}, minmax(94px, 1fr))`,
       }}
     >
       {r1.map((q, k) => (
@@ -224,7 +224,7 @@ function QuadBox({ quad, variant }: { quad: QuadCell; variant: QuadVariant }) {
         <div
           key={idx}
           className={`px-1 py-0.5 ${idx > 0 ? "border-t border-black" : ""}`}
-          style={{ minHeight: variant === "round1" ? 26 : 18 }}
+          style={{ minHeight: variant === "round1" ? 21 : 14 }}
         >
           <LaneRow lane={lane} variant={variant} />
         </div>
@@ -326,7 +326,7 @@ function PrintStyles() {
       @media print {
         @page {
           size: letter portrait;
-          margin: 0.4in;
+          margin: 0.25in;
         }
         body {
           background: white !important;
