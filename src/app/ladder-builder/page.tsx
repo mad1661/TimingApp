@@ -381,6 +381,29 @@ export default function LadderBuilderPage() {
     return m;
   }, [qualifiers]);
 
+  // Resolve Champion + Runner-Up lanes for the printed sheet from the user's
+  // pick of the final quad's W / RU. Auto-fill from the F (final) round can
+  // populate this; otherwise the user picks manually below.
+  function laneFromSeed(seed: number, sourceRound: number): {
+    position: number;
+    qualifier: Qualifier | null;
+    runEt: number | null;
+    runMph: number | null;
+  } | null {
+    if (!seed) return null;
+    const q = qualifierByPosition.get(seed) || null;
+    const sr = seedResults[seedResultKey(sourceRound, seed)] || null;
+    return {
+      position: seed,
+      qualifier: q,
+      runEt: sr?.et ?? null,
+      runMph: sr?.mph ?? null,
+    };
+  }
+  const finalPicks = advancers[advancerKey(4, 1)] || null;
+  const championLane = finalPicks ? laneFromSeed(finalPicks[0], 4) : null;
+  const runnerUpLane = finalPicks ? laneFromSeed(finalPicks[1], 4) : null;
+
   function setQuadAdvancers(round: number, quadIndex: number, picks: [number, number] | null) {
     setAdvancers((prev) => {
       const next = { ...prev };
@@ -524,10 +547,12 @@ export default function LadderBuilderPage() {
   );
 
   // Default elim-round name suggestion per ladder transition: R1→R2 = E1, etc.
+  // R4 = the final round (W of that quad becomes Champion).
   const [autoFillRound, setAutoFillRound] = useState<Record<number, string>>({
     1: "E1",
     2: "E2",
     3: "E3",
+    4: "F",
   });
   function setAutoFillRoundFor(r: number, value: string) {
     setAutoFillRound((prev) => ({ ...prev, [r]: value }));
@@ -899,7 +924,12 @@ export default function LadderBuilderPage() {
             </button>
           </div>
           <div className="bg-white rounded-lg overflow-hidden shadow-2xl">
-            <LadderSheet ladder={ladder} header={header} />
+            <LadderSheet
+              ladder={ladder}
+              header={header}
+              champion={championLane}
+              runnerUp={runnerUpLane}
+            />
           </div>
 
           <div className="no-print mt-6 bg-nhra-card border border-nhra-border rounded-xl p-5 mb-6">
@@ -915,14 +945,16 @@ export default function LadderBuilderPage() {
               <p className="text-xs text-nhra-accent mb-3">{autoFillStatus}</p>
             )}
             <div className="space-y-5">
-              {ladder.rounds.slice(0, 3).map((round, ri) => {
+              {ladder.rounds.map((round, ri) => {
                 const roundNum = ri + 1;
                 const roundLabel =
                   roundNum === 1
                     ? "Round 1 → Round 2"
                     : roundNum === 2
                       ? "Round 2 → Semifinals"
-                      : "Semifinals → Final";
+                      : roundNum === 3
+                        ? "Semifinals → Final"
+                        : "Final → Champion";
                 const elimRoundOptions = availableRounds.filter((r) => r.startsWith("E") || r === "F" || r === "SF");
                 return (
                   <div key={roundNum}>

@@ -19,9 +19,11 @@ export interface LadderSheetHeader {
 interface LadderSheetProps {
   ladder: Ladder;
   header?: LadderSheetHeader;
+  champion?: Lane | null;
+  runnerUp?: Lane | null;
 }
 
-export default function LadderSheet({ ladder, header }: LadderSheetProps) {
+export default function LadderSheet({ ladder, header, champion, runnerUp }: LadderSheetProps) {
   const [r1, r2, r3, r4] = ladder.rounds;
 
   return (
@@ -29,7 +31,7 @@ export default function LadderSheet({ ladder, header }: LadderSheetProps) {
       <SheetHeader header={header} fieldSize={ladder.fieldSize} />
 
       <div className="px-2 pt-1 pb-1">
-        <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} />
+        <BracketGrid r1={r1} r2={r2} r3={r3} r4={r4} champion={champion ?? null} runnerUp={runnerUp ?? null} />
       </div>
 
       <PrintStyles />
@@ -132,11 +134,15 @@ function BracketGrid({
   r2,
   r3,
   r4,
+  champion,
+  runnerUp,
 }: {
   r1: QuadCell[];
   r2: QuadCell[];
   r3: QuadCell[];
   r4: QuadCell[];
+  champion: Lane | null;
+  runnerUp: Lane | null;
 }) {
   const N = r1.length; // 8 for the 17-car ladder
 
@@ -145,7 +151,7 @@ function BracketGrid({
       className="grid"
       style={{
         gridTemplateColumns:
-          "minmax(190px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr)",
+          "minmax(190px, 1fr) 24px minmax(150px, 1fr) 24px minmax(150px, 1fr) 24px minmax(160px, 1fr)",
         gridTemplateRows: `repeat(${N}, minmax(94px, 1fr))`,
       }}
     >
@@ -181,7 +187,7 @@ function BracketGrid({
         <ConnectorPair />
       </GridCell>
       <GridCell col={7} rowStart={1} rowSpan={N}>
-        <FinalCell quad={r4[0]} />
+        <FinalCell quad={r4[0]} champion={champion} runnerUp={runnerUp} />
       </GridCell>
     </div>
   );
@@ -211,11 +217,71 @@ function GridCell({
   );
 }
 
-function FinalCell({ quad }: { quad: QuadCell }) {
+function FinalCell({
+  quad,
+  champion,
+  runnerUp,
+}: {
+  quad: QuadCell;
+  champion: Lane | null;
+  runnerUp: Lane | null;
+}) {
   return (
-    <div className="flex flex-col w-full">
-      <div className="text-center text-xs italic mb-1">** Champion **</div>
-      <QuadBox quad={quad} variant="advanced" />
+    <div className="flex flex-col w-full gap-2">
+      <PodiumBox label="Champion" lane={champion} accent="champion" />
+      <PodiumBox label="Runner-Up" lane={runnerUp} accent="runner" />
+      <div className="mt-1">
+        <div className="text-center text-[10px] italic tracking-widest mb-1">— FINAL —</div>
+        <QuadBox quad={quad} variant="advanced" />
+      </div>
+    </div>
+  );
+}
+
+function PodiumBox({
+  label,
+  lane,
+  accent,
+}: {
+  label: string;
+  lane: Lane | null;
+  accent: "champion" | "runner";
+}) {
+  const q = lane?.qualifier;
+  const et = lane?.runEt != null ? lane.runEt : q?.et ?? null;
+  const mph = lane?.runMph != null ? lane.runMph : q?.qMph ?? null;
+  const accentClass =
+    accent === "champion"
+      ? "border-black bg-yellow-50"
+      : "border-black bg-gray-50";
+  return (
+    <div className={`border-2 ${accentClass}`}>
+      <div className="px-2 py-0.5 border-b border-black bg-white text-center text-[10px] font-bold tracking-[0.2em] uppercase">
+        {label}
+      </div>
+      <div className="px-2 py-1.5 min-h-[42px] flex items-center">
+        {q ? (
+          <div className="text-[10px] leading-[1.15] font-mono w-full">
+            <div className="flex gap-1">
+              <span className="w-9 text-right font-bold">{q.carNumber ?? ""}</span>
+              <span className="flex-1 truncate font-bold">{q.driver ?? ""}</span>
+            </div>
+            <div className="flex gap-1">
+              <span className="w-9 text-right">{q.position}</span>
+              <span className="w-12 text-right">
+                {et != null ? et.toFixed(3) : ""}
+              </span>
+              <span className="flex-1">
+                {mph != null ? mph.toFixed(2) : ""}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <span className="text-[10px] italic text-gray-400">
+            (pick after final runs)
+          </span>
+        )}
+      </div>
     </div>
   );
 }
