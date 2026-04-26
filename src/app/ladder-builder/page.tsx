@@ -277,14 +277,24 @@ export default function LadderBuilderPage() {
         setQualifiers([]);
         return;
       }
-      if (results.length !== fieldSize) {
+      // Truncate to the configured field size — anyone outside the top-N
+      // didn't make the field. (Lower position number = higher seed.)
+      const trimmed = [...results]
+        .sort((a, b) => a.position - b.position)
+        .slice(0, fieldSize);
+      const droppedCount = results.length - trimmed.length;
+      if (trimmed.length < fieldSize) {
         setEventError(
-          `Found ${results.length} qualifiers but ladder is sized for ${fieldSize}. Switch field size or pick a different class.`
+          `Only ${trimmed.length} qualifiers found but ladder is sized for ${fieldSize}. Switch field size or pick a different class.`,
+        );
+      } else if (droppedCount > 0) {
+        setEventError(
+          `Loaded top ${fieldSize} of ${results.length} qualifiers. ${droppedCount} bumped from the field.`,
         );
       }
-      const cat = results[0].category || "";
+      const cat = trimmed[0].category || "";
       setClassCodeFromApi(cat);
-      const qs: Qualifier[] = results.map((r) => ({
+      const qs: Qualifier[] = trimmed.map((r) => ({
         position: r.position,
         carNumber: r.car_number,
         driver: r.name,
