@@ -441,11 +441,17 @@ export default function LadderBuilderPage() {
       if (!targetRound) return;
       setAutoFillStatus(`Loading ${eventRound}…`);
       try {
-        const res = await fetch(
-          `/api/stats?type=ladder-results&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(autoFillCategory)}&round=${encodeURIComponent(eventRound)}`,
-        );
-        const data = await res.json();
-        const pairs: Array<{
+        // Try the picked round first; if it comes back empty try common
+        // alternatives (NHRA's final shows up as F / FINAL / E{N} depending
+        // on the meet) so the user doesn't have to guess.
+        const candidates = [eventRound];
+        const upper = eventRound.toUpperCase();
+        if (upper === "F" || upper === "FINAL") {
+          for (const alt of ["F", "FINAL", "E4", "E3"]) {
+            if (!candidates.includes(alt)) candidates.push(alt);
+          }
+        }
+        let pairs: Array<{
           cars: string[];
           finishOrder: Array<{
             car: string;
@@ -453,9 +459,24 @@ export default function LadderBuilderPage() {
             mph: number | null;
             result: string | null;
           }>;
-        }> = data.results || [];
+        }> = [];
+        let matchedRound = eventRound;
+        for (const candidate of candidates) {
+          const res = await fetch(
+            `/api/stats?type=ladder-results&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(autoFillCategory)}&round=${encodeURIComponent(candidate)}`,
+          );
+          const data = await res.json();
+          const r = (data.results || []) as typeof pairs;
+          if (r.length > 0) {
+            pairs = r;
+            matchedRound = candidate;
+            break;
+          }
+        }
         if (pairs.length === 0) {
-          setAutoFillStatus(`No ${eventRound} runs found for ${autoFillCategory}. Refresh the data and try again.`);
+          setAutoFillStatus(
+            `No ${eventRound} runs found for ${autoFillCategory}. Try a different round from the dropdown.`,
+          );
           return;
         }
 
@@ -546,8 +567,8 @@ export default function LadderBuilderPage() {
         setSeedResults(updatedResults);
         setAutoFillStatus(
           filled === 0
-            ? `${eventRound} loaded but no quads matched the ladder cars.`
-            : `Filled ${filled} quad${filled === 1 ? "" : "s"} from ${eventRound}.`,
+            ? `${matchedRound} loaded but no quads matched the ladder cars.`
+            : `Filled ${filled} quad${filled === 1 ? "" : "s"} from ${matchedRound}.`,
         );
       } catch (err) {
         console.error(err);
@@ -965,7 +986,9 @@ export default function LadderBuilderPage() {
                   if (roundNum === totalRounds - 2) return `Round ${roundNum} → Semifinals`;
                   return `Round ${roundNum} → Round ${roundNum + 1}`;
                 })();
-                const elimRoundOptions = availableRounds.filter((r) => r.startsWith("E") || r === "F" || r === "SF");
+                const elimRoundOptions = availableRounds.filter(
+                  (r) => !r.startsWith("Q") && !r.startsWith("T"),
+                );
                 return (
                   <div key={roundNum}>
                     <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
