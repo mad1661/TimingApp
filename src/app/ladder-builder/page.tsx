@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useLiveData } from "@/components/LiveDataProvider";
 import LadderSheet, { LadderSheetHeader } from "@/components/LadderSheet";
-import { buildLadder, Qualifier, SUPPORTED_FIELD_SIZES, advancerKey, type AdvancerMap } from "@/lib/ladder";
+import { buildLadder, Qualifier, SUPPORTED_FIELD_SIZES, advancerKey, seedResultKey, type AdvancerMap, type SeedResultMap } from "@/lib/ladder";
 
 interface QualifyingEntry {
   position: number;
@@ -94,6 +94,10 @@ export default function LadderBuilderPage() {
   // Per-quad winner / runner-up picks. Key is "round-quadIndex" (e.g. "1-3"),
   // value is [winnerSeedPosition, runnerUpSeedPosition].
   const [advancers, setAdvancers] = useState<AdvancerMap>({});
+  // Per-seed-per-round ET / MPH captured from auto-fill so R2+ lanes can
+  // show what the racer actually ran in the previous round (instead of the
+  // original qualifying ET / MPH). Key is "{round}-{seed}".
+  const [seedResults, setSeedResults] = useState<SeedResultMap>({});
   // Suppresses the auto-save side effect during rehydrate so we don't
   // immediately overwrite the doc we just loaded with our empty initial
   // state on the very first render after a category switch.
@@ -169,6 +173,7 @@ export default function LadderBuilderPage() {
     setStateLoaded(false);
     setQualifiers([]);
     setAdvancers({});
+    setSeedResults({});
     if (!canPersistHeader) return;
     let cancelled = false;
     fetch(
@@ -181,6 +186,7 @@ export default function LadderBuilderPage() {
         if (s && Array.isArray(s.qualifiers) && s.qualifiers.length > 0) {
           setQualifiers(s.qualifiers as Qualifier[]);
           setAdvancers(s.advancers && typeof s.advancers === "object" ? s.advancers : {});
+          setSeedResults(s.seedResults && typeof s.seedResults === "object" ? s.seedResults : {});
           if (inputMode === "manual" && typeof s.classCode === "string" && s.classCode) {
             setClassCode(s.classCode);
           }
@@ -217,6 +223,7 @@ export default function LadderBuilderPage() {
             fieldSize,
             qualifiers,
             advancers,
+            seedResults,
             classCode: inputMode === "manual" ? classCode : undefined,
           },
         }),
@@ -231,6 +238,7 @@ export default function LadderBuilderPage() {
     stateLoaded,
     qualifiers,
     advancers,
+    seedResults,
     fieldSize,
     inputMode,
     classCode,
@@ -361,7 +369,7 @@ export default function LadderBuilderPage() {
   let buildError: string | null = null;
   if (qualifiers.length > 0 && isSupported) {
     try {
-      ladder = buildLadder(qualifiers, advancers);
+      ladder = buildLadder(qualifiers, advancers, seedResults);
     } catch (err) {
       buildError = err instanceof Error ? err.message : "Failed to build ladder";
     }
@@ -403,13 +411,17 @@ export default function LadderBuilderPage() {
           `/api/stats?type=ladder-results&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(autoFillCategory)}&round=${encodeURIComponent(eventRound)}`,
         );
         const data = await res.json();
-        const pairs: Array<{ cars: string[]; finishOrder: string[] }> = data.results || [];
+        const pairs: Array<{
+          cars: string[];
+          finishOrder: Array<{ car: string; et: number | null; mph: number | null }>;
+        }> = data.results || [];
         if (pairs.length === 0) {
           setAutoFillStatus(`No ${eventRound} runs found for ${autoFillCategory}. Refresh the data and try again.`);
           return;
         }
         let filled = 0;
         const updated: AdvancerMap = { ...advancers };
+        const updatedResults: SeedResultMap = { ...seedResults };
         for (const quad of targetRound) {
           const eligibleSeeds = quad.lanes
             .filter((l) => !l.isBye && l.position != null && l.qualifier?.carNumber)
@@ -424,14 +436,30 @@ export default function LadderBuilderPage() {
           );
           if (!matchedPair) continue;
           const carToSeed = new Map(eligibleSeeds.map((e) => [e.car, e.seed]));
-          const ranked = matchedPair.finishOrder
-            .map((c) => carToSeed.get(c))
-            .filter((s): s is number => typeof s === "number");
-          if (ranked.length < 2) continue;
-          updated[advancerKey(ladderRound, quad.quadIndex)] = [ranked[0], ranked[1]];
+          const rankedEntries = matchedPair.finishOrder
+            .map((entry) => {
+              const seed = carToSeed.get(entry.car);
+              if (typeof seed !== "number") return null;
+              return { seed, et: entry.et, mph: entry.mph };
+            })
+            .filter((e): e is { seed: number; et: number | null; mph: number | null } => e !== null);
+          if (rankedEntries.length < 2) continue;
+          updated[advancerKey(ladderRound, quad.quadIndex)] = [
+            rankedEntries[0].seed,
+            rankedEntries[1].seed,
+          ];
+          // Capture each advancer's run stats from this round so the next
+          // round's lanes print the actual ET / MPH they posted to advance.
+          for (const e of rankedEntries.slice(0, 2)) {
+            updatedResults[seedResultKey(ladderRound, e.seed)] = {
+              et: e.et,
+              mph: e.mph,
+            };
+          }
           filled++;
         }
         setAdvancers(updated);
+        setSeedResults(updatedResults);
         setAutoFillStatus(
           filled === 0
             ? `${eventRound} loaded but no quads matched the ladder cars.`
@@ -899,8 +927,11 @@ export default function LadderBuilderPage() {
             </div>
             <div className="mt-4 flex items-center justify-end">
               <button
-                onClick={() => setAdvancers({})}
-                disabled={Object.keys(advancers).length === 0}
+                onClick={() => {
+                  setAdvancers({});
+                  setSeedResults({});
+                }}
+                disabled={Object.keys(advancers).length === 0 && Object.keys(seedResults).length === 0}
                 className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-400 rounded-md text-xs hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Clear all advancers

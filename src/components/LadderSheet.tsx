@@ -265,6 +265,10 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
 
   if (lane.qualifier) {
     const q = lane.qualifier;
+    // R2+ lanes prefer what the racer ran in the previous round; R1 lanes
+    // fall back to the qualifier's qualifying ET / MPH.
+    const et = lane.runEt != null ? lane.runEt : q.et ?? null;
+    const mph = lane.runMph != null ? lane.runMph : q.qMph ?? null;
     return (
       <div className="text-[9px] leading-[1.1] font-mono">
         <div className="flex gap-1">
@@ -275,10 +279,10 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
         <div className="flex gap-1">
           <span className="w-3 text-right">{q.position}</span>
           <span className="w-10 text-right">
-            {q.et != null ? q.et.toFixed(3) : ""}
+            {et != null ? et.toFixed(3) : ""}
           </span>
           <span className="flex-1">
-            {q.qMph != null ? q.qMph.toFixed(2) : ""}
+            {mph != null ? mph.toFixed(2) : ""}
           </span>
         </div>
       </div>

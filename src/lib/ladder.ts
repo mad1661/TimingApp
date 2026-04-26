@@ -28,6 +28,11 @@ export interface Lane {
   position: number | null;
   qualifier?: Qualifier | null;
   isBye?: boolean;
+  // ET / MPH this lane's racer posted in the previous round to advance into
+  // here. If set, the printed sheet shows these instead of the qualifier's
+  // qualifying ET / MPH (so a R2 box prints what the racer ran in R1).
+  runEt?: number | null;
+  runMph?: number | null;
 }
 
 export interface QuadCell {
@@ -91,16 +96,22 @@ const ACTIVE_LANES_17: Record<number, number[]> = {
 export function buildLadder(
   qualifiers: Qualifier[],
   advancers?: AdvancerMap,
+  seedResults?: SeedResultMap,
 ): Ladder {
   const sorted = [...qualifiers].sort((a, b) => a.position - b.position);
   const fieldSize = sorted.length;
-  if (fieldSize === 17) return build17QuadLadder(sorted, advancers ?? {});
+  if (fieldSize === 17)
+    return build17QuadLadder(sorted, advancers ?? {}, seedResults ?? {});
   throw new Error(
     `Field size ${fieldSize} not yet supported (only 17-car quad ladder is implemented)`
   );
 }
 
-function build17QuadLadder(qs: Qualifier[], advancers: AdvancerMap): Ladder {
+function build17QuadLadder(
+  qs: Qualifier[],
+  advancers: AdvancerMap,
+  seedResults: SeedResultMap,
+): Ladder {
   const r1: QuadCell[] = Array.from({ length: 8 }, (_, i) => ({
     round: 1,
     quadIndex: i + 1,
@@ -129,9 +140,9 @@ function build17QuadLadder(qs: Qualifier[], advancers: AdvancerMap): Ladder {
   }
 
   const byPos = new Map<number, Qualifier>(qs.map((q) => [q.position, q]));
-  const r2 = buildNextRound(r1, 2, advancers, byPos);
-  const r3 = buildNextRound(r2, 3, advancers, byPos);
-  const r4 = buildNextRound(r3, 4, advancers, byPos);
+  const r2 = buildNextRound(r1, 2, advancers, byPos, seedResults);
+  const r3 = buildNextRound(r2, 3, advancers, byPos, seedResults);
+  const r4 = buildNextRound(r3, 4, advancers, byPos, seedResults);
 
   return { fieldSize: 17, format: "quad", rounds: [r1, r2, r3, r4] };
 }
@@ -146,14 +157,17 @@ function buildNextRound(
   roundNum: number,
   advancers: AdvancerMap,
   byPos: Map<number, Qualifier>,
+  seedResults: SeedResultMap,
 ): QuadCell[] {
   const out: QuadCell[] = [];
+  // Lanes in round N show what the racer ran in round N-1 to advance here.
+  const sourceRound = roundNum - 1;
   for (let i = 0; i < prev.length; i += 2) {
     const a = prev[i];
     const b = prev[i + 1];
     const lanes = padTo4([
-      ...advancersOrProjected(a, advancers, byPos),
-      ...advancersOrProjected(b, advancers, byPos),
+      ...advancersOrProjected(a, advancers, byPos, seedResults, sourceRound),
+      ...advancersOrProjected(b, advancers, byPos, seedResults, sourceRound),
     ]);
     out.push({
       round: roundNum,
@@ -169,14 +183,21 @@ function advancersOrProjected(
   quad: QuadCell,
   advancers: AdvancerMap,
   byPos: Map<number, Qualifier>,
+  seedResults: SeedResultMap,
+  sourceRound: number,
 ): Lane[] {
   const key = advancerKey(quad.round, quad.quadIndex);
   const picked = advancers[key];
   if (picked && picked.length === 2 && picked[0] > 0 && picked[1] > 0) {
-    return picked.map((p) => ({
-      position: p,
-      qualifier: byPos.get(p) ?? null,
-    }));
+    return picked.map((p) => {
+      const sr = seedResults[seedResultKey(sourceRound, p)];
+      return {
+        position: p,
+        qualifier: byPos.get(p) ?? null,
+        runEt: sr?.et ?? null,
+        runMph: sr?.mph ?? null,
+      };
+    });
   }
   return projectTop2(quad);
 }
@@ -206,4 +227,16 @@ export type AdvancerMap = Record<string, [number, number]>;
 
 export function advancerKey(round: number, quadIndex: number): string {
   return `${round}-${quadIndex}`;
+}
+
+// Map of "{round}-{seed}" → ET / MPH that the seed posted in that round.
+// e.g. seedResults["1-5"] = { et: 7.123, mph: 178.45 } means seed #5 ran
+// 7.123 / 178.45 mph in Round 1, which gets printed on the seed's lane in
+// Round 2 (the round it advanced into). Auto-fill populates this from the
+// timing data; manual picks leave it empty and the qualifying ET/MPH is
+// shown as a fallback.
+export type SeedResultMap = Record<string, { et: number | null; mph: number | null }>;
+
+export function seedResultKey(round: number, seed: number): string {
+  return `${round}-${seed}`;
 }

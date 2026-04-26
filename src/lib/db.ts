@@ -2065,6 +2065,10 @@ export interface LadderStateRecord {
   qualifiers: LadderStateQualifier[];
   // Map of "round-quadIndex" → [winnerPosition, runnerUpPosition]
   advancers: Record<string, [number, number]>;
+  // Map of "{round}-{seed}" → ET / MPH the seed posted in that round, used to
+  // print actual run stats (instead of qualifying ET / MPH) on later-round
+  // boxes. Populated by the Auto-fill button.
+  seedResults?: Record<string, { et: number | null; mph: number | null }>;
   // Manual mode keeps its own classCode separate from the qualifier rows; we
   // store it so the page can rehydrate it.
   classCode?: string;
@@ -2105,9 +2109,15 @@ export async function saveLadderState(
 
 // Returns each pair / quad of an elimination round with its finish order, so
 // the Ladder Builder can auto-fill winner / runner-up into the next round.
+export interface LadderRoundResultEntry {
+  car: string;
+  et: number | null;
+  mph: number | null;
+}
+
 export interface LadderRoundResultPair {
   cars: string[];
-  finishOrder: string[]; // sorted: winner first, then 2nd, 3rd, 4th
+  finishOrder: LadderRoundResultEntry[];
   timestamp: string | null;
 }
 
@@ -2183,7 +2193,13 @@ export async function getLadderRoundResults(
 
     results.push({
       cars: dedup.map((r) => (r.car_number || "").trim()).filter(Boolean),
-      finishOrder: ordered.map((r) => (r.car_number || "").trim()).filter(Boolean),
+      finishOrder: ordered
+        .filter((r) => r.car_number && r.car_number.trim())
+        .map((r) => ({
+          car: (r.car_number as string).trim(),
+          et: r.ft1320,
+          mph: r.mph_1320,
+        })),
       timestamp: canonical,
     });
   }

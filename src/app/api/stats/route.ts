@@ -294,6 +294,7 @@ export async function POST(request: NextRequest) {
         fieldSize: state.fieldSize || 17,
         qualifiers: Array.isArray(state.qualifiers) ? state.qualifiers : [],
         advancers: state.advancers && typeof state.advancers === "object" ? state.advancers : {},
+        seedResults: state.seedResults && typeof state.seedResults === "object" ? state.seedResults : {},
         classCode: typeof state.classCode === "string" ? state.classCode : undefined,
       });
       return NextResponse.json({ ok: true });
