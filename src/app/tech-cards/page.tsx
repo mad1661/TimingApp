@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useLiveData } from "@/components/LiveDataProvider";
 
 interface UploadResult {
   success: boolean;
@@ -11,12 +12,29 @@ interface UploadResult {
 }
 
 export default function TechCardsPage() {
+  const live = useLiveData();
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState("");
   const [eventName, setEventName] = useState("");
+  const [autoFilledEvent, setAutoFilledEvent] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Pre-fill the event name from the currently loaded event so uploads
+  // automatically tag tech cards with the right event without the user
+  // having to type it every time. Manual edits override.
+  useEffect(() => {
+    const liveEventName = live.config?.eventName?.trim();
+    if (!liveEventName) return;
+    setEventName((prev) => {
+      if (prev === "" || autoFilledEvent) {
+        setAutoFilledEvent(true);
+        return liveEventName;
+      }
+      return prev;
+    });
+  }, [live.config?.eventName, autoFilledEvent]);
 
   async function handleUpload(file: File) {
     if (!file) return;
@@ -73,14 +91,31 @@ export default function TechCardsPage() {
 
       {/* Event Name */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
-        <label className="block text-sm text-gray-400 mb-2">Event Name (optional)</label>
+        <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+          <label className="block text-sm text-gray-400">Event Name</label>
+          {autoFilledEvent && live.config?.eventName && (
+            <span className="text-[10px] uppercase tracking-wider text-green-400">
+              Auto-filled from current event
+            </span>
+          )}
+        </div>
         <input
           type="text"
           value={eventName}
-          onChange={(e) => setEventName(e.target.value)}
-          placeholder="e.g. No Problem Raceway Park - Mar 27 thru Mar 29"
+          onChange={(e) => {
+            setEventName(e.target.value);
+            setAutoFilledEvent(false);
+          }}
+          placeholder={
+            live.config?.eventName
+              ? live.config.eventName
+              : "e.g. No Problem Raceway Park - Mar 27 thru Mar 29"
+          }
           className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent"
         />
+        <p className="text-xs text-gray-500 mt-2">
+          Tagged on every uploaded tech card so the &quot;Missing From Eliminations&quot; check on /noshows can scope to the right event.
+        </p>
       </div>
 
       {/* Upload Area */}
