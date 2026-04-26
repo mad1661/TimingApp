@@ -1988,3 +1988,56 @@ function compareQualRunsWithIndex(a: RunRow, b: RunRow, idxA: number | null, idx
       return 0;
   }
 }
+
+// ─── Ladder header storage (per event + category) ─────────────────────────
+
+export interface LadderHeaderRecord {
+  eventTitle?: string;
+  venue?: string;
+  dateRange?: string;
+  classTitle?: string;
+  seriesBanner?: string;
+  runTime?: string;
+  runDate?: string;
+  roundNumber?: string;
+  systemMark?: string;
+  lowEt?: { value: string; carNumber: string; driver: string };
+  topSpeed?: { value: string; carNumber: string; driver: string };
+}
+
+function ladderHeaderKey(eventCode: string, season: string, category: string): string {
+  return `${eventCode}_${season}_${category}`;
+}
+
+export async function getLadderHeader(
+  eventCode: string,
+  season: string,
+  category: string
+): Promise<LadderHeaderRecord | null> {
+  if (!eventCode || !season || !category) return null;
+  try {
+    const db = getDb();
+    const doc = await db
+      .collection("ladder_headers")
+      .doc(ladderHeaderKey(eventCode, season, category))
+      .get();
+    if (doc.exists) return doc.data() as LadderHeaderRecord;
+  } catch (err) {
+    console.error("[DB] Failed to load ladder header:", err);
+  }
+  return null;
+}
+
+export async function saveLadderHeader(
+  eventCode: string,
+  season: string,
+  category: string,
+  header: LadderHeaderRecord
+): Promise<void> {
+  if (!eventCode || !season || !category) return;
+  const db = getDb();
+  await db
+    .collection("ladder_headers")
+    .doc(ladderHeaderKey(eventCode, season, category))
+    .set(header, { merge: true });
+}

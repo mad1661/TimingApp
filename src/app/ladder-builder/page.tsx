@@ -108,6 +108,53 @@ export default function LadderBuilderPage() {
       .catch(console.error);
   }, [eventCode, season]);
 
+  // Storage key for the header: event + season + category. The "category"
+  // is the qualifying class — selectedCategory in event mode, classCode in
+  // manual mode. When this triple changes we load the saved header (if any);
+  // when the header is edited, we debounce-save it back to Firestore.
+  const headerCategoryKey =
+    inputMode === "event" ? selectedCategory : classCode;
+  const canPersistHeader = !!eventCode && !!season && !!headerCategoryKey;
+
+  // Load saved header when (event, season, category) changes.
+  useEffect(() => {
+    if (!canPersistHeader) return;
+    let cancelled = false;
+    fetch(
+      `/api/stats?type=ladder-header&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(headerCategoryKey)}`
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.header && Object.keys(data.header).length > 0) {
+          setHeader(data.header);
+        }
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [eventCode, season, headerCategoryKey, canPersistHeader]);
+
+  // Debounced save of header on changes.
+  useEffect(() => {
+    if (!canPersistHeader) return;
+    const t = setTimeout(() => {
+      fetch("/api/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "save-ladder-header",
+          event_code: eventCode,
+          season,
+          category: headerCategoryKey,
+          header,
+        }),
+      }).catch(console.error);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [eventCode, season, headerCategoryKey, header, canPersistHeader]);
+
   // Resize manual rows when fieldSize changes
   useEffect(() => {
     setManualRows((prev) => {
@@ -592,7 +639,11 @@ export default function LadderBuilderPage() {
 
       {ladder && (
         <>
-          <div className="no-print mb-4 flex justify-end">
+          <div className="no-print mb-4 flex items-center justify-between gap-4">
+            <p className="text-xs text-gray-400">
+              Tip: in your browser&apos;s print dialog, uncheck &ldquo;Headers and
+              footers&rdquo; to remove the URL and page number.
+            </p>
             <button
               onClick={() => window.print()}
               className="px-5 py-2.5 bg-nhra-red text-white rounded-lg font-medium hover:bg-red-700"

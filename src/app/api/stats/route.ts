@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader } from "@/lib/db";
 
 
 export async function GET(request: NextRequest) {
@@ -220,6 +220,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ runs, noShows });
     }
 
+    if (type === "ladder-header") {
+      const category = params.get("category") || "";
+      const header = await getLadderHeader(eventCode, season, category);
+      return NextResponse.json({ header });
+    }
+
     return NextResponse.json({ error: "Invalid stats type" }, { status: 400 });
   } catch (error) {
     console.error("Stats error:", error);
@@ -248,6 +254,15 @@ export async function POST(request: NextRequest) {
         classMode: body.classMode || {},
         tiebreaker: body.tiebreaker || "mph",
       });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (type === "save-ladder-header") {
+      const { category, header } = body;
+      if (!event_code || !season || !category) {
+        return NextResponse.json({ error: "event_code, season, category required" }, { status: 400 });
+      }
+      await saveLadderHeader(event_code, season, category, header || {});
       return NextResponse.json({ ok: true });
     }
 
