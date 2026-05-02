@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryRuns, getCategories, getDistinctRounds, getDistinctClasses, getEvents } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  "Pragma": "no-cache",
+  "Expires": "0",
+};
+
 export async function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
@@ -13,7 +22,7 @@ export async function GET(request: NextRequest) {
         runs: [],
         total: 0,
         filters: { categories: [], seasons: [], rounds: [], classes: [], events },
-      });
+      }, { headers: NO_STORE_HEADERS });
     }
 
     const [result, categories, rounds, classes, events] = await Promise.all([
@@ -39,9 +48,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ...result,
       filters: { categories, seasons: [season], rounds, classes, events },
-    });
+    }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("Runs query error:", error);
-    return NextResponse.json({ error: "Failed to query runs" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to query runs" }, { status: 500, headers: NO_STORE_HEADERS });
   }
 }

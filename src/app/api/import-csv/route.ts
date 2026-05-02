@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseCsvToRuns } from "@/lib/csv-parser";
-import { insertRuns, insertEvent, logFetch } from "@/lib/db";
+import { insertRuns, insertEvent, logFetch, invalidateEventCache } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,6 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     await insertEvent({ event_code: eventCode, event_type: eventType, event_name: eventName, season, start_date: startDate });
+    invalidateEventCache(eventCode, season);
     const inserted = await insertRuns(eventCode, season, runs);
     await logFetch(eventCode, season, eventType, inserted);
 

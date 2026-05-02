@@ -3,6 +3,17 @@ import type { RunRow } from "./db";
 
 const BASE_URL = "https://getresults.nhradata.com";
 
+// Wrap fetch so every NHRA call opts out of Next.js's data cache and signals
+// no-cache to upstream proxies. Without this Next.js may serve a previously-
+// returned HTML page instead of re-hitting getresults, which is a primary
+// reason "Refresh Data" sometimes returns yesterday's runs.
+function nfetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Cache-Control")) headers.set("Cache-Control", "no-cache");
+  if (!headers.has("Pragma")) headers.set("Pragma", "no-cache");
+  return fetch(input, { ...init, cache: "no-store", headers });
+}
+
 function parseNum(val: string | undefined): number | null {
   if (!val || val.trim() === "" || val === "\u00a0" || val === "&nbsp;") return null;
   const n = parseFloat(val.trim());
@@ -102,7 +113,7 @@ async function tryFastRefresh(options: ScrapeOptions): Promise<Omit<RunRow, "id"
   fields["eventTypeDropDown"] = options.eventType;
   fields["divEventRaceDropDown"] = eventValue;
 
-  const res = await fetch(`${BASE_URL}/`, {
+  const res = await nfetch(`${BASE_URL}/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -130,7 +141,7 @@ async function tryFastRefresh(options: ScrapeOptions): Promise<Omit<RunRow, "id"
     dateFields["__EVENTARGUMENT"] = "";
     dateFields["dateDropDown"] = options.dateFilter;
 
-    const dateRes = await fetch(`${BASE_URL}/`, {
+    const dateRes = await nfetch(`${BASE_URL}/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -178,7 +189,7 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
     invalidateSession(options.username);
   }
 
-  const loginPageRes = await fetch(`${BASE_URL}/login.aspx`, {
+  const loginPageRes = await nfetch(`${BASE_URL}/login.aspx`, {
     redirect: "manual",
     headers: { "User-Agent": "TiminData/1.0" },
   });
@@ -196,7 +207,7 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
     LoginButton: "Login",
   });
 
-  const loginRes = await fetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
+  const loginRes = await nfetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -211,7 +222,7 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
 
   const eventValue = `{ 'EventType' : '${options.eventType}', 'StartDate' : '${options.startDate}', 'EventCode' : '${options.eventCode}', 'Season' : '${options.season}' }`;
 
-  const pageRes = await fetch(`${BASE_URL}/`, {
+  const pageRes = await nfetch(`${BASE_URL}/`, {
     headers: {
       "Cookie": allCookies,
       "User-Agent": "TiminData/1.0",
@@ -226,7 +237,7 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
   typeFields["yearDropDown"] = options.season;
   typeFields["eventTypeDropDown"] = options.eventType;
 
-  const typeRes = await fetch(`${BASE_URL}/`, {
+  const typeRes = await nfetch(`${BASE_URL}/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -245,7 +256,7 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
   eventFields["eventTypeDropDown"] = options.eventType;
   eventFields["divEventRaceDropDown"] = eventValue;
 
-  const eventRes = await fetch(`${BASE_URL}/`, {
+  const eventRes = await nfetch(`${BASE_URL}/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -262,7 +273,7 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
     dateFields["__EVENTARGUMENT"] = "";
     dateFields["dateDropDown"] = options.dateFilter;
 
-    const dateRes = await fetch(`${BASE_URL}/`, {
+    const dateRes = await nfetch(`${BASE_URL}/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -643,7 +654,7 @@ export async function fetchEventList(
   season: string,
   eventType: string
 ): Promise<NhraEvent[]> {
-  const loginPageRes = await fetch(`${BASE_URL}/login.aspx`, {
+  const loginPageRes = await nfetch(`${BASE_URL}/login.aspx`, {
     redirect: "manual",
     headers: { "User-Agent": "TiminData/1.0" },
   });
@@ -660,7 +671,7 @@ export async function fetchEventList(
     LoginButton: "Login",
   });
 
-  const loginRes = await fetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
+  const loginRes = await nfetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -673,7 +684,7 @@ export async function fetchEventList(
 
   const allCookies = mergeCookies(loginCookies, extractCookies(loginRes.headers));
 
-  const pageRes = await fetch(`${BASE_URL}/`, {
+  const pageRes = await nfetch(`${BASE_URL}/`, {
     headers: { "Cookie": allCookies, "User-Agent": "TiminData/1.0" },
   });
   const pageHtml = await pageRes.text();
@@ -688,7 +699,7 @@ export async function fetchEventList(
   formData["yearDropDown"] = season;
   formData["eventTypeDropDown"] = eventType;
 
-  const postRes = await fetch(`${BASE_URL}/`, {
+  const postRes = await nfetch(`${BASE_URL}/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -733,7 +744,7 @@ export async function fetchEventDates(
   password: string,
   event: NhraEvent
 ): Promise<NhraEventDate[]> {
-  const loginPageRes = await fetch(`${BASE_URL}/login.aspx`, {
+  const loginPageRes = await nfetch(`${BASE_URL}/login.aspx`, {
     redirect: "manual",
     headers: { "User-Agent": "TiminData/1.0" },
   });
@@ -741,7 +752,7 @@ export async function fetchEventDates(
   const loginVS = extractViewState(loginHtml);
   const loginCookies = extractCookies(loginPageRes.headers);
 
-  const loginRes = await fetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
+  const loginRes = await nfetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -755,7 +766,7 @@ export async function fetchEventDates(
   });
   const allCookies = mergeCookies(loginCookies, extractCookies(loginRes.headers));
 
-  const pageRes = await fetch(`${BASE_URL}/`, {
+  const pageRes = await nfetch(`${BASE_URL}/`, {
     headers: { "Cookie": allCookies, "User-Agent": "TiminData/1.0" },
   });
   const pageHtml = await pageRes.text();
@@ -766,7 +777,7 @@ export async function fetchEventDates(
   typeFields["yearDropDown"] = event.season;
   typeFields["eventTypeDropDown"] = event.eventType;
 
-  const typeRes = await fetch(`${BASE_URL}/`, {
+  const typeRes = await nfetch(`${BASE_URL}/`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", "Cookie": allCookies, "User-Agent": "TiminData/1.0" },
     body: new URLSearchParams(typeFields).toString(),
@@ -781,7 +792,7 @@ export async function fetchEventDates(
   eventFields["eventTypeDropDown"] = event.eventType;
   eventFields["divEventRaceDropDown"] = eventValue;
 
-  const eventRes = await fetch(`${BASE_URL}/`, {
+  const eventRes = await nfetch(`${BASE_URL}/`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", "Cookie": allCookies, "User-Agent": "TiminData/1.0" },
     body: new URLSearchParams(eventFields).toString(),

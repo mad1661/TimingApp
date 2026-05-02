@@ -160,9 +160,10 @@ function RunsPageInner() {
     params.set("offset", (page * PAGE_SIZE).toString());
     params.set("sort_by", sortBy);
     params.set("sort_dir", sortDir);
+    params.set("_v", String(live.dataVersion));
 
     try {
-      const res = await fetch(`/api/runs?${params}`);
+      const res = await fetch(`/api/runs?${params}`, { cache: "no-store" });
       const data = await res.json();
       setRuns(data.runs || []);
       setTotal(data.total || 0);
@@ -172,9 +173,9 @@ function RunsPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [nameFilter, categoryFilter, seasonFilter, roundFilter, classFilter, page, sortBy, sortDir, eventCode, season]);
+  }, [nameFilter, categoryFilter, seasonFilter, roundFilter, classFilter, page, sortBy, sortDir, eventCode, season, live.dataVersion]);
 
-  useEffect(() => { fetchRuns(); }, [fetchRuns, live.dataVersion]);
+  useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
   async function handleIgnore(run: RunRow) {
     const key = run._dedup_key;

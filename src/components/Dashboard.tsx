@@ -94,11 +94,14 @@ export default function Dashboard() {
   useEffect(() => {
     const eventCode = live.config?.eventCode;
     const season = live.config?.season;
+    // Tie a unique token to dataVersion so the URL changes on every refresh,
+    // forcing the browser past any cached response from a previous tick.
+    const bust = `_v=${live.dataVersion}`;
     const qs = eventCode
-      ? `type=dashboard&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season || "")}`
-      : "type=dashboard";
+      ? `type=dashboard&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season || "")}&${bust}`
+      : `type=dashboard&${bust}`;
 
-    fetch(`/api/stats?${qs}`)
+    fetch(`/api/stats?${qs}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => {
         if (data && typeof data.totalRuns === "number") {
@@ -109,7 +112,7 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
 
     if (eventCode) {
-      fetch(`/api/stats?type=latest&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season || "")}`)
+      fetch(`/api/stats?type=latest&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season || "")}&${bust}`, { cache: "no-store" })
         .then((r) => r.json())
         .then((data) => { if (data?.pair) setLatestPair(data.pair); })
         .catch(console.error);
