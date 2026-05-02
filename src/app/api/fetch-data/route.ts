@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch } from "@/lib/scraper";
-import { insertRuns, insertEvent, logFetch, purgeEventRuns } from "@/lib/db";
+import { insertRuns, insertEvent, logFetch, purgeEventRuns, invalidateEventCache } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+  "Pragma": "no-cache",
+  "Expires": "0",
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,6 +27,11 @@ export async function POST(request: NextRequest) {
       const purged = await purgeEventRuns(eventCode, season);
       console.log(`[FetchData] Purged ${purged} batch docs for ${eventCode} season ${season}`);
     }
+
+    // Drop this worker's in-memory event cache so we observe runs persisted by
+    // any other Cloud Run instance since this worker last loaded. Without this,
+    // a refresh routed to a worker with stale cache returns yesterday's data.
+    invalidateEventCache(eventCode, season);
 
     const runs = await loginAndFetch({ username, password, season, eventType, eventCode, startDate, eventName, dateFilter });
     console.log(`[FetchData] Scraped ${runs.length} runs for event ${eventCode} (${eventName}), season ${season}, type ${eventType}`);
@@ -37,12 +51,15 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[FetchData] Inserted ${inserted} new runs (${runs.length} total parsed)`);
 
-    return NextResponse.json({ success: true, totalParsed: runs.length, inserted, purged: !!purge });
+    return NextResponse.json(
+      { success: true, totalParsed: runs.length, inserted, purged: !!purge, fetchedAt: new Date().toISOString() },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Fetch data error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to fetch data" },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

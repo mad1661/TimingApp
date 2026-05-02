@@ -71,12 +71,17 @@ interface EventCache {
   runs: RunRow[];
   dedupKeys: Set<string>;
   accessedAt: number;
+  loadedAt: number;
 }
 
 const _cache = new Map<string, EventCache>();
 const _loading = new Map<string, Promise<void>>();
 const MAX_CACHED_EVENTS = 3;
 const BATCH_SIZE = 400;
+// Reload from Firestore at least this often. Required because the cache lives
+// per Cloud Run instance — without a TTL, instance B can keep returning a
+// snapshot from before instance A's writes for the lifetime of the process.
+const CACHE_TTL_MS = 30 * 1000;
 
 function eventKey(eventCode: string, season: string): string {
   return `${eventCode}_${season}`;
@@ -106,9 +111,13 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
   const key = eventKey(eventCode, season);
 
   const existing = _cache.get(key);
-  if (existing) {
+  if (existing && Date.now() - existing.loadedAt < CACHE_TTL_MS) {
     existing.accessedAt = Date.now();
     return existing;
+  }
+  if (existing) {
+    // Stale: drop and reload from Firestore so cross-worker writes are seen.
+    _cache.delete(key);
   }
 
   if (_loading.has(key)) {
@@ -165,16 +174,18 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
 
       evictIfNeeded();
 
+      const now = Date.now();
       const entry: EventCache = {
         runs,
         dedupKeys: new Set(runs.map((r) => r._dedup_key).filter(Boolean) as string[]),
-        accessedAt: Date.now(),
+        accessedAt: now,
+        loadedAt: now,
       };
       _cache.set(key, entry);
       console.log(`[DB] Loaded ${runs.length} runs for ${key} from ${snap.size} batch docs`);
     } catch (err) {
       console.error(`[DB] Failed to load ${key}:`, err);
-      _cache.set(key, { runs: [], dedupKeys: new Set(), accessedAt: Date.now() });
+      _cache.set(key, { runs: [], dedupKeys: new Set(), accessedAt: Date.now(), loadedAt: Date.now() });
     }
     _loading.delete(key);
   })();
