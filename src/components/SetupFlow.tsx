@@ -146,26 +146,26 @@ export default function SetupFlow() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-nhra-darker">
+    <div className="min-h-screen flex items-center justify-center p-3 sm:p-4 bg-nhra-darker">
       <div className="w-full max-w-2xl">
         {/* Header / Logo */}
-        <div className="text-center mb-10">
-          <div className="w-16 h-16 rounded-2xl bg-nhra-red flex items-center justify-center font-bold text-white text-2xl mx-auto mb-4">
+        <div className="text-center mb-6 sm:mb-10">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-nhra-red flex items-center justify-center font-bold text-white text-xl sm:text-2xl mx-auto mb-3 sm:mb-4">
             TD
           </div>
-          <h1 className="text-4xl font-bold text-white tracking-tight">Timing Data</h1>
-          <p className="text-gray-400 mt-2">Rice is Great All Year</p>
+          <h1 className="text-2xl sm:text-4xl font-bold text-white tracking-tight">Timing Data</h1>
+          <p className="text-sm sm:text-base text-gray-400 mt-1 sm:mt-2">Rice is Great All Year</p>
         </div>
 
         {/* Step 1: Login */}
         {!loggedIn ? (
-          <div className="bg-nhra-card border border-nhra-border rounded-xl p-8">
-            <div className="flex items-center gap-3 mb-6">
+          <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-8">
+            <div className="flex items-center gap-3 mb-5 sm:mb-6">
               <div className="w-8 h-8 rounded-full bg-nhra-red flex items-center justify-center text-white font-bold text-sm">1</div>
-              <h2 className="text-lg font-semibold text-white">Log In to NHRA</h2>
+              <h2 className="text-base sm:text-lg font-semibold text-white">Log In to NHRA</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5 sm:mb-6">
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Username</label>
                 <input
@@ -228,10 +228,10 @@ export default function SetupFlow() {
             </div>
 
             {/* Step 2: Select Event */}
-            <div className="bg-nhra-card border border-nhra-border rounded-xl p-8 mb-6">
-              <div className="flex items-center gap-3 mb-6">
+            <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-8 mb-6">
+              <div className="flex items-center gap-3 mb-5 sm:mb-6">
                 <div className="w-8 h-8 rounded-full bg-nhra-red flex items-center justify-center text-white font-bold text-sm">2</div>
-                <h2 className="text-lg font-semibold text-white">Select Event</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-white">Select Event</h2>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
@@ -354,10 +354,10 @@ export default function SetupFlow() {
             </div>
 
             {/* Step 3: Polling & Lock In */}
-            <div className="bg-nhra-card border border-nhra-border rounded-xl p-8">
-              <div className="flex items-center gap-3 mb-6">
+            <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-8">
+              <div className="flex items-center gap-3 mb-5 sm:mb-6">
                 <div className="w-8 h-8 rounded-full bg-nhra-red flex items-center justify-center text-white font-bold text-sm">3</div>
-                <h2 className="text-lg font-semibold text-white">Lock In &amp; Go</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-white">Lock In &amp; Go</h2>
               </div>
 
               <p className="text-sm text-gray-400 mb-4">How often should the app check for new data?</p>
