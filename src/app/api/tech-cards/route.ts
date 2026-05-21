@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
         submission_date: get(["SubmissionDate", "Submission Date", "submission_date"]),
         uploaded_at: new Date().toISOString(),
         event_name: eventName,
+        phone: get(["Phone", "phone", "Phone Number", "Telephone", "Cell"]),
+        email: get(["Email", "email", "Email Address", "E-mail"]),
       };
     });
 

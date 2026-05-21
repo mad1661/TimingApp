@@ -169,6 +169,17 @@ export async function listTechCardEvents(cookies: string): Promise<string[]> {
 
 export type TechCardRow = Omit<TechCardEntry, "id">;
 
+// Cloudflare obfuscates email addresses: the first hex byte is an XOR key and
+// each remaining byte is XOR'd with it.
+function decodeCfEmail(encoded: string): string {
+  const key = parseInt(encoded.slice(0, 2), 16);
+  let out = "";
+  for (let i = 2; i < encoded.length; i += 2) {
+    out += String.fromCharCode(parseInt(encoded.slice(i, i + 2), 16) ^ key);
+  }
+  return out;
+}
+
 // GridView1 column order (see the rendered Tech Card Viewer table).
 function parseTechCardGrid(html: string, eventName: string): TechCardRow[] {
   const $ = cheerio.load(html);
@@ -177,6 +188,12 @@ function parseTechCardGrid(html: string, eventName: string): TechCardRow[] {
     const cells = $(tr).find("td");
     if (cells.length < 30) return; // header row (th) or layout rows
     const get = (i: number) => cleanText(cells.eq(i).text());
+    const getEmail = (i: number) => {
+      const enc = cells.eq(i).find("a.__cf_email__").attr("data-cfemail");
+      if (enc) return decodeCfEmail(enc);
+      const t = cleanText(cells.eq(i).text());
+      return t.includes("@") ? t : "";
+    };
     const bodyMake = get(13);
     const bodyType = get(14);
     rows.push({
@@ -209,6 +226,12 @@ function parseTechCardGrid(html: string, eventName: string): TechCardRow[] {
       submission_date: get(24),
       uploaded_at: new Date().toISOString(),
       event_name: eventName,
+      phone: get(5),
+      email: getEmail(4),
+      payee_street: get(30),
+      payee_city: get(32),
+      payee_state: get(33),
+      payee_zip: get(34),
     });
   });
   return rows;

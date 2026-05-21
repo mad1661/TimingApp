@@ -1860,6 +1860,14 @@ export interface TechCardEntry {
   submission_date: string;
   uploaded_at: string;
   event_name?: string;
+  // Contact + billing details (captured from the racefiles Tech Card Viewer;
+  // optional because spreadsheet uploads may not include them).
+  phone?: string;
+  email?: string;
+  payee_street?: string;
+  payee_city?: string;
+  payee_state?: string;
+  payee_zip?: string;
 }
 
 export async function saveTechCards(entries: TechCardEntry[]): Promise<{ saved: number; skipped: number }> {
@@ -1910,7 +1918,9 @@ export async function searchTechCards(query: string): Promise<TechCardEntry[]> {
     .map((d) => ({ id: d.id, ...d.data() } as TechCardEntry))
     .filter((t) => {
       const fullName = `${t.first_name} ${t.last_name}`.toLowerCase();
-      return fullName.includes(q) || (t.car_number && t.car_number.toLowerCase().includes(q));
+      return fullName.includes(q)
+        || (!!t.car_number && t.car_number.toLowerCase().includes(q))
+        || (!!t.member_number && t.member_number.toLowerCase().includes(q));
     });
 }
 
