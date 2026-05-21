@@ -3,52 +3,29 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useLiveData, type LiveConfig } from "@/components/LiveDataProvider";
-
-const EVENT_TYPES = [
-  { value: "N", label: "National Events" },
-  { value: "D1", label: "Division 1" },
-  { value: "D2", label: "Division 2" },
-  { value: "D3", label: "Division 3" },
-  { value: "D4", label: "Division 4" },
-  { value: "D5", label: "Division 5" },
-  { value: "D6", label: "Division 6" },
-  { value: "D7", label: "Division 7" },
-];
-
-const SEASONS = Array.from({ length: 18 }, (_, i) => (2026 - i).toString());
-
-interface NhraEvent {
-  eventType: string;
-  startDate: string;
-  eventCode: string;
-  season: string;
-  displayName: string;
-}
-
-interface EventDate {
-  value: string;
-  label: string;
-}
+import { EVENT_TYPES, SEASONS } from "@/lib/nhra-setup";
+import { useNhraSetup } from "@/hooks/useNhraSetup";
 
 export default function SetupPage() {
   const live = useLiveData();
   const router = useRouter();
 
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState("");
-
-  const [season, setSeason] = useState("2026");
-  const [eventType, setEventType] = useState("N");
-  const [events, setEvents] = useState<NhraEvent[]>([]);
-  const [selectedEventIdx, setSelectedEventIdx] = useState<number>(-1);
-  const [eventsLoading, setEventsLoading] = useState(false);
-
-  const [eventDates, setEventDates] = useState<EventDate[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [datesLoading, setDatesLoading] = useState(false);
+  const {
+    username, setUsername,
+    password, setPassword,
+    loggedIn, setLoggedIn,
+    loginLoading, loginError,
+    season, setSeason,
+    eventType, setEventType,
+    events, setEvents,
+    selectedEventIdx, setSelectedEventIdx,
+    eventsLoading,
+    eventDates, setEventDates,
+    selectedDate, setSelectedDate,
+    datesLoading, setDatesLoading,
+    selectedEvent,
+    handleLogin, loadEvents, handleEventSelect,
+  } = useNhraSetup();
 
   const [intervalSeconds, setIntervalSeconds] = useState(60);
   const [purging, setPurging] = useState(false);
@@ -67,48 +44,6 @@ export default function SetupPage() {
       setLoggedIn(true);
     }
   }, [live.config]);
-
-  async function handleLogin() {
-    setLoginLoading(true);
-    setLoginError("");
-    try {
-      const res = await fetch("/api/fetch-events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, season, eventType }),
-      });
-      const data = await res.json();
-      if (data.success && data.events) {
-        setEvents(data.events);
-        setLoggedIn(true);
-        setSelectedEventIdx(-1);
-        setEventDates([]);
-        setSelectedDate("");
-      } else {
-        setLoginError(data.error || "Login failed. Check your credentials.");
-      }
-    } catch {
-      setLoginError("Network error. Could not reach the server.");
-    } finally {
-      setLoginLoading(false);
-    }
-  }
-
-  async function loadEvents() {
-    setEventsLoading(true);
-    try {
-      const res = await fetch("/api/fetch-events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, season, eventType }),
-      });
-      const data = await res.json();
-      if (data.success && data.events) {
-        setEvents(data.events);
-      }
-    } catch {}
-    setEventsLoading(false);
-  }
 
   useEffect(() => {
     if (loggedIn && username && password) loadEvents();
@@ -138,34 +73,6 @@ export default function SetupPage() {
       .catch(() => {})
       .finally(() => setDatesLoading(false));
   }, [events, live.config, selectedEventIdx, username, password]);
-
-  const selectedEvent = selectedEventIdx >= 0 ? events[selectedEventIdx] : null;
-
-  async function loadEventDates(event: NhraEvent) {
-    setDatesLoading(true);
-    setSelectedDate("");
-    try {
-      const res = await fetch("/api/fetch-events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, action: "dates", event }),
-      });
-      const data = await res.json();
-      if (data.success && data.dates) {
-        setEventDates(data.dates);
-      }
-    } catch {}
-    setDatesLoading(false);
-  }
-
-  function handleEventSelect(idx: number) {
-    setSelectedEventIdx(idx);
-    setEventDates([]);
-    setSelectedDate("");
-    if (idx >= 0 && events[idx]) {
-      loadEventDates(events[idx]);
-    }
-  }
 
   function handleLockIn() {
     if (!selectedEvent) return;

@@ -3,19 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
-
-const EVENT_TYPES = [
-  { value: "N", label: "National Events" },
-  { value: "D1", label: "Division 1" },
-  { value: "D2", label: "Division 2" },
-  { value: "D3", label: "Division 3" },
-  { value: "D4", label: "Division 4" },
-  { value: "D5", label: "Division 5" },
-  { value: "D6", label: "Division 6" },
-  { value: "D7", label: "Division 7" },
-];
-
-const SEASONS = Array.from({ length: 18 }, (_, i) => (2026 - i).toString());
+import { EVENT_TYPES, SEASONS } from "@/lib/nhra-setup";
 
 interface FetchLogEntry {
   id: string;

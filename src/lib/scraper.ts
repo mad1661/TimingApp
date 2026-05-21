@@ -291,6 +291,150 @@ export async function loginAndFetch(options: ScrapeOptions): Promise<Omit<RunRow
   return parseRunsFromHtml(eventHtml, options);
 }
 
+// ----- Session-reusing helpers for bulk backfill -----
+// loginAndFetch / fetchEventList each perform a full login per call, which is
+// fine for one event but wasteful across thousands. These let a long-running
+// backfill log in once and reuse the cookie for every list/scrape, navigating
+// the ASP.NET dropdowns from a fresh GET each time. They throw "LOGGED_OUT"
+// when the session has expired so the caller can re-login and retry.
+
+const SESSION_EXPIRED = "LOGGED_OUT";
+
+export class SessionExpiredError extends Error {
+  constructor() {
+    super(SESSION_EXPIRED);
+    this.name = "SessionExpiredError";
+  }
+}
+
+export async function nhraLogin(username: string, password: string): Promise<string> {
+  const loginPageRes = await nfetch(`${BASE_URL}/login.aspx`, {
+    redirect: "manual",
+    headers: { "User-Agent": "TiminData/1.0" },
+  });
+  const loginHtml = await loginPageRes.text();
+  const loginVS = extractViewState(loginHtml);
+  const loginCookies = extractCookies(loginPageRes.headers);
+
+  const loginRes = await nfetch(`${BASE_URL}/login.aspx?ReturnUrl=%2f`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": loginCookies,
+      "User-Agent": "TiminData/1.0",
+    },
+    body: new URLSearchParams({
+      __VIEWSTATE: loginVS.__VIEWSTATE,
+      __VIEWSTATEGENERATOR: loginVS.__VIEWSTATEGENERATOR,
+      __EVENTVALIDATION: loginVS.__EVENTVALIDATION,
+      UsernameTextbox: username,
+      PasswordTextbox: password,
+      LoginButton: "Login",
+    }).toString(),
+    redirect: "manual",
+  });
+
+  const allCookies = mergeCookies(loginCookies, extractCookies(loginRes.headers));
+
+  const pageRes = await nfetch(`${BASE_URL}/`, {
+    headers: { "Cookie": allCookies, "User-Agent": "TiminData/1.0" },
+  });
+  const pageHtml = await pageRes.text();
+  if (responseLooksLoggedOut(pageHtml)) {
+    throw new Error("NHRA login failed. Double-check the username and password.");
+  }
+  return allCookies;
+}
+
+export async function listEventsWithCookies(
+  cookies: string,
+  season: string,
+  eventType: string,
+): Promise<NhraEvent[]> {
+  const pageRes = await nfetch(`${BASE_URL}/`, {
+    headers: { "Cookie": cookies, "User-Agent": "TiminData/1.0" },
+  });
+  const pageHtml = await pageRes.text();
+  if (responseLooksLoggedOut(pageHtml)) throw new SessionExpiredError();
+
+  const formData = collectFormFields(pageHtml);
+  formData["__EVENTTARGET"] = "eventTypeDropDown";
+  formData["__EVENTARGUMENT"] = "";
+  formData["yearDropDown"] = season;
+  formData["eventTypeDropDown"] = eventType;
+
+  const postRes = await nfetch(`${BASE_URL}/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": cookies,
+      "User-Agent": "TiminData/1.0",
+    },
+    body: new URLSearchParams(formData).toString(),
+  });
+  const resultHtml = await postRes.text();
+  if (responseLooksLoggedOut(resultHtml)) throw new SessionExpiredError();
+
+  return parseEventDropdown(resultHtml);
+}
+
+export async function scrapeEventWithCookies(
+  cookies: string,
+  event: NhraEvent,
+): Promise<Omit<RunRow, "id" | "created_at">[]> {
+  const pageRes = await nfetch(`${BASE_URL}/`, {
+    headers: { "Cookie": cookies, "User-Agent": "TiminData/1.0" },
+  });
+  const pageHtml = await pageRes.text();
+  if (responseLooksLoggedOut(pageHtml)) throw new SessionExpiredError();
+
+  const typeFields = collectFormFields(pageHtml);
+  typeFields["__EVENTTARGET"] = "eventTypeDropDown";
+  typeFields["__EVENTARGUMENT"] = "";
+  typeFields["yearDropDown"] = event.season;
+  typeFields["eventTypeDropDown"] = event.eventType;
+
+  const typeRes = await nfetch(`${BASE_URL}/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": cookies,
+      "User-Agent": "TiminData/1.0",
+    },
+    body: new URLSearchParams(typeFields).toString(),
+  });
+  const typeHtml = await typeRes.text();
+  if (responseLooksLoggedOut(typeHtml)) throw new SessionExpiredError();
+
+  const eventValue = `{ 'EventType' : '${event.eventType}', 'StartDate' : '${event.startDate}', 'EventCode' : '${event.eventCode}', 'Season' : '${event.season}' }`;
+  const eventFields = collectFormFields(typeHtml);
+  eventFields["__EVENTTARGET"] = "divEventRaceDropDown";
+  eventFields["__EVENTARGUMENT"] = "";
+  eventFields["yearDropDown"] = event.season;
+  eventFields["eventTypeDropDown"] = event.eventType;
+  eventFields["divEventRaceDropDown"] = eventValue;
+
+  const eventRes = await nfetch(`${BASE_URL}/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": cookies,
+      "User-Agent": "TiminData/1.0",
+    },
+    body: new URLSearchParams(eventFields).toString(),
+  });
+  const eventHtml = await eventRes.text();
+  if (responseLooksLoggedOut(eventHtml)) throw new SessionExpiredError();
+
+  return parseRunsFromHtml(eventHtml, {
+    eventCode: event.eventCode,
+    eventName: event.displayName,
+    eventType: event.eventType,
+    season: event.season,
+    startDate: event.startDate,
+  });
+}
+
 export function parseRunsFromHtml(
   html: string,
   meta: { eventCode: string; eventName: string; eventType: string; season: string; startDate: string }
