@@ -1873,8 +1873,13 @@ export async function saveTechCards(entries: TechCardEntry[]): Promise<{ saved: 
       skipped++;
       continue;
     }
-    // Key by car_number + category for dedup/overwrite
-    const key = `${entry.car_number}_${entry.category}`.replace(/[\/\\]/g, "_");
+    // Key by member_number + category. A racer's member number is stable while
+    // their car number can change between events, so member number is the
+    // reliable identity — keying on the car number would create a duplicate
+    // record whenever someone re-numbers their car. Fall back to car_number
+    // only when a member number is missing.
+    const identity = (entry.member_number || "").trim() || (entry.car_number || "").trim();
+    const key = `${identity}_${entry.category}`.replace(/[\/\\]/g, "_");
     await col.doc(key).set(entry, { merge: true });
     saved++;
   }
