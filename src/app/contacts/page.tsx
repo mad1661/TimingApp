@@ -21,6 +21,13 @@ interface TechCard {
   payee_city?: string;
   payee_state?: string;
   payee_zip?: string;
+  uploaded_at?: string;
+}
+
+function importYear(t: { uploaded_at?: string }): string {
+  if (!t.uploaded_at) return "";
+  const y = new Date(t.uploaded_at).getFullYear();
+  return Number.isNaN(y) ? "" : String(y);
 }
 
 interface Contact {
@@ -56,6 +63,7 @@ export default function ContactsPage() {
   const [cats, setCats] = useState<Set<string>>(new Set());
   const [divs, setDivs] = useState<Set<string>>(new Set());
   const [events, setEvents] = useState<Set<string>>(new Set());
+  const [years, setYears] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState("");
 
@@ -69,6 +77,7 @@ export default function ContactsPage() {
   const catOptions = useMemo(() => uniqSorted((cards || []).map((c) => c.category)), [cards]);
   const divOptions = useMemo(() => uniqSorted((cards || []).map((c) => c.home_division)), [cards]);
   const eventOptions = useMemo(() => uniqSorted((cards || []).map((c) => c.event_name)), [cards]);
+  const yearOptions = useMemo(() => uniqSorted((cards || []).map((c) => importYear(c))).reverse(), [cards]);
 
   // Apply filters to raw rows, then collapse to one contact per person.
   const contacts = useMemo<Contact[]>(() => {
@@ -79,6 +88,7 @@ export default function ContactsPage() {
       if (cats.size && !cats.has((t.category || "").trim())) continue;
       if (divs.size && !divs.has((t.home_division || "").trim())) continue;
       if (events.size && !events.has((t.event_name || "").trim())) continue;
+      if (years.size && !years.has(importYear(t))) continue;
       const name = `${t.first_name || ""} ${t.last_name || ""}`.trim();
       if (q) {
         const hay = `${name} ${t.member_number || ""} ${t.email || ""} ${t.phone || ""}`.toLowerCase();
@@ -103,7 +113,7 @@ export default function ContactsPage() {
       }
     }
     return [...map.values()].sort((x, y) => x.name.localeCompare(y.name));
-  }, [cards, search, cats, divs, events]);
+  }, [cards, search, cats, divs, events, years]);
 
   const selectedContacts = contacts.filter((c) => selected.has(c.key));
   const allSelected = contacts.length > 0 && contacts.every((c) => selected.has(c.key));
@@ -179,6 +189,7 @@ export default function ContactsPage() {
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-6 mb-6 space-y-4">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, member #, email, phone"
           className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent" />
+        {yearOptions.length > 0 && <FilterRow label="Year imported" options={yearOptions} selected={years} onToggle={(v) => toggle(setYears, v)} />}
         <FilterRow label="Category" options={catOptions} selected={cats} onToggle={(v) => toggle(setCats, v)} />
         {divOptions.length > 0 && <FilterRow label="Division" options={divOptions} selected={divs} onToggle={(v) => toggle(setDivs, v)} />}
         {eventOptions.length > 0 && <FilterRow label="Event" options={eventOptions} selected={events} onToggle={(v) => toggle(setEvents, v)} />}
