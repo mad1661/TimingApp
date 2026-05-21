@@ -2,23 +2,77 @@
 
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ScatterChart, Scatter, LineChart, Line, Legend, Cell
+  ScatterChart, Scatter, LineChart, Line, Legend, LabelList, Cell,
 } from "recharts";
 
-const COLORS = ["#C8102E", "#003DA5", "#22c55e", "#eab308", "#f97316", "#8b5cf6", "#ec4899", "#06b6d4"];
+const AXIS = "#94a3b8";
+const GRID = "#33384f";
+const TOOLTIP = { backgroundColor: "#12121f", border: "1px solid #33384f", borderRadius: 8, color: "#e2e8f0", fontSize: 13 };
+const RED = "#ef4444";
+const GREEN = "#22c55e";
 
 interface ChartContainerProps {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
   height?: number;
 }
 
-export function ChartContainer({ title, children, height = 300 }: ChartContainerProps) {
+export function ChartContainer({ title, subtitle, children, height = 320 }: ChartContainerProps) {
   return (
-    <div className="bg-nhra-card border border-nhra-border rounded-xl p-5">
-      <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wider">{title}</h3>
-      <div style={{ height }}>{children}</div>
+    <div className="bg-nhra-card border border-nhra-border rounded-xl p-4 sm:p-5">
+      <h3 className="text-sm font-semibold text-white">{title}</h3>
+      {subtitle && <p className="text-xs text-gray-500 mt-0.5 mb-2">{subtitle}</p>}
+      <div className={subtitle ? "" : "mt-3"} style={{ height }}>{children}</div>
     </div>
+  );
+}
+
+// ---- Horizontal bar chart: category labels on the Y axis stay readable (no
+// rotated/overlapping text), values labelled at the end of each bar, and the
+// best bar is highlighted. Used by the class-aware Statistics page. ----
+interface HorizontalBarRow {
+  category: string;
+  [key: string]: string | number | null;
+}
+
+export function HorizontalBarChart({
+  data, dataKey, color = "#C8102E", unit = "", decimals = 3, best,
+}: {
+  data: HorizontalBarRow[];
+  dataKey: string;
+  color?: string;
+  unit?: string;
+  decimals?: number;
+  best?: "min" | "max";
+}) {
+  const rows = data.filter((d) => d[dataKey] != null && !Number.isNaN(Number(d[dataKey])));
+  if (rows.length === 0) {
+    return <div className="h-full flex items-center justify-center text-gray-600 text-sm">No data</div>;
+  }
+  const values = rows.map((r) => Number(r[dataKey]));
+  const bestVal = best === "min" ? Math.min(...values) : best === "max" ? Math.max(...values) : null;
+  const fmtVal = (v: unknown): string => {
+    if (v === null || v === undefined || v === "") return "";
+    const n = Number(v);
+    return Number.isNaN(n) ? "" : `${n.toFixed(decimals)}${unit}`;
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 52, left: 8, bottom: 4 }} barCategoryGap="22%">
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false} />
+        <XAxis type="number" tick={{ fill: AXIS, fontSize: 12 }} tickFormatter={(v) => `${v}${unit}`} />
+        <YAxis type="category" dataKey="category" tick={{ fill: "#e2e8f0", fontSize: 13 }} width={72} />
+        <Tooltip contentStyle={TOOLTIP} formatter={fmtVal} cursor={{ fill: "#ffffff10" }} />
+        <Bar dataKey={dataKey} radius={[0, 4, 4, 0]} maxBarSize={26} isAnimationActive={false}>
+          {rows.map((r, i) => (
+            <Cell key={i} fill={bestVal !== null && Number(r[dataKey]) === bestVal ? GREEN : color} />
+          ))}
+          <LabelList dataKey={dataKey} position="right" fill="#cbd5e1" fontSize={12} formatter={fmtVal} />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -29,96 +83,66 @@ interface CategoryBarChartProps {
   color?: string;
 }
 
+// Kept for backward compatibility; now renders as a clean horizontal bar.
 export function CategoryBarChart({ data, dataKey, label, color = "#C8102E" }: CategoryBarChartProps) {
-  const filtered = data.filter((d) => (d as Record<string, unknown>)[dataKey] != null);
+  void label;
+  return <HorizontalBarChart data={data as HorizontalBarRow[]} dataKey={dataKey} color={color} />;
+}
+
+interface ScatterDataPoint { x: number; y: number; name?: string }
+
+export function RTvsETScatter({ data }: { data: ScatterDataPoint[] }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={filtered} margin={{ top: 5, right: 10, left: 10, bottom: 60 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a44" />
-        <XAxis dataKey="category" tick={{ fill: "#9ca3af", fontSize: 10 }} angle={-45} textAnchor="end" interval={0} />
-        <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
-        <Tooltip contentStyle={{ backgroundColor: "#1e1e32", border: "1px solid #2a2a44", borderRadius: 8, color: "#e2e8f0" }} />
-        <Bar dataKey={dataKey} fill={color} radius={[4, 4, 0, 0]} name={label}>
-          {filtered.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-interface ScatterDataPoint {
-  x: number;
-  y: number;
-  name?: string;
-}
-
-interface RTvsETScatterProps {
-  data: ScatterDataPoint[];
-}
-
-export function RTvsETScatter({ data }: RTvsETScatterProps) {
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <ScatterChart margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a44" />
-        <XAxis dataKey="x" name="RT" tick={{ fill: "#9ca3af", fontSize: 11 }} label={{ value: "Reaction Time", position: "bottom", fill: "#6b7280", fontSize: 11 }} />
-        <YAxis dataKey="y" name="ET" tick={{ fill: "#9ca3af", fontSize: 11 }} label={{ value: "ET (1320ft)", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }} />
-        <Tooltip contentStyle={{ backgroundColor: "#1e1e32", border: "1px solid #2a2a44", borderRadius: 8, color: "#e2e8f0" }} cursor={{ strokeDasharray: "3 3" }} />
-        <Scatter data={data} fill="#C8102E" fillOpacity={0.6} />
+      <ScatterChart margin={{ top: 8, right: 16, left: 12, bottom: 24 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+        <XAxis dataKey="x" name="RT" tick={{ fill: AXIS, fontSize: 12 }} label={{ value: "Reaction Time", position: "bottom", fill: AXIS, fontSize: 12 }} />
+        <YAxis dataKey="y" name="ET" tick={{ fill: AXIS, fontSize: 12 }} label={{ value: "ET (1320ft)", angle: -90, position: "insideLeft", fill: AXIS, fontSize: 12 }} />
+        <Tooltip contentStyle={TOOLTIP} cursor={{ strokeDasharray: "3 3" }} />
+        <Scatter data={data} fill="#C8102E" fillOpacity={0.65} />
       </ScatterChart>
     </ResponsiveContainer>
   );
 }
 
-interface PerformanceLineData {
-  label: string;
-  value: number;
-}
+interface PerformanceLineData { label: string; value: number }
 
-interface PerformanceLineChartProps {
-  data: PerformanceLineData[];
-  dataKey?: string;
-  color?: string;
-  yLabel?: string;
-}
-
-export function PerformanceLineChart({ data, dataKey = "value", color = "#C8102E", yLabel }: PerformanceLineChartProps) {
+export function PerformanceLineChart({ data, dataKey = "value", color = "#C8102E", yLabel }: {
+  data: PerformanceLineData[]; dataKey?: string; color?: string; yLabel?: string;
+}) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a44" />
-        <XAxis dataKey="label" tick={{ fill: "#9ca3af", fontSize: 10 }} interval="preserveStartEnd" />
-        <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} label={yLabel ? { value: yLabel, angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 } : undefined} />
-        <Tooltip contentStyle={{ backgroundColor: "#1e1e32", border: "1px solid #2a2a44", borderRadius: 8, color: "#e2e8f0" }} />
-        <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }} />
+      <LineChart data={data} margin={{ top: 8, right: 16, left: 12, bottom: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+        <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 11 }} interval="preserveStartEnd" />
+        <YAxis tick={{ fill: AXIS, fontSize: 12 }} domain={["auto", "auto"]}
+          label={yLabel ? { value: yLabel, angle: -90, position: "insideLeft", fill: AXIS, fontSize: 12 } : undefined} />
+        <Tooltip contentStyle={TOOLTIP} />
+        <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2.5} dot={{ r: 3, fill: color }} activeDot={{ r: 6 }} isAnimationActive={false} />
       </LineChart>
     </ResponsiveContainer>
   );
 }
 
-interface MultiLineData {
-  label: string;
-  [key: string]: string | number | null;
-}
+interface MultiLineData { label: string; [key: string]: string | number | null }
 
-interface MultiLineChartProps {
-  data: MultiLineData[];
-  lines: { key: string; label: string; color: string }[];
-}
-
-export function MultiLineChart({ data, lines }: MultiLineChartProps) {
+export function MultiLineChart({ data, lines }: {
+  data: MultiLineData[]; lines: { key: string; label: string; color: string }[];
+}) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a44" />
-        <XAxis dataKey="label" tick={{ fill: "#9ca3af", fontSize: 10 }} interval="preserveStartEnd" />
-        <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
-        <Tooltip contentStyle={{ backgroundColor: "#1e1e32", border: "1px solid #2a2a44", borderRadius: 8, color: "#e2e8f0" }} />
-        <Legend wrapperStyle={{ color: "#9ca3af", fontSize: 12 }} />
+      <LineChart data={data} margin={{ top: 8, right: 16, left: 12, bottom: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+        <XAxis dataKey="label" tick={{ fill: AXIS, fontSize: 11 }} interval="preserveStartEnd" />
+        <YAxis tick={{ fill: AXIS, fontSize: 12 }} domain={["auto", "auto"]} />
+        <Tooltip contentStyle={TOOLTIP} />
+        <Legend wrapperStyle={{ color: AXIS, fontSize: 13, paddingTop: 8 }} />
         {lines.map((line) => (
-          <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.color} strokeWidth={2} dot={{ r: 2 }} />
+          <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.color} strokeWidth={2.5} dot={{ r: 2.5 }} activeDot={{ r: 6 }} isAnimationActive={false} />
         ))}
       </LineChart>
     </ResponsiveContainer>
   );
 }
+
+export { RED, GREEN };
