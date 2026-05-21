@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const DONE_KEY = "techcard_backfill_done";
-const BATCH_SIZE = 2;
+type Source = "grid" | "excel";
 
 interface LogLine {
   ts: string;
@@ -11,22 +10,30 @@ interface LogLine {
   text: string;
 }
 
-function loadDone(): Set<string> {
+function doneKey(source: Source): string {
+  return `techcard_backfill_done_${source}`;
+}
+
+function loadDone(source: Source): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || "[]"));
+    return new Set(JSON.parse(localStorage.getItem(doneKey(source)) || "[]"));
   } catch {
     return new Set();
   }
 }
 
-function saveDone(done: Set<string>) {
-  localStorage.setItem(DONE_KEY, JSON.stringify([...done]));
+function saveDone(source: Source, done: Set<string>) {
+  localStorage.setItem(doneKey(source), JSON.stringify([...done]));
 }
 
 export default function TechCardBackfillPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
+  const [source, setSource] = useState<Source>("grid");
+  const [eventType, setEventType] = useState("National and Divisional");
+  const [includeJr, setIncludeJr] = useState(true);
 
   const [running, setRunning] = useState(false);
   const stopRef = useRef(false);
@@ -40,25 +47,29 @@ export default function TechCardBackfillPage() {
   const [log, setLog] = useState<LogLine[]>([]);
 
   useEffect(() => {
-    setDoneCount(loadDone().size);
-  }, []);
+    setDoneCount(loadDone(source).size);
+  }, [source]);
 
   function addLog(kind: LogLine["kind"], text: string) {
     setLog((prev) => [{ ts: new Date().toLocaleTimeString(), kind, text }, ...prev].slice(0, 250));
+  }
+
+  function scopeParams(): Record<string, unknown> {
+    return source === "excel" ? { source, eventType, includeJr } : { source };
   }
 
   async function callApi(payload: Record<string, unknown>) {
     const res = await fetch("/api/tech-card-backfill", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, ...payload }),
+      body: JSON.stringify({ username, password, ...scopeParams(), ...payload }),
     });
     return res.json();
   }
 
   async function start() {
     if (!username || !password) {
-      addLog("err", "Enter your Tech Card Viewer username and password first.");
+      addLog("err", "Enter your username and password first.");
       return;
     }
     stopRef.current = false;
@@ -67,7 +78,9 @@ export default function TechCardBackfillPage() {
     setSaved(0);
     setFailures(0);
     setFound(0);
-    const done = loadDone();
+    const done = loadDone(source);
+    // Excel files take up to ~2 min each to generate, so process one per request.
+    const batchSize = source === "excel" ? 1 : 2;
 
     try {
       setCurrent("Signing in & listing events...");
@@ -81,9 +94,9 @@ export default function TechCardBackfillPage() {
       setFound(pending.length);
       addLog("info", `${events.length} events found (${pending.length} to import).`);
 
-      for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      for (let i = 0; i < pending.length; i += batchSize) {
         if (stopRef.current) throw new Error("stopped");
-        const batch = pending.slice(i, i + BATCH_SIZE);
+        const batch = pending.slice(i, i + batchSize);
         setCurrent(batch.join("  •  "));
 
         const res = await callApi({ mode: "events", events: batch });
@@ -103,7 +116,7 @@ export default function TechCardBackfillPage() {
           }
           setProcessed((p) => p + 1);
         }
-        saveDone(done);
+        saveDone(source, done);
         setDoneCount(done.size);
       }
       addLog("ok", "Tech-card backfill complete.");
@@ -117,8 +130,8 @@ export default function TechCardBackfillPage() {
   }
 
   function resetProgress() {
-    if (!window.confirm("Clear saved tech-card import progress? Already-imported events will be re-scraped next run (data is deduped, so nothing duplicates).")) return;
-    localStorage.removeItem(DONE_KEY);
+    if (!window.confirm("Clear saved import progress for this source? Already-imported events will be re-fetched next run (data is deduped, so nothing duplicates).")) return;
+    localStorage.removeItem(doneKey(source));
     setDoneCount(0);
     addLog("warn", "Progress reset.");
   }
@@ -130,27 +143,74 @@ export default function TechCardBackfillPage() {
       <div className="mb-6 sm:mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1 sm:mb-2">Tech Card Backfill</h1>
         <p className="text-sm sm:text-base text-gray-400">
-          Import National &amp; Divisional tech cards from techcardviewer.nhradata.com into your database. Runs in your browser, one event at a time; safe to stop and resume.
+          Import tech cards into your database. Runs in your browser; safe to stop and resume.
         </p>
       </div>
 
+      {/* Source */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-6 mb-6">
-        <h2 className="text-base sm:text-lg font-semibold text-white mb-4">Tech Card Viewer Login</h2>
+        <h2 className="text-base sm:text-lg font-semibold text-white mb-4">Source</h2>
+        <div className="flex flex-wrap gap-2">
+          {([
+            { value: "grid", label: "Tech Card Viewer (fast)" },
+            { value: "excel", label: "Compulink Excel (full data)" },
+          ] as const).map((opt) => (
+            <button key={opt.value} onClick={() => setSource(opt.value)} disabled={running}
+              className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+                source === opt.value ? "bg-nhra-red text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"
+              }`}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-gray-600 mt-3">
+          {source === "grid"
+            ? "techcardviewer.nhradata.com grid — fast, captures contact + vehicle + membership fields."
+            : "racefiles.nhradata.com Create Compulink File — generates the full .xlsx per event (driver address, owner, crew chief, bio). ~2 min per event."}
+        </p>
+
+        {source === "excel" && (
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Event Type</label>
+              <div className="flex flex-wrap gap-2">
+                {["National and Divisional", "ET"].map((t) => (
+                  <button key={t} onClick={() => setEventType(t)} disabled={running}
+                    className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+                      eventType === t ? "bg-nhra-red text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"
+                    }`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 text-sm text-gray-300">
+                <input type="checkbox" checked={includeJr} onChange={(e) => setIncludeJr(e.target.checked)} disabled={running} />
+                Include Jr. Tech Cards
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-6 mb-6">
+        <h2 className="text-base sm:text-lg font-semibold text-white mb-4">Login</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-gray-400 mb-1">Username</label>
             <input value={username} onChange={(e) => setUsername(e.target.value)} disabled={running}
-              placeholder="Your Tech Card Viewer username"
+              placeholder="Your NHRA tech card username"
               className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent" />
           </div>
           <div>
             <label className="block text-sm text-gray-400 mb-1">Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={running}
-              placeholder="Your Tech Card Viewer password"
+              placeholder="Your NHRA tech card password"
               className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent" />
           </div>
         </div>
-        <p className="text-xs text-gray-600 mt-3">Credentials are sent only to the server to sign in to techcardviewer.nhradata.com. They are not stored.</p>
+        <p className="text-xs text-gray-600 mt-3">Same login for both sources (techcardviewer.nhradata.com / racefiles.nhradata.com). Sent only to the server to sign in; not stored.</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
