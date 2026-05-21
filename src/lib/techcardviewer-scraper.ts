@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { TechCardEntry } from "./db";
 
-const RF_BASE = "https://racefiles.nhradata.com";
+const TCV_BASE = "https://techcardviewer.nhradata.com";
 const UA = "TiminData/1.0";
 
 function nfetch(input: string, init?: RequestInit): Promise<Response> {
@@ -27,7 +27,7 @@ function mergeCookies(existing: string, newer: string): string {
 
 function cleanText(val: string | undefined): string {
   if (!val) return "";
-  const t = val.replace(/ /g, " ").trim();
+  const t = val.replace(/ /g, " ").trim();
   return t === "&nbsp;" ? "" : t;
 }
 
@@ -53,10 +53,10 @@ function collectFormFields(html: string): Record<string, string> {
   return fields;
 }
 
-export class RacefilesAuthError extends Error {
+export class TechCardViewerAuthError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "RacefilesAuthError";
+    this.name = "TechCardViewerAuthError";
   }
 }
 
@@ -64,11 +64,13 @@ function looksLikeLoginPage(html: string): boolean {
   return /type=["']password["']/i.test(html);
 }
 
-// Generic ASP.NET Forms-Authentication login. Hits a protected page, follows the
-// redirect to the login form, auto-detects the username / password / submit
-// fields, and posts the credentials. Returns the authenticated cookie string.
-export async function racefilesLogin(username: string, password: string): Promise<string> {
-  const protUrl = `${RF_BASE}/TCND1`;
+// Generic ASP.NET Forms-Authentication login for techcardviewer.nhradata.com.
+// The site shows the sign-in page first, so this hits a protected page, follows
+// the redirect to the login form (or uses it directly), auto-detects the
+// username / password / submit fields, and posts the credentials. Returns the
+// authenticated cookie string.
+export async function techCardViewerLogin(username: string, password: string): Promise<string> {
+  const protUrl = `${TCV_BASE}/TCND1`;
   const first = await nfetch(protUrl, { redirect: "manual" });
   let cookies = extractCookies(first.headers);
 
@@ -76,7 +78,7 @@ export async function racefilesLogin(username: string, password: string): Promis
   let loginHtml: string;
   if (first.status >= 300 && first.status < 400) {
     const loc = first.headers.get("location") || "/";
-    loginUrl = new URL(loc, RF_BASE).toString();
+    loginUrl = new URL(loc, TCV_BASE).toString();
     const lr = await nfetch(loginUrl, { headers: { Cookie: cookies } });
     cookies = mergeCookies(cookies, extractCookies(lr.headers));
     loginHtml = await lr.text();
@@ -84,10 +86,8 @@ export async function racefilesLogin(username: string, password: string): Promis
     loginHtml = await first.text();
   }
 
-  if (!looksLikeLoginPage(loginHtml)) {
-    // Already authenticated (cookie still valid) or unexpected page.
-    if (!looksLikeLoginPage(loginHtml)) return cookies;
-  }
+  // Already authenticated (a still-valid cookie) — no login form present.
+  if (!looksLikeLoginPage(loginHtml)) return cookies;
 
   const $ = cheerio.load(loginHtml);
   const form = $("form").first();
@@ -99,7 +99,7 @@ export async function racefilesLogin(username: string, password: string): Promis
     || $("input[type='email']").first().attr("name");
   const passField = $("input[type='password']").first().attr("name");
   if (!userField || !passField) {
-    throw new RacefilesAuthError("Could not locate username/password fields on the racefiles login page.");
+    throw new TechCardViewerAuthError("Could not locate the username/password fields on the Tech Card Viewer login page.");
   }
   fields[userField] = username;
   fields[passField] = password;
@@ -118,18 +118,18 @@ export async function racefilesLogin(username: string, password: string): Promis
   const verify = await nfetch(protUrl, { headers: { Cookie: cookies } });
   const verifyHtml = await verify.text();
   if (looksLikeLoginPage(verifyHtml)) {
-    throw new RacefilesAuthError("racefiles login failed — check the username and password.");
+    throw new TechCardViewerAuthError("Tech Card Viewer login failed — check the username and password.");
   }
   return cookies;
 }
 
 async function getTCND1(cookies: string): Promise<string> {
-  const res = await nfetch(`${RF_BASE}/TCND1`, { headers: { Cookie: cookies } });
+  const res = await nfetch(`${TCV_BASE}/TCND1`, { headers: { Cookie: cookies } });
   return res.text();
 }
 
 async function postTCND1(cookies: string, fields: Record<string, string>): Promise<string> {
-  const res = await nfetch(`${RF_BASE}/TCND1`, {
+  const res = await nfetch(`${TCV_BASE}/TCND1`, {
     method: "POST",
     headers: { Cookie: cookies, "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(fields).toString(),
@@ -142,7 +142,7 @@ async function postTCND1(cookies: string, fields: Record<string, string>): Promi
 // parsed event list.
 async function widenAndCollect(cookies: string): Promise<{ fields: Record<string, string>; events: string[] }> {
   let html = await getTCND1(cookies);
-  if (looksLikeLoginPage(html)) throw new RacefilesAuthError("Session expired before listing events.");
+  if (looksLikeLoginPage(html)) throw new TechCardViewerAuthError("Session expired before listing events.");
   let fields = collectFormFields(html);
   fields["__EVENTTARGET"] = "ctl00$MainContent$DropDownList4";
   fields["__EVENTARGUMENT"] = "";
@@ -258,7 +258,7 @@ export async function scrapeTechCards(cookies: string, events: string[]): Promis
       f["ctl00$MainContent$DropDownList4"] = "1 Year";
       f["ctl00$MainContent$Button1"] = "Get Results / Refresh";
       const html = await postTCND1(cookies, f);
-      if (looksLikeLoginPage(html)) throw new RacefilesAuthError("Session expired mid-scrape.");
+      if (looksLikeLoginPage(html)) throw new TechCardViewerAuthError("Session expired mid-scrape.");
       results.push({ event: ev, entries: parseTechCardGrid(html, ev) });
       fields = collectFormFields(html); // carry the refreshed ViewState forward
     } catch (err) {
