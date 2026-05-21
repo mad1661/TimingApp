@@ -1901,6 +1901,12 @@ export async function getTechCardByCarNumber(carNumber: string): Promise<TechCar
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as TechCardEntry));
 }
 
+export async function getAllTechCards(): Promise<TechCardEntry[]> {
+  const db = getDb();
+  const snap = await db.collection("tech_cards").get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as TechCardEntry));
+}
+
 export async function getTechCardByName(firstName: string, lastName: string): Promise<TechCardEntry[]> {
   const db = getDb();
   const snap = await db.collection("tech_cards")
