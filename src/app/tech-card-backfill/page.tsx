@@ -58,7 +58,7 @@ export default function TechCardBackfillPage() {
 
   async function start() {
     if (!username || !password) {
-      addLog("err", "Enter your racefiles username and password first.");
+      addLog("err", "Enter your Tech Card Viewer username and password first.");
       return;
     }
     stopRef.current = false;
@@ -130,27 +130,27 @@ export default function TechCardBackfillPage() {
       <div className="mb-6 sm:mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1 sm:mb-2">Tech Card Backfill</h1>
         <p className="text-sm sm:text-base text-gray-400">
-          Import tech cards from the racefiles Tech Card Viewer into your database. Runs in your browser, one event at a time; safe to stop and resume.
+          Import National &amp; Divisional tech cards from techcardviewer.nhradata.com into your database. Runs in your browser, one event at a time; safe to stop and resume.
         </p>
       </div>
 
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 sm:p-6 mb-6">
-        <h2 className="text-base sm:text-lg font-semibold text-white mb-4">racefiles Login</h2>
+        <h2 className="text-base sm:text-lg font-semibold text-white mb-4">Tech Card Viewer Login</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-gray-400 mb-1">Username</label>
             <input value={username} onChange={(e) => setUsername(e.target.value)} disabled={running}
-              placeholder="Your racefiles username"
+              placeholder="Your Tech Card Viewer username"
               className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent" />
           </div>
           <div>
             <label className="block text-sm text-gray-400 mb-1">Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={running}
-              placeholder="Your racefiles password"
+              placeholder="Your Tech Card Viewer password"
               className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent" />
           </div>
         </div>
-        <p className="text-xs text-gray-600 mt-3">Credentials are sent only to the server to sign in to racefiles. They are not stored.</p>
+        <p className="text-xs text-gray-600 mt-3">Credentials are sent only to the server to sign in to techcardviewer.nhradata.com. They are not stored.</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">

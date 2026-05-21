@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { racefilesLogin, listTechCardEvents, scrapeTechCards } from "@/lib/racefiles-scraper";
+import { techCardViewerLogin, listTechCardEvents, scrapeTechCards } from "@/lib/techcardviewer-scraper";
 import { saveTechCards } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ const NO_STORE_HEADERS = {
   "Expires": "0",
 };
 
-// Browser-driven tech-card backfill from racefiles.nhradata.com. The client
+// Browser-driven tech-card backfill from techcardviewer.nhradata.com. The client
 // loops: mode "list" to enumerate events, then mode "events" to scrape and
 // upsert a small batch at a time (keeping each request within the timeout).
 export async function POST(request: NextRequest) {
@@ -21,10 +21,10 @@ export async function POST(request: NextRequest) {
     const { username, password, mode } = body;
 
     if (!username || !password) {
-      return NextResponse.json({ error: "racefiles username and password are required" }, { status: 400 });
+      return NextResponse.json({ error: "Tech Card Viewer username and password are required" }, { status: 400 });
     }
 
-    const cookies = await racefilesLogin(username, password);
+    const cookies = await techCardViewerLogin(username, password);
 
     if (mode === "list") {
       const events = await listTechCardEvents(cookies);

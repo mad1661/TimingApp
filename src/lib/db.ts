@@ -1860,7 +1860,7 @@ export interface TechCardEntry {
   submission_date: string;
   uploaded_at: string;
   event_name?: string;
-  // Contact + billing details (captured from the racefiles Tech Card Viewer;
+  // Contact + billing details (captured from the Tech Card Viewer grid;
   // optional because spreadsheet uploads may not include them).
   phone?: string;
   email?: string;
