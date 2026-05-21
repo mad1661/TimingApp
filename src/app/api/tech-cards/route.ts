@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { saveTechCards, getTechCardByCarNumber, getTechCardByName, searchTechCards } from "@/lib/db";
+import { saveTechCards, getTechCardByCarNumber, getTechCardByName, searchTechCards, getAllTechCards } from "@/lib/db";
 import { parseTechCardWorkbook } from "@/lib/tech-card-parse";
 
 export async function POST(request: NextRequest) {
@@ -46,6 +46,10 @@ export async function GET(request: NextRequest) {
   const query = params.get("q");
 
   try {
+    if (params.get("all")) {
+      const results = await getAllTechCards();
+      return NextResponse.json({ results });
+    }
     if (carNumber) {
       const results = await getTechCardByCarNumber(carNumber);
       return NextResponse.json({ results });
