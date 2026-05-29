@@ -202,7 +202,7 @@ export default function ContactsPage() {
           className="px-4 py-2.5 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40">
           Print Labels
         </button>
-        <button onClick={() => copy(emails.join(", "), `${emails.length} emails copied`)} disabled={emails.length === 0}
+        <button onClick={() => copy(emails.join("; "), `${emails.length} emails copied`)} disabled={emails.length === 0}
           className="px-4 py-2.5 bg-nhra-card border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white transition-colors disabled:opacity-40">
           Copy Emails ({emails.length})
         </button>
@@ -260,7 +260,7 @@ export default function ContactsPage() {
       {emails.length > 0 && (
         <div className="mt-6 bg-nhra-card border border-nhra-border rounded-xl p-4">
           <p className="text-xs text-gray-500 mb-2">Selected emails (if the copy button is blocked, select &amp; copy here):</p>
-          <textarea readOnly value={emails.join(", ")} className="w-full h-20 bg-nhra-darker border border-nhra-border rounded-lg p-3 text-xs text-gray-300 font-mono" />
+          <textarea readOnly value={emails.join("; ")} className="w-full h-20 bg-nhra-darker border border-nhra-border rounded-lg p-3 text-xs text-gray-300 font-mono" />
         </div>
       )}
     </div>
