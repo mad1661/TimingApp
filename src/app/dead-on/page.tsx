@@ -49,11 +49,15 @@ export default function DeadOnPage() {
 
   const totalCount = Object.values(results).reduce((sum, arr) => sum + arr.length, 0);
 
-  // Build unique winners list (one per category, first entry = best)
-  const deadOnWinners = Object.entries(results)
+  const roundLabel = (round: string) =>
+    round === "F" || round.toUpperCase() === "FINAL" ? "Final" : round.replace(/^E/, "Round ");
+
+  // Build the publication list — every dead on run, ordered by category (alphabetical)
+  // then by round/time within each category. Shows all cars, including multiple per class.
+  const deadOnRows = Object.entries(results)
     .filter(([, entries]) => entries.length > 0)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, entries]) => entries[0]);
+    .flatMap(([, entries]) => entries);
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -92,8 +96,8 @@ export default function DeadOnPage() {
         </div>
       )}
 
-      {/* Publication List - Winners */}
-      {searched && !loading && deadOnWinners.length > 0 && (
+      {/* Publication List - all dead on runs */}
+      {searched && !loading && deadOnRows.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
           <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
             <h3 className="text-white font-bold text-lg">Dead On - {selectedEventName || selectedEvent}</h3>
@@ -102,9 +106,9 @@ export default function DeadOnPage() {
                 const eventLabel = selectedEventName || selectedEvent;
                 const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
                 const header = `Dead On - ${eventLabel}`;
-                const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("ET", 12)}${pad("Dial-In", 12)}Membership`;
-                const rows = deadOnWinners.map((w) =>
-                  `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.ft1320.toFixed(3), 12)}${pad(w.dial_in.toFixed(3), 12)}${membership[w.name] || "\u2014"}`
+                const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Round", 10)}${pad("ET", 12)}${pad("Dial-In", 12)}Membership`;
+                const rows = deadOnRows.map((w) =>
+                  `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(roundLabel(w.round), 10)}${pad(w.ft1320.toFixed(3), 12)}${pad(w.dial_in.toFixed(3), 12)}${membership[w.name] || "\u2014"}`
                 );
                 const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
                 navigator.clipboard.writeText(text);
@@ -126,14 +130,15 @@ export default function DeadOnPage() {
                 <th className="px-6 py-3 text-left">Racer</th>
                 <th className="px-4 py-3 text-left">Category</th>
                 <th className="px-4 py-3 text-left">Car Number</th>
+                <th className="px-4 py-3 text-left">Round</th>
                 <th className="px-4 py-3 text-left">ET</th>
                 <th className="px-4 py-3 text-left">Dial-In</th>
                 <th className="px-4 py-3 text-left">Membership</th>
               </tr>
             </thead>
             <tbody>
-              {deadOnWinners.map((w) => (
-                <tr key={w.category} className="border-b border-nhra-border/30">
+              {deadOnRows.map((w, idx) => (
+                <tr key={`${w.category}-${w.name}-${w.round}-${w.timestamp}-${idx}`} className="border-b border-nhra-border/30">
                   <td className="px-6 py-3">
                     <Link
                       href={`/racer/${encodeURIComponent(w.name)}`}
@@ -144,6 +149,7 @@ export default function DeadOnPage() {
                   </td>
                   <td className="px-4 py-3 text-white">{w.category}</td>
                   <td className="px-4 py-3 text-white">#{w.car_number}</td>
+                  <td className="px-4 py-3 text-white">{roundLabel(w.round)}</td>
                   <td className="px-4 py-3 text-white font-mono">{w.ft1320.toFixed(3)}</td>
                   <td className="px-4 py-3 text-white font-mono">{w.dial_in.toFixed(3)}</td>
                   <td className="px-4 py-3 text-gray-400">{membership[w.name] || "\u2014"}</td>
@@ -210,7 +216,7 @@ export default function DeadOnPage() {
                           </span>
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
-                          {entry.round === "F" ? "Final" : entry.round.replace("E", "Round ")}
+                          {roundLabel(entry.round)}
                           {entry.rt != null && entry.rt > 0 && (
                             <span className="ml-2 text-gray-400">RT {entry.rt.toFixed(3)}</span>
                           )}
