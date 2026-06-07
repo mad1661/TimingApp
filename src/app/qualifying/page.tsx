@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { copyTableForPublication } from "@/lib/clipboard";
 
 interface EventOption {
   event_code: string;
@@ -416,42 +417,43 @@ export default function QualifyingPage() {
                 <p className="text-xs text-gray-500 mt-0.5">{modeInfo?.label}{tiebreaker === "first_run" && selectedMode === "quickest_et" ? " (First Run tiebreaker)" : ""}</p>
               </div>
               <button
-                onClick={() => {
-                  const eventLabel = selectedEventName || selectedEvent;
-                  const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
-                  const header = `${selectedCategory} Qualifying - ${eventLabel}`;
-                  const modeLabel = modeInfo?.label || selectedMode;
-                  const subheader = `Mode: ${modeLabel}`;
-
-                  let colHeader = `${pad("#", 5)}${pad("Racer", 24)}${pad("Car #", 10)}`;
+                onClick={async () => {
+                  const headers = ["#", "Racer", "Car #"];
                   if (showRt) {
-                    colHeader += `${pad("RT", 10)}`;
+                    headers.push("RT");
                   } else {
-                    colHeader += `${pad("ET", 10)}`;
-                    if (showMph) colHeader += `${pad("MPH", 10)}`;
-                    if (showDial) colHeader += `${pad(dialLabel, 10)}${pad("Diff", 10)}`;
+                    headers.push("ET");
+                    if (showMph) headers.push("MPH");
+                    if (showDial) headers.push(dialLabel, "Diff");
                   }
-                  colHeader += "Membership";
+                  headers.push("Membership");
 
                   const rows = results.map((r) => {
-                    let row = `${pad(String(r.position), 5)}${pad(r.name, 24)}${pad("#" + r.car_number, 10)}`;
+                    const row: (string | number)[] = [r.position, r.name, "#" + r.car_number];
                     if (showRt) {
-                      row += `${pad(r.rt != null ? r.rt.toFixed(4) : "-", 10)}`;
+                      row.push(r.rt != null ? r.rt.toFixed(4) : "-");
                     } else {
-                      row += `${pad(r.et.toFixed(3), 10)}`;
-                      if (showMph) row += `${pad(r.mph != null ? r.mph.toFixed(2) : "-", 10)}`;
+                      row.push(r.et.toFixed(3));
+                      if (showMph) row.push(r.mph != null ? r.mph.toFixed(2) : "-");
                       if (showDial) {
-                        row += `${pad(r.dial_in != null ? r.dial_in.toFixed(3) : "-", 10)}`;
-                        row += `${pad(r.diff != null ? (r.diff >= 0 ? "+" : "") + r.diff.toFixed(4) : "-", 10)}`;
+                        row.push(r.dial_in != null ? r.dial_in.toFixed(3) : "-");
+                        row.push(r.diff != null ? (r.diff >= 0 ? "+" : "") + r.diff.toFixed(4) : "-");
                       }
                     }
-                    row += r.membership || "\u2014";
+                    row.push(r.membership || "\u2014");
                     return row;
                   });
-                  const text = `${header}\n${subheader}\n\n${colHeader}\n${rows.join("\n")}`;
-                  navigator.clipboard.writeText(text);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
+
+                  const ok = await copyTableForPublication({
+                    title: `${selectedCategory} Qualifying - ${selectedEventName || selectedEvent}`,
+                    subtitle: `Mode: ${modeInfo?.label || selectedMode}`,
+                    headers,
+                    rows,
+                  });
+                  if (ok) {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }
                 }}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2 shrink-0"
               >
