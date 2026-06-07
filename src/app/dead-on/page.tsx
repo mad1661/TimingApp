@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { copyTableForPublication } from "@/lib/clipboard";
 
 interface DeadOnEntry {
   name: string;
@@ -102,18 +103,24 @@ export default function DeadOnPage() {
           <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
             <h3 className="text-white font-bold text-lg">Dead On - {selectedEventName || selectedEvent}</h3>
             <button
-              onClick={() => {
-                const eventLabel = selectedEventName || selectedEvent;
-                const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
-                const header = `Dead On - ${eventLabel}`;
-                const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Round", 10)}${pad("ET", 12)}${pad("Dial-In", 12)}Membership`;
-                const rows = deadOnRows.map((w) =>
-                  `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(roundLabel(w.round), 10)}${pad(w.ft1320.toFixed(3), 12)}${pad(w.dial_in.toFixed(3), 12)}${membership[w.name] || "\u2014"}`
-                );
-                const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
-                navigator.clipboard.writeText(text);
-                setWinnersCopied(true);
-                setTimeout(() => setWinnersCopied(false), 2000);
+              onClick={async () => {
+                const ok = await copyTableForPublication({
+                  title: `Dead On - ${selectedEventName || selectedEvent}`,
+                  headers: ["Racer", "Category", "Car Number", "Round", "ET", "Dial-In", "Membership"],
+                  rows: deadOnRows.map((w) => [
+                    w.name,
+                    w.category,
+                    "#" + w.car_number,
+                    roundLabel(w.round),
+                    w.ft1320.toFixed(3),
+                    w.dial_in.toFixed(3),
+                    membership[w.name] || "\u2014",
+                  ]),
+                });
+                if (ok) {
+                  setWinnersCopied(true);
+                  setTimeout(() => setWinnersCopied(false), 2000);
+                }
               }}
               className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
             >

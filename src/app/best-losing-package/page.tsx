@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { copyTableForPublication } from "@/lib/clipboard";
 
 interface PackageEntry {
   name: string;
@@ -239,18 +240,22 @@ export default function BestLosingPackagePage() {
             <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
               <h3 className="text-white font-bold text-lg">Best Losing Package - {selectedEventName || selectedEvent}</h3>
               <button
-                onClick={() => {
-                  const eventLabel = selectedEventName || selectedEvent;
-                  const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
-                  const header = `Best Losing Package - ${eventLabel}`;
-                  const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Package", 12)}Membership`;
-                  const rows = blpWinners.map((w) =>
-                    `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(w.package.toFixed(4), 12)}${membership[w.name] || "\u2014"}`
-                  );
-                  const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
-                  navigator.clipboard.writeText(text);
-                  setWinnersCopied(true);
-                  setTimeout(() => setWinnersCopied(false), 2000);
+                onClick={async () => {
+                  const ok = await copyTableForPublication({
+                    title: `Best Losing Package - ${selectedEventName || selectedEvent}`,
+                    headers: ["Racer", "Category", "Car Number", "Package", "Membership"],
+                    rows: blpWinners.map((w) => [
+                      w.name,
+                      w.category,
+                      "#" + w.car_number,
+                      w.package.toFixed(4),
+                      membership[w.name] || "\u2014",
+                    ]),
+                  });
+                  if (ok) {
+                    setWinnersCopied(true);
+                    setTimeout(() => setWinnersCopied(false), 2000);
+                  }
                 }}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
               >

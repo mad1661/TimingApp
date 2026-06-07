@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { copyTableForPublication } from "@/lib/clipboard";
 
 interface PerfectRTEntry {
   name: string;
@@ -134,25 +135,25 @@ export default function PerfectRTPage() {
           <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
             <h3 className="text-white font-bold text-lg">Perfect Reaction Time - {selectedEventName || selectedEvent}</h3>
             <button
-              onClick={() => {
-                const eventLabel = selectedEventName || selectedEvent;
-                const pad = (s: string, len: number) => s + " ".repeat(Math.max(0, len - s.length));
-                const header = `Perfect Reaction Time - ${eventLabel}`;
-                const colHeader = `${pad("Racer", 24)}${pad("Category", 22)}${pad("Car Number", 14)}${pad("Round", 16)}Membership`;
-                const rows = allEntries.map((w) => {
-                  const roundLabel = w.round === "F" ? "Final"
-                    : w.round.startsWith("R") ? `Round ${w.round.slice(1)}`
-                    : w.round.startsWith("C") ? `Class Round ${w.round.slice(1)}`
-                    : w.round.startsWith("E") ? `Round ${w.round.slice(1)}`
-                    : w.round.startsWith("Q") ? `Qualifying ${w.round.slice(1)}`
-                    : w.round.startsWith("T") ? `Time Trial ${w.round.slice(1)}`
-                    : w.round;
-                  return `${pad(w.name, 24)}${pad(w.category, 22)}${pad("#" + w.car_number, 14)}${pad(roundLabel, 16)}${membership[w.name] || "\u2014"}`;
+              onClick={async () => {
+                const ok = await copyTableForPublication({
+                  title: `Perfect Reaction Time - ${selectedEventName || selectedEvent}`,
+                  headers: ["Racer", "Category", "Car Number", "Round", "Membership"],
+                  rows: allEntries.map((w) => {
+                    const roundLabel = w.round === "F" ? "Final"
+                      : w.round.startsWith("R") ? `Round ${w.round.slice(1)}`
+                      : w.round.startsWith("C") ? `Class Round ${w.round.slice(1)}`
+                      : w.round.startsWith("E") ? `Round ${w.round.slice(1)}`
+                      : w.round.startsWith("Q") ? `Qualifying ${w.round.slice(1)}`
+                      : w.round.startsWith("T") ? `Time Trial ${w.round.slice(1)}`
+                      : w.round;
+                    return [w.name, w.category, "#" + w.car_number, roundLabel, membership[w.name] || "\u2014"];
+                  }),
                 });
-                const text = `${header}\n${colHeader}\n${rows.join("\n")}`;
-                navigator.clipboard.writeText(text);
-                setWinnersCopied(true);
-                setTimeout(() => setWinnersCopied(false), 2000);
+                if (ok) {
+                  setWinnersCopied(true);
+                  setTimeout(() => setWinnersCopied(false), 2000);
+                }
               }}
               className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
             >
