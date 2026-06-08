@@ -432,10 +432,12 @@ function mapLane(
     result: win === "" ? null : win,
     place: null, // TODO-verify: no direct API field
     category: strOrNull(obj.category),
-    // TODO-verify: lane string parity with the scraper. The dedup key includes
-    // lane, so confirm against real scraped data before mixing sources for the
-    // same event. For 4-wide, the 2nd pair (1s later) reuses Left/Right.
-    lane: side === "left" ? "Left" : "Right",
+    // "1"/"2" matches the getresults grid vocabulary that normalLane() and the
+    // dedup key (laneKey) understand, so an API row merges with the scraper row
+    // for the same physical run instead of doubling it. For 4-wide the 2nd pair
+    // (1s later) currently reuses 1/2 — dedup stays correct (car differs), but
+    // labelling lanes 3/4 is a separate TODO.
+    lane: side === "left" ? "1" : "2",
     dial_in: apiNum(field("DialIn")),
     event_code: meta.eventCode,
     event_name: meta.eventName,

@@ -218,6 +218,20 @@ export async function getEventRuns(eventCode: string, season: string): Promise<R
 
 // --------------- Dedup ---------------
 
+// Canonicalize the lane so the same physical lane dedupes regardless of how the
+// source labels it: the getresults grid uses "1"/"2" (or "L1"/"L2"), while the
+// API uses left/right. Without this, an API row and a scraper row for the same
+// run produce different dedup keys, so the run shows twice — and a 2-wide pair
+// then renders as a bogus 4-wide. Mirrors normalLane()'s recognized vocabulary.
+function laneKey(lane: string | null | undefined): string {
+  const v = (lane || "").trim().toUpperCase();
+  if (v === "L" || v === "L1" || v === "1" || v === "LEFT") return "1";
+  if (v === "R" || v === "L2" || v === "2" || v === "RIGHT") return "2";
+  if (v === "L3" || v === "3") return "3";
+  if (v === "L4" || v === "4") return "4";
+  return v;
+}
+
 function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string {
   // Strip the AM/PM marker from the timestamp so a row originally stored
   // without one (because the source HTML omits it) and the same row scraped
@@ -225,7 +239,7 @@ function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string
   // the AM/PM-augmented version would land as a duplicate row instead of
   // overwriting the bare one.
   const ts = (run.timestamp || "").replace(/\s+(AM|PM)\s*$/i, "").trim();
-  return `${ts}|${run.car_number}|${run.round}|${run.lane}|${run.event_code}|${run.season}`;
+  return `${ts}|${run.car_number}|${run.round}|${laneKey(run.lane)}|${run.event_code}|${run.season}`;
 }
 
 function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): boolean {
