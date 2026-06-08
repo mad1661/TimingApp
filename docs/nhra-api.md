@@ -79,8 +79,11 @@ takes a comma list (`41,44`).
 - `leftFlags` vocabulary → `is_dq` (currently non-empty ⇒ dq, mirroring the
   scraper's DQ column).
 - `place` — no direct API field (set null).
-- **Lane string parity** with the scraper — the dedup key includes `lane`, so
-  confirm before mixing sources for the same event. Mapper emits `Left`/`Right`.
+- ~~Lane string parity~~ **(resolved)** — the mapper emits `1`/`2` (the
+  getresults grid vocabulary that `normalLane()` understands), and `dedupKey()`
+  canonicalizes lane via `laneKey()`, so an API row and a scraper row for the
+  same physical run share a dedup key and merge instead of doubling (a 2-wide
+  pair was rendering as a bogus 4-wide). 4-wide lane 3/4 labels still TODO.
 - Response shapes for HMS, Winners, EntryList, Slips, Categories (typed loosely).
 - HMS event identity fields (EventType/StartDate/EventCode) — the bridge from the
   app's `event_code`+`season` model to the API's `EventType`+`StartDate` keys.
