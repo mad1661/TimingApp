@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch } from "@/lib/scraper";
+import { fetchEventRunsViaApi } from "@/lib/nhra-api";
 import { insertRuns, insertEvent, logFetch, purgeEventRuns, invalidateEventCache } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +15,20 @@ const NO_STORE_HEADERS = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { username, password, season, eventType, eventCode, startDate, eventName, dateFilter, purge } = body;
+    const { username, password, season, eventType, eventCode, startDate, eventName, dateFilter, purge, dataSource } = body;
 
-    if (!username || !password) {
-      return NextResponse.json({ error: "Username and password are required" }, { status: 400 });
-    }
+    // Data source: "api" (official api.nhra.com, default) or "scraper"
+    // (getresults.nhradata.com). Both produce identical RunRows, so everything
+    // downstream — persistence, dedup, the entire app — is source-agnostic.
+    const source: "api" | "scraper" = dataSource === "scraper" ? "scraper" : "api";
+
     if (!season || !eventType || !eventCode || !startDate || !eventName) {
       return NextResponse.json({ error: "Event details are required" }, { status: 400 });
+    }
+    // The scraper needs the user's getresults credentials; the API authenticates
+    // with the server-side NHRA_API_KEY, so it doesn't.
+    if (source === "scraper" && (!username || !password)) {
+      return NextResponse.json({ error: "Username and password are required" }, { status: 400 });
     }
 
     if (purge) {
@@ -33,8 +41,11 @@ export async function POST(request: NextRequest) {
     // a refresh routed to a worker with stale cache returns yesterday's data.
     invalidateEventCache(eventCode, season);
 
-    const runs = await loginAndFetch({ username, password, season, eventType, eventCode, startDate, eventName, dateFilter });
-    console.log(`[FetchData] Scraped ${runs.length} runs for event ${eventCode} (${eventName}), season ${season}, type ${eventType}`);
+    const runs =
+      source === "api"
+        ? await fetchEventRunsViaApi({ eventCode, eventName, eventType, season, startDate })
+        : await loginAndFetch({ username, password, season, eventType, eventCode, startDate, eventName, dateFilter });
+    console.log(`[FetchData] [${source}] fetched ${runs.length} runs for event ${eventCode} (${eventName}), season ${season}, type ${eventType}`);
 
     // Log first and last few timestamps to verify scrape order
     const withTs = runs.filter(r => r.timestamp);
@@ -52,7 +63,7 @@ export async function POST(request: NextRequest) {
     console.log(`[FetchData] Inserted ${inserted} new runs (${runs.length} total parsed)`);
 
     return NextResponse.json(
-      { success: true, totalParsed: runs.length, inserted, purged: !!purge, fetchedAt: new Date().toISOString() },
+      { success: true, source, totalParsed: runs.length, inserted, purged: !!purge, fetchedAt: new Date().toISOString() },
       { headers: NO_STORE_HEADERS },
     );
   } catch (error) {

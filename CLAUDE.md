@@ -18,7 +18,7 @@ There is **no test framework** configured. Validate changes with `npm run lint` 
 
 ## Stack & deployment
 
-Next.js 14 App Router (React 18, TypeScript `strict`), Tailwind CSS v4 (theme tokens like `nhra-red`/`nhra-card` defined in `src/app/globals.css`, **not** a JS config), Firebase Admin SDK → Firestore. Deployed to Cloud Run via **Firebase App Hosting** (`apphosting.yaml`), which injects `NHRA_USERNAME`/`NHRA_PASSWORD` secrets and `FB_ADMIN_PROJECT_ID`. Import alias: `@/*` → `src/*`.
+Next.js 14 App Router (React 18, TypeScript `strict`), Tailwind CSS v4 (theme tokens like `nhra-red`/`nhra-card` come from the `@theme` block in `src/app/globals.css` — **not** the vestigial `tailwind.config.ts`; see Gotchas), Firebase Admin SDK → Firestore. Deployed to Cloud Run via **Firebase App Hosting** (`apphosting.yaml`), which injects `NHRA_USERNAME`/`NHRA_PASSWORD` secrets and `FB_ADMIN_PROJECT_ID`. Import alias: `@/*` → `src/*`.
 
 ## Architecture
 
@@ -62,3 +62,5 @@ The app is effectively a client SPA. `LiveDataProvider` (React context, `src/com
 - **`firestore.rules` is wide open** (`allow read, write: if true`). There is no auth at the database layer.
 - Scraping API routes declare `export const dynamic = "force-dynamic"` and return no-store cache headers. This is deliberate — defeating Next.js's data cache fixes a recurring "Refresh Data returns yesterday's runs" class of bug. Keep it when adding scrape endpoints.
 - `firebase-admin` is listed in `serverComponentsExternalPackages` (next.config.mjs). `db.ts` and `firebase-admin.ts` are server-only.
+- **Tailwind theme lives in `globals.css`, not `tailwind.config.ts`.** This is a CSS-first Tailwind v4 setup: the live tokens are the `@theme` block in `src/app/globals.css` (which also defines `nhra-accent`/`green`/`yellow`/`orange`, absent from the JS file). `tailwind.config.ts` is dead — v4 doesn't auto-load it (no `@config` directive), so editing it does nothing. Add/change colors in `globals.css`.
+- Two different category classifiers coexist. The **bracket-vs-heads-up** distinction in the glossary is the dial-in-majority heuristic in `db.ts`; separately, `src/lib/categories.ts` (`classifyCategory`) regex-maps a class name to a `RaceFormat` (`bracket`/`index`/`heads_up`/`handicap`), used by the stats and racer-profile pages. They are independent — don't assume one drives the other.
