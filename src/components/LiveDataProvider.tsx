@@ -15,6 +15,8 @@ export interface LiveConfig {
   racingStartHour?: number;
   pmStart?: boolean;
   categoryAliases?: Record<string, string>;
+  /** Live data source. "api" = official api.nhra.com (default); "scraper" = getresults.nhradata.com. */
+  dataSource?: "api" | "scraper";
 }
 
 interface LiveDataState {
@@ -27,6 +29,7 @@ interface LiveDataState {
   totalNewRuns: number;
   dataVersion: number;
   setConfig: (config: LiveConfig) => void;
+  setDataSource: (src: "api" | "scraper") => void;
   start: () => void;
   stop: () => void;
   fetchNow: () => Promise<void>;
@@ -104,6 +107,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
           startDate: cfg.startDate,
           eventName: cfg.eventName,
           dateFilter: cfg.dateFilter,
+          dataSource: cfg.dataSource ?? "api",
         }),
       });
       const data = await res.json();
@@ -148,6 +152,16 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
     saveConfigToStorage(newConfig);
   }, []);
 
+  // Flip the live data source and persist it. Changing config re-runs the
+  // polling effect, so the next fetch immediately uses the new source.
+  const setDataSource = useCallback((src: "api" | "scraper") => {
+    const cur = configRef.current;
+    if (!cur) return;
+    const next = { ...cur, dataSource: src };
+    setConfigState(next);
+    saveConfigToStorage(next);
+  }, []);
+
   const start = useCallback(() => setIsActive(true), []);
   const stop = useCallback(() => {
     setIsActive(false);
@@ -167,7 +181,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
   return (
     <LiveDataContext.Provider value={{
       config, isActive, isFetching, lastFetch, lastResult, lastError, totalNewRuns, dataVersion,
-      setConfig, start, stop, fetchNow: doFetch, clearConfig,
+      setConfig, setDataSource, start, stop, fetchNow: doFetch, clearConfig,
     }}>
       {children}
     </LiveDataContext.Provider>

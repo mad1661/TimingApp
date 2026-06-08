@@ -49,6 +49,7 @@ export default function SetupFlow() {
       eventName: selectedEvent.displayName,
       intervalSeconds,
       dateFilter: selectedDate || undefined,
+      dataSource: "api",
     };
     live.setConfig(config);
     live.start();

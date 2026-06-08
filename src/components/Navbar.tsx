@@ -110,6 +110,24 @@ export default function Navbar() {
               {live.totalNewRuns > 0 && (
                 <p className="text-xs text-green-400">{live.totalNewRuns} new runs this session</p>
               )}
+              {/* Data source toggle: official API (default) vs getresults scraper */}
+              <div className="flex items-center gap-1 rounded-lg bg-nhra-card border border-nhra-border p-1">
+                <span className="text-[10px] uppercase tracking-wide text-gray-500 px-1 shrink-0">Source</span>
+                {(["api", "scraper"] as const).map((src) => {
+                  const active = (live.config?.dataSource ?? "api") === src;
+                  return (
+                    <button
+                      key={src}
+                      onClick={() => live.setDataSource(src)}
+                      className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-all ${
+                        active ? "bg-nhra-red text-white" : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {src === "api" ? "API" : "getresults"}
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 onClick={() => live.fetchNow()}
                 disabled={live.isFetching}
