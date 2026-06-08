@@ -233,13 +233,21 @@ function laneKey(lane: string | null | undefined): string {
 }
 
 function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string {
-  // Strip the AM/PM marker from the timestamp so a row originally stored
-  // without one (because the source HTML omits it) and the same row scraped
-  // again with the inferred marker resolve to the same dedup key. Otherwise
-  // the AM/PM-augmented version would land as a duplicate row instead of
-  // overwriting the bare one.
-  const ts = (run.timestamp || "").replace(/\s+(AM|PM)\s*$/i, "").trim();
-  return `${ts}|${run.car_number}|${run.round}|${laneKey(run.lane)}|${run.event_code}|${run.season}`;
+  // Canonicalize every component so the SAME physical run dedupes no matter how
+  // each source formats it. The getresults scraper and the API serialize things
+  // differently — the timestamp (AM/PM marker, leading zeros, 12h vs 24h), the
+  // lane ("L"/"R" vs "Left"/"Right"), and car/round casing/whitespace — so
+  // without normalizing here, an API row and a scraper row for the same pass
+  // land as two rows. The timestamp is parsed to a canonical YYYYMMDDHHMMSS;
+  // if it can't be parsed we fall back to the AM/PM-stripped string.
+  const d = parseTsToDateShared(run.timestamp || "");
+  const p = (n: number) => String(n).padStart(2, "0");
+  const ts = d
+    ? `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+    : (run.timestamp || "").replace(/\s+(AM|PM)\s*$/i, "").trim();
+  const car = (run.car_number || "").trim().toUpperCase();
+  const round = (run.round || "").trim().toUpperCase();
+  return `${ts}|${car}|${round}|${laneKey(run.lane)}|${run.event_code}|${run.season}`;
 }
 
 function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): boolean {
