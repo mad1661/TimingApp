@@ -10,5 +10,7 @@ env:
     secret: NHRA_USERNAME
   - variable: NHRA_PASSWORD
     secret: NHRA_PASSWORD
+  - variable: NHRA_API_KEY
+    secret: NHRA_API_KEY
   - variable: FB_ADMIN_PROJECT_ID
     value: nhra-timing-app
