@@ -124,6 +124,7 @@ export default function DebugPage() {
           eventCode: ev.event_code,
           startDate: ev.start_date,
           eventName: ev.event_name,
+          dataSource: "scraper",
           purge: true,
         }),
       });
