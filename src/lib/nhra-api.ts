@@ -443,6 +443,10 @@ function mapLane(
     event_type: meta.eventType,
     season: meta.season,
     start_date: meta.startDate,
+    // The timestamp came from the API's exact 24-hour `name`, so its AM/PM is
+    // authoritative. tagRunTimestamps() must not re-infer it (that mis-tags
+    // evening runs as morning and scrambles order across an AM+PM race day).
+    _ts_exact: true,
   };
 }
 
