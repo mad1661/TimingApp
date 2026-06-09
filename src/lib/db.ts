@@ -189,6 +189,11 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
       }
       let runs = Array.from(dedupMap.values());
 
+      // Collapse near-duplicate rows of the same physical pass stored under
+      // different timestamps/lanes (e.g. a quad's 2nd pairing stored both
+      // merged at the 1st pairing's time AND unmerged at its raw +1s time).
+      runs = collapseNearDuplicatePasses(runs);
+
       // Re-stamp _dedup_key on every cached run with the current normalized
       // form so insertRuns recognises freshly scraped rows as matches even if
       // the stored row was written under an older key shape.
@@ -283,6 +288,94 @@ function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string
 
 function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): boolean {
   return run.rt != null || run.ft1320 != null || run.ft660 != null || run.ft60 != null;
+}
+
+// --------------- Near-duplicate pass collapse (4-wide killer) ---------------
+//
+// The same physical pass can be stored under DIFFERENT dedup keys when sources
+// disagree about its timestamp or lane. The classic case is the 2nd pairing of
+// a 4-wide quad: the API merge aligns it to the 1st pairing's timestamp with
+// lanes 3/4, while an unmerged fetch (getresults, or an older code version)
+// stores it at its raw +1s timestamp with lanes 1/2. Result: six rows for a
+// four-car quad, clashing lane numbers, and broken 4-wide views.
+//
+// A car cannot make two passes in the same round within a few seconds, so rows
+// for the same car+round+category whose timestamps fall within this window are
+// the same pass and must collapse to one.
+const SAME_PASS_TOLERANCE_MS = 10_000;
+
+function passKey(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): string | null {
+  const car = (run.car_number || "").trim().toUpperCase();
+  if (!car) return null; // empty bye/ghost lanes can't be matched safely
+  const round = (run.round || "").trim().toUpperCase();
+  return `${car}|${round}|${run.category || ""}|${run.event_code}|${run.season}`;
+}
+
+function passTimeMs(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): number | null {
+  const d = parseTsToDateShared(run.timestamp || "");
+  return d ? d.getTime() : null;
+}
+
+// Which copy of the same pass survives a collapse. Manual edits and manual
+// entries always win; then the API's exact-timestamp version (it carries the
+// merged quad lanes 3/4); then whichever actually has timing data; then the
+// newest write.
+function passPreference(r: RunRow): number {
+  let s = 0;
+  if (r._edited) s += 1000;
+  if (r.manual_entry) s += 500;
+  if (r._ts_exact) s += 100;
+  if (hasTimingData(r)) s += 10;
+  return s;
+}
+
+function collapseNearDuplicatePasses(runs: RunRow[]): RunRow[] {
+  const byPass = new Map<string, RunRow[]>();
+  const out: RunRow[] = [];
+  for (const r of runs) {
+    const key = passKey(r);
+    const t = passTimeMs(r);
+    if (!key || t == null) {
+      out.push(r);
+      continue;
+    }
+    const arr = byPass.get(key) || [];
+    arr.push(r);
+    byPass.set(key, arr);
+  }
+
+  let collapsed = 0;
+  for (const group of byPass.values()) {
+    group.sort((a, b) => passTimeMs(a)! - passTimeMs(b)!);
+    let cluster: RunRow[] = [];
+    let clusterStart = -Infinity;
+    const flush = () => {
+      if (cluster.length === 0) return;
+      cluster.sort(
+        (a, b) =>
+          passPreference(b) - passPreference(a) ||
+          (b.created_at || "").localeCompare(a.created_at || ""),
+      );
+      out.push(cluster[0]);
+      collapsed += cluster.length - 1;
+    };
+    for (const r of group) {
+      const t = passTimeMs(r)!;
+      if (cluster.length > 0 && t - clusterStart <= SAME_PASS_TOLERANCE_MS) {
+        cluster.push(r);
+      } else {
+        flush();
+        cluster = [r];
+        clusterStart = t;
+      }
+    }
+    flush();
+  }
+
+  if (collapsed > 0) {
+    console.log(`[DB] Collapsed ${collapsed} near-duplicate pass rows`);
+  }
+  return out;
 }
 
 /**
@@ -468,6 +561,42 @@ export async function insertRuns(
       if (existingIdx !== -1) cache.runs[existingIdx] = row;
       newRuns.push(row);
       continue;
+    }
+
+    // Same-pass guard: the dedup key is new, but the row may still be the same
+    // physical pass as one we already hold under a different timestamp/lane
+    // (quad 2nd-pairing merged vs unmerged, API vs getresults). Never store
+    // both — keep whichever version is preferred.
+    const pk = passKey(run);
+    const t = passTimeMs(run);
+    if (pk && t != null) {
+      const nearIdx = cache.runs.findIndex((r) => {
+        if (passKey(r) !== pk) return false;
+        const rt2 = passTimeMs(r);
+        return rt2 != null && Math.abs(rt2 - t) <= SAME_PASS_TOLERANCE_MS;
+      });
+      if (nearIdx !== -1) {
+        const near = cache.runs[nearIdx];
+        if (near._edited || passPreference(near) >= passPreference(run as RunRow)) {
+          // Existing copy wins (ties keep the stored row so polls don't
+          // flip-flop between sources). Just refresh its walk position.
+          if (run._scrape_seq != null) near._scrape_seq = run._scrape_seq;
+          continue;
+        }
+        // Incoming copy wins (e.g. API-merged quad lanes replacing an
+        // unmerged getresults pair) — swap it in under its new key.
+        const replacement: RunRow = {
+          ...run,
+          _dedup_key: key,
+          _phantom: near._phantom || false,
+          created_at: new Date().toISOString(),
+        };
+        if (near._dedup_key) cache.dedupKeys.delete(near._dedup_key);
+        cache.runs[nearIdx] = replacement;
+        cache.dedupKeys.add(key);
+        newRuns.push(replacement);
+        continue;
+      }
     }
 
     const row: RunRow = {
