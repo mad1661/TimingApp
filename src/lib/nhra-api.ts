@@ -375,6 +375,10 @@ export function parseApiTimestamp(name: string): { date: Date; formatted: string
 
 type ApiRow = Omit<RunRow, "id" | "created_at">;
 
+// Finish-position codes the API uses in Win/Flags: winner, runner-up, 3rd/4th
+// (4-wide), plus RU spelled out. Anything else in Flags is treated as a foul.
+const API_POSITION_CODES = new Set(["W", "R", "RU", "1", "2", "3", "4"]);
+
 /** Build one per-lane RunRow from one side of a paired object, or null if empty. */
 function mapLane(
   obj: NhraApiRunObject,
@@ -427,9 +431,11 @@ function mapLane(
     mph_1320: apiNum(field("1320mph")),
     mov: apiNum(field("MOV")),
     is_winner: win === "W" ? 1 : 0,
-    // TODO-verify: leftFlags vocabulary. Mirrors the scraper's "non-empty DQ
-    // column -> is_dq" until the flag set is confirmed.
-    is_dq: flags !== "" ? 1 : 0,
+    // Flags mirrors the Win finish-position vocabulary in real event data
+    // (W / R / 3 / 4 on completed runs, blank otherwise) — it is NOT a DQ
+    // marker. The old "non-empty -> is_dq" guess branded every finished run
+    // DQ. Only treat a value as a foul if it's outside the position codes.
+    is_dq: flags !== "" && !API_POSITION_CODES.has(flags.toUpperCase()) ? 1 : 0,
     result: win === "" ? null : win,
     place: null, // TODO-verify: no direct API field
     category: strOrNull(obj.category),
