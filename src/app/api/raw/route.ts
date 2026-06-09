@@ -3,6 +3,7 @@ import {
   getFullEvent,
   getCategoryRuns,
   getLatestRuns,
+  getActiveEvents,
   mapApiRunsToRunRows,
   toApiStartDate,
   type NhraEventType,
@@ -22,6 +23,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { eventType, startDate, season, eventCode, eventName, category, count, mode } = body;
+
+    // List currently-active events (HMS) so the page can pick the one running
+    // now instead of being tied to the saved live config.
+    if (mode === "active") {
+      const active = await getActiveEvents();
+      return NextResponse.json({ active }, { headers: NO_STORE });
+    }
+
     if (!eventType || !startDate) {
       return NextResponse.json(
         { error: "eventType and startDate are required" },
