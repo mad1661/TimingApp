@@ -123,6 +123,7 @@ export default function SetupPage() {
           startDate: live.config.startDate,
           eventName: live.config.eventName,
           dateFilter: live.config.dateFilter,
+          dataSource: "scraper",
           purge: true,
         }),
       });
