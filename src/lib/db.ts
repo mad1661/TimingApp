@@ -77,7 +77,14 @@ interface EventCache {
 const _cache = new Map<string, EventCache>();
 const _loading = new Map<string, Promise<void>>();
 const MAX_CACHED_EVENTS = 3;
-const BATCH_SIZE = 400;
+// Runs are persisted as array documents (`{ runs: [...] }`) under run_batches.
+// Each such document must stay under Firestore's 1 MiB hard limit — pack too
+// many RunRows into one and the write fails with INVALID_ARGUMENT "Transaction
+// too big. Decrease transaction size." That bites on a purge + full re-fetch of
+// a large national event, where every run is new so the chunks are maximal.
+// 100 RunRows is well under the limit (a RunRow is small and flat), with margin
+// to spare; more, smaller documents cost nothing on read.
+const BATCH_SIZE = 100;
 // Reload from Firestore at least this often. Required because the cache lives
 // per Cloud Run instance — without a TTL, instance B can keep returning a
 // snapshot from before instance A's writes for the lifetime of the process.
