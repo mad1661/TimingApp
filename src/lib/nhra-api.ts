@@ -381,6 +381,7 @@ function mapLane(
   side: "left" | "right",
   timestamp: string | null,
   meta: NhraApiEventMeta,
+  lane: string,
 ): ApiRow | null {
   const field = (suffix: string): string => {
     const v = obj[`${side}${suffix}` as keyof NhraApiRunObject];
@@ -432,12 +433,10 @@ function mapLane(
     result: win === "" ? null : win,
     place: null, // TODO-verify: no direct API field
     category: strOrNull(obj.category),
-    // "1"/"2" matches the getresults grid vocabulary that normalLane() and the
-    // dedup key (laneKey) understand, so an API row merges with the scraper row
-    // for the same physical run instead of doubling it. For 4-wide the 2nd pair
-    // (1s later) currently reuses 1/2 — dedup stays correct (car differs), but
-    // labelling lanes 3/4 is a separate TODO.
-    lane: side === "left" ? "1" : "2",
+    // Lane number assigned by the caller: "1"/"2" for a 2-wide (or the 1st pair
+    // of a 4-wide), "3"/"4" for the 2nd pair of a 4-wide. These match the
+    // getresults vocabulary that normalLane()/laneKey() understand.
+    lane,
     dial_in: apiNum(field("DialIn")),
     event_code: meta.eventCode,
     event_name: meta.eventName,
@@ -447,27 +446,77 @@ function mapLane(
   };
 }
 
+// The API posts a 4-wide quad as two pairings whose timestamps are ~1s apart
+// (the 2nd = the 1st + 1 second). Two pairings of the same category+round within
+// this window are treated as one quad.
+const QUAD_PAIR_TOLERANCE_MS = 2000;
+
 /**
  * Map Event API run objects into per-lane RunRows ready for insertRuns().
  * Splits each paired object into up to two rows and assigns `_scrape_seq` in
  * true chronological order (oldest first) — the API returns newest-first, but
  * tagRunTimestamps() walks by ascending scrape sequence.
+ *
+ * 4-wide handling: the API reports a quad as two pairings ~1s apart in the same
+ * category+round (lanes 1&2, then 3&4). We detect that, label the 2nd pairing's
+ * lanes 3/4, and align its timestamp to the 1st — matching how the scraper
+ * presents a quad (four cars at one moment). Without it the 2nd pair reuses
+ * lanes 1/2, which breaks 4-wide display and makes the timeslip pairing
+ * cross-multiply the four cars.
  */
 export function mapApiRunsToRunRows(
   apiRuns: NhraApiRunObject[],
   meta: NhraApiEventMeta,
 ): ApiRow[] {
+  type Parsed = { obj: NhraApiRunObject; ts: ReturnType<typeof parseApiTimestamp> };
+  const parsed: Parsed[] = apiRuns.map((obj) => ({ obj, ts: parseApiTimestamp(obj.name) }));
+
+  // laneBase: 1 for a 2-wide pairing or the 1st pair of a quad; 3 for the 2nd
+  // pair of a quad. alignedTs: the 2nd pair borrows the 1st pair's timestamp.
+  const laneBase = new Map<NhraApiRunObject, number>();
+  const alignedTs = new Map<NhraApiRunObject, Parsed["ts"]>();
+
+  const byCatRound = new Map<string, Parsed[]>();
+  for (const p of parsed) {
+    const key = `${p.obj.category ?? ""}|${p.obj.rnd ?? ""}`;
+    const arr = byCatRound.get(key) ?? [];
+    arr.push(p);
+    byCatRound.set(key, arr);
+  }
+
+  for (const group of byCatRound.values()) {
+    const timed = group.filter((p) => p.ts != null);
+    timed.sort((a, b) => a.ts!.date.getTime() - b.ts!.date.getTime());
+    const paired = new Set<number>();
+    for (let i = 0; i < timed.length; i++) {
+      if (paired.has(i)) continue;
+      laneBase.set(timed[i].obj, 1);
+      // The immediate next unpaired pairing within the quad window is the 2nd
+      // pair of a 4-wide → lanes 3/4, timestamp aligned to this one.
+      const next = timed[i + 1];
+      if (next && !paired.has(i + 1)) {
+        const gap = next.ts!.date.getTime() - timed[i].ts!.date.getTime();
+        if (gap >= 0 && gap <= QUAD_PAIR_TOLERANCE_MS) {
+          laneBase.set(next.obj, 3);
+          alignedTs.set(next.obj, timed[i].ts);
+          paired.add(i);
+          paired.add(i + 1);
+        }
+      }
+    }
+  }
+
   const built: { row: ApiRow; sortMs: number; laneOrder: number }[] = [];
+  for (const { obj, ts } of parsed) {
+    const base = laneBase.get(obj) ?? 1;
+    const effTs = alignedTs.get(obj) ?? ts; // 2nd quad pair borrows the 1st's time
+    const timestamp = effTs?.formatted ?? null;
+    const sortMs = effTs?.date.getTime() ?? 0;
 
-  for (const obj of apiRuns) {
-    const ts = parseApiTimestamp(obj.name);
-    const timestamp = ts?.formatted ?? null;
-    const sortMs = ts?.date.getTime() ?? 0;
-
-    const left = mapLane(obj, "left", timestamp, meta);
-    if (left) built.push({ row: left, sortMs, laneOrder: 0 });
-    const right = mapLane(obj, "right", timestamp, meta);
-    if (right) built.push({ row: right, sortMs, laneOrder: 1 });
+    const left = mapLane(obj, "left", timestamp, meta, String(base));
+    if (left) built.push({ row: left, sortMs, laneOrder: base });
+    const right = mapLane(obj, "right", timestamp, meta, String(base + 1));
+    if (right) built.push({ row: right, sortMs, laneOrder: base + 1 });
   }
 
   built.sort((a, b) => a.sortMs - b.sortMs || a.laneOrder - b.laneOrder);
