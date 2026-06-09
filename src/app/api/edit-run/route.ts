@@ -123,6 +123,17 @@ export async function POST(req: NextRequest) {
       start_date: merged.start_date,
       manual_run_number: merged.manual_run_number ?? null,
       manual_entry: merged.manual_entry ?? null,
+      // Keep the row's position in the chronological day-walk — without this an
+      // edited run re-sorts at seq 0 and can flip the whole day's AM/PM walk.
+      // (Spread conditionally: an explicit `undefined` would fail the Firestore
+      // write, since ignoreUndefinedProperties isn't enabled.)
+      ...(original._scrape_seq != null ? { _scrape_seq: original._scrape_seq } : {}),
+      // The exact-timestamp marker survives an edit unless the user changed the
+      // timestamp itself; then it's exact only if they typed an AM/PM marker.
+      _ts_exact:
+        merged.timestamp === original.timestamp
+          ? original._ts_exact ?? false
+          : /\s(AM|PM)\s*$/i.test(merged.timestamp || ""),
     };
 
     await upsertRun(event_code, season, toInsert);

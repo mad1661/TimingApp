@@ -47,6 +47,11 @@ export interface RunRow {
   // exact source (the NHRA API's 24-hour `name`). tagRunTimestamps trusts these
   // and skips the strip/re-infer dance it runs on scraper rows (which omit AM/PM).
   _ts_exact?: boolean;
+  // Set by upsertRun (the manual edit path). An edited row outranks source rows
+  // for the same pass on load, and insertRuns won't overwrite it with re-scraped
+  // data — otherwise a manual fix (DQ toggle, corrected RT/dial-in) silently
+  // reverts on the next poll or cache reload. Purge & Re-fetch clears edits too.
+  _edited?: boolean;
 }
 
 export interface EventRow {
@@ -154,6 +159,11 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
         !!r.timestamp && /\s+(AM|PM)\s*$/i.test(r.timestamp);
       const dataRichness = (r: RunRow): number => {
         let s = 0;
+        // Manual edits outrank source rows outright — without this, an edited
+        // run and its superseded original tie, and which one survives the
+        // reload depends on Firestore scan order (i.e. the edit randomly
+        // reverts).
+        if (r._edited) s += 100;
         if (hasTimingData(r)) s += 10;
         if (hasAmPm(r)) s += 1;
         return s;
@@ -163,7 +173,17 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
       for (const run of rawRuns) {
         const dk = dedupKey(run);
         const existing = dedupMap.get(dk);
-        if (!existing || dataRichness(run) > dataRichness(existing)) {
+        if (!existing) {
+          dedupMap.set(dk, run);
+          continue;
+        }
+        const a = dataRichness(run);
+        const b = dataRichness(existing);
+        // Equal richness = the same pass written more than once (updates append
+        // new batch docs; old ones aren't deleted). Newest write wins, so
+        // changed re-scrapes and edits stick across reloads instead of racing
+        // the stale copy in scan order.
+        if (a > b || (a === b && (run.created_at || "") > (existing.created_at || ""))) {
           dedupMap.set(dk, run);
         }
       }
@@ -413,9 +433,21 @@ export async function insertRuns(
       const existingIdx = cache.runs.findIndex((r) => r._dedup_key === key);
       if (existingIdx !== -1) {
         const existing = cache.runs[existingIdx];
+
+        // A manually edited row is authoritative until the event is purged —
+        // re-scraped source data must not overwrite it, or the edit reverts on
+        // the very next poll.
+        if (existing._edited) {
+          if (run._scrape_seq != null) existing._scrape_seq = run._scrape_seq;
+          continue;
+        }
+
         const changed = run.rt !== existing.rt || run.ft1320 !== existing.ft1320 ||
           run.ft660 !== existing.ft660 || run.ft60 !== existing.ft60 ||
+          run.ft330 !== existing.ft330 || run.ft1000 !== existing.ft1000 ||
+          run.mph_660 !== existing.mph_660 || run.mph_1000 !== existing.mph_1000 ||
           run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner ||
+          run.dial_in !== existing.dial_in || run.qual_pos !== existing.qual_pos ||
           run.result !== existing.result || (!existing.name && run.name) ||
           run.timestamp !== existing.timestamp;
         if (!changed) {
@@ -483,6 +515,9 @@ export async function upsertRun(
   const row: RunRow = {
     ...run,
     _dedup_key: key,
+    // Manual edits are authoritative: outrank source copies on load and block
+    // insertRuns from overwriting with re-scraped data (see RunRow._edited).
+    _edited: true,
     created_at: new Date().toISOString(),
   };
 
