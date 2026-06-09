@@ -451,6 +451,23 @@ function mapLane(
 // this window are treated as one quad.
 const QUAD_PAIR_TOLERANCE_MS = 2000;
 
+// A completed 4-wide ranks all four cars, so its win fields read W / R / 3 / 4 —
+// exactly one "W" across the quad. Two same-category+round pairings that EACH
+// carry a "W" are therefore two independent 2-wide races, not a quad, so the
+// timing-window merge below must skip them (otherwise two eliminations pairs that
+// happen to run ~1s apart collapse into a bogus 4-wide).
+//
+// This is only a *negative* guard — we never require the R/3/4 codes to be
+// present. An incomplete quad (fewer than four cars, or a car that leaves before
+// the tree) won't show the full set, and a 4-wide qualifying pass carries no win
+// codes at all. In those cases the ~1s timing gap is the only signal, so timing
+// stays the primary discriminator and the winner count just rules out the one
+// pattern timing alone can't: two genuine 2-wide races back to back.
+function pairingWinnerCount(o: NhraApiRunObject): number {
+  const isWin = (v: string) => (v ?? "").trim().toUpperCase() === "W";
+  return (isWin(o.leftWin) ? 1 : 0) + (isWin(o.rightWin) ? 1 : 0);
+}
+
 /**
  * Map Event API run objects into per-lane RunRows ready for insertRuns().
  * Splits each paired object into up to two rows and assigns `_scrape_seq` in
@@ -492,11 +509,15 @@ export function mapApiRunsToRunRows(
       if (paired.has(i)) continue;
       laneBase.set(timed[i].obj, 1);
       // The immediate next unpaired pairing within the quad window is the 2nd
-      // pair of a 4-wide → lanes 3/4, timestamp aligned to this one.
+      // pair of a 4-wide → lanes 3/4, timestamp aligned to this one. Skip the
+      // merge when the two pairings already hold two separate winners: that's two
+      // 2-wide races running close together, not one quad (see pairingWinnerCount).
       const next = timed[i + 1];
       if (next && !paired.has(i + 1)) {
         const gap = next.ts!.date.getTime() - timed[i].ts!.date.getTime();
-        if (gap >= 0 && gap <= QUAD_PAIR_TOLERANCE_MS) {
+        const twoWinners =
+          pairingWinnerCount(timed[i].obj) + pairingWinnerCount(next.obj) >= 2;
+        if (gap >= 0 && gap <= QUAD_PAIR_TOLERANCE_MS && !twoWinners) {
           laneBase.set(next.obj, 3);
           alignedTs.set(next.obj, timed[i].ts);
           paired.add(i);
