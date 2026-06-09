@@ -82,13 +82,14 @@ const _cache = new Map<string, EventCache>();
 const _loading = new Map<string, Promise<void>>();
 const MAX_CACHED_EVENTS = 3;
 // Runs are persisted as array documents (`{ runs: [...] }`) under run_batches.
-// Each such document must stay under Firestore's 1 MiB hard limit — pack too
-// many RunRows into one and the write fails with INVALID_ARGUMENT "Transaction
-// too big. Decrease transaction size." That bites on a purge + full re-fetch of
-// a large national event, where every run is new so the chunks are maximal.
-// 100 RunRows is well under the limit (a RunRow is small and flat), with margin
-// to spare; more, smaller documents cost nothing on read.
-const BATCH_SIZE = 100;
+// Too many RunRows in one document makes the write exceed a Firestore commit
+// limit (INVALID_ARGUMENT "Transaction too big"), which bites on a purge + full
+// re-fetch of a large national event where every run is new. This is just the
+// starting chunk size; writeRunBatch() halves and retries anything Firestore
+// still rejects, so correctness doesn't depend on getting this number exactly
+// right. Kept modest so most chunks land first-try; smaller docs cost nothing
+// on read (the cache loads them all and dedups by key).
+const BATCH_SIZE = 50;
 // Reload from Firestore at least this often. Required because the cache lives
 // per Cloud Run instance — without a TTL, instance B can keep returning a
 // snapshot from before instance A's writes for the lifetime of the process.
@@ -453,18 +454,46 @@ export async function insertRuns(
   const db = getDb();
   const path = collectionPath(eventCode, season);
   for (let i = 0; i < newRuns.length; i += BATCH_SIZE) {
-    const chunk = newRuns.slice(i, i + BATCH_SIZE);
-    await db.collection(path).add({
-      runs: chunk.map((r) => ({ ...r })),
-      count: chunk.length,
-      created_at: new Date().toISOString(),
-    });
+    await writeRunBatch(db, path, newRuns.slice(i, i + BATCH_SIZE));
   }
 
   backfillNames(cache.runs);
 
   console.log(`[DB] Inserted ${newRuns.length} new runs for ${eventKey(eventCode, season)} — ${cache.runs.length} total cached`);
   return newRuns.length;
+}
+
+// Persist one run_batches document (an array of RunRows). Firestore caps how
+// much a single commit can carry, and a big event's array can exceed it —
+// surfacing as INVALID_ARGUMENT "Transaction too big. Decrease transaction
+// size." Rather than guess a safe fixed count (which varies with how wide the
+// rows are), write the chunk and, if Firestore rejects it for size, halve it
+// and retry each half — recursing until every piece fits. A single run always
+// fits, so this terminates and any event persists no matter how large.
+async function writeRunBatch(
+  db: ReturnType<typeof getDb>,
+  path: string,
+  chunk: RunRow[],
+): Promise<void> {
+  try {
+    await db.collection(path).add({
+      runs: chunk.map((r) => ({ ...r })),
+      count: chunk.length,
+      created_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const tooBig =
+      (err as { code?: number } | null)?.code === 3 || // gRPC INVALID_ARGUMENT
+      /too big|INVALID_ARGUMENT/i.test(msg);
+    if (chunk.length > 1 && tooBig) {
+      const mid = Math.ceil(chunk.length / 2);
+      await writeRunBatch(db, path, chunk.slice(0, mid));
+      await writeRunBatch(db, path, chunk.slice(mid));
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
