@@ -43,6 +43,10 @@ export interface RunRow {
   _dedup_key?: string;
   _scrape_seq?: number;
   _phantom?: boolean;
+  // Set when `timestamp` already carries a correct AM/PM marker derived from an
+  // exact source (the NHRA API's 24-hour `name`). tagRunTimestamps trusts these
+  // and skips the strip/re-infer dance it runs on scraper rows (which omit AM/PM).
+  _ts_exact?: boolean;
 }
 
 export interface EventRow {
@@ -1369,7 +1373,9 @@ function tsHour(ts: string): number {
 
 function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   for (const run of runs) {
-    if (run.timestamp) run.timestamp = stripAmPm(run.timestamp);
+    // Never strip the AM/PM off an exact (API-sourced) timestamp — it's already
+    // correct. Only scraper rows, which arrive without a marker, get re-inferred.
+    if (run.timestamp && !run._ts_exact) run.timestamp = stripAmPm(run.timestamp);
   }
 
   // Group runs by day — each day is processed independently
@@ -1407,6 +1413,15 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
 
     for (const run of dayRuns) {
       const h = tsHour(run.timestamp!);
+
+      // Exact rows already have the right marker — don't re-tag them. Still let
+      // their known AM/PM advance the walk so any inferred rows sharing the day
+      // flip correctly (a PM exact run means we're past noon).
+      if (run._ts_exact) {
+        if (/PM\s*$/i.test(run.timestamp!)) passedNoon = true;
+        else if (h >= 6 && h <= 11) seenMorning = true;
+        continue;
+      }
 
       if (h >= 6 && h <= 11) seenMorning = true;
 
