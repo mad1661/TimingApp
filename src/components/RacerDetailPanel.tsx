@@ -92,7 +92,7 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
     const s = live.config?.season;
 
     const fetchRuns = ec && s
-      ? fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`)
+      ? fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`, { cache: "no-store" })
           .then((r) => r.json())
           .then((data) => setAllRuns(data.runs || []))
           .catch(console.error)
@@ -102,21 +102,22 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
     const firstName = nameParts[0] || "";
     const lastName = nameParts.slice(1).join(" ") || "";
     const fetchTechCards = firstName && lastName
-      ? fetch(`/api/tech-cards?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}`)
+      ? fetch(`/api/tech-cards?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}`, { cache: "no-store" })
           .then((r) => r.json())
           .then((data) => setTechCards(data.results || []))
           .catch(console.error)
       : Promise.resolve();
 
     const fetchCrossEvent = fetch(
-      `/api/stats?type=racer-all-events&name=${encodeURIComponent(name)}${ec ? `&exclude_event_code=${encodeURIComponent(ec)}` : ""}${s ? `&exclude_season=${encodeURIComponent(s)}` : ""}`
+      `/api/stats?type=racer-all-events&name=${encodeURIComponent(name)}${ec ? `&exclude_event_code=${encodeURIComponent(ec)}` : ""}${s ? `&exclude_season=${encodeURIComponent(s)}` : ""}`,
+      { cache: "no-store" }
     )
       .then((r) => r.json())
       .then((data) => setAllCrossEventRuns(data.runs || []))
       .catch(console.error);
 
     Promise.all([fetchRuns, fetchTechCards, fetchCrossEvent]).finally(() => setLoading(false));
-  }, [name, live.config?.eventCode, live.config?.season]);
+  }, [name, live.config?.eventCode, live.config?.season, live.dataVersion]);
 
   // All categories this racer has competed in (current event + cross-event)
   const allCategories = [...new Set([...allRuns, ...allCrossEventRuns].map(r => r.category).filter(Boolean) as string[])].sort();

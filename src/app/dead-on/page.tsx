@@ -35,7 +35,8 @@ export default function DeadOnPage() {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/stats?type=dead-on&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}`
+        `/api/stats?type=dead-on&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || {});
@@ -47,6 +48,13 @@ export default function DeadOnPage() {
       setLoading(false);
     }
   }
+
+  // Re-run the search when new live data arrives, but only once the user has
+  // already searched so we don't fetch on mount.
+  useEffect(() => {
+    if (searched) search();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   const totalCount = Object.values(results).reduce((sum, arr) => sum + arr.length, 0);
 

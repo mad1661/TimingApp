@@ -100,7 +100,8 @@ export default function BestLosingPackagePage() {
       const rounds = Array.from(selectedRounds).join(",");
       const categories = Array.from(selectedCategories).join(",");
       const res = await fetch(
-        `/api/stats?type=best-losing-package&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&rounds=${encodeURIComponent(rounds)}&categories=${encodeURIComponent(categories)}`
+        `/api/stats?type=best-losing-package&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&rounds=${encodeURIComponent(rounds)}&categories=${encodeURIComponent(categories)}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || {});
@@ -112,6 +113,13 @@ export default function BestLosingPackagePage() {
       setLoading(false);
     }
   }
+
+  // Re-run the search when new live data arrives, but only once the user has
+  // already searched so we don't fetch on mount.
+  useEffect(() => {
+    if (searched) search();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   const hasSelections = selectedRounds.size > 0 && selectedCategories.size > 0;
 

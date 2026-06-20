@@ -165,7 +165,8 @@ export default function RacerProfilePage() {
     setLoadingNextPair(true);
     try {
       const res = await fetch(
-        `/api/stats?type=next-pair&event_code=${encodeURIComponent(live.config.eventCode)}&season=${encodeURIComponent(live.config.season || "")}`
+        `/api/stats?type=next-pair&event_code=${encodeURIComponent(live.config.eventCode)}&season=${encodeURIComponent(live.config.season || "")}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       const pair = (data.pair || []) as { name: string | null; category: string | null }[];

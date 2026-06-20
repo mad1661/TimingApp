@@ -85,7 +85,7 @@ export default function RacerPage() {
     const s = live.config?.season;
 
     const fetchRuns = ec && s
-      ? fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`)
+      ? fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`, { cache: "no-store" })
           .then((r) => r.json())
           .then((data) => setRuns(data.runs || []))
           .catch(console.error)
@@ -95,14 +95,14 @@ export default function RacerPage() {
     const firstName = nameParts[0] || "";
     const lastName = nameParts.slice(1).join(" ") || "";
     const fetchTechCards = firstName && lastName
-      ? fetch(`/api/tech-cards?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}`)
+      ? fetch(`/api/tech-cards?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}`, { cache: "no-store" })
           .then((r) => r.json())
           .then((data) => setTechCards(data.results || []))
           .catch(console.error)
       : Promise.resolve();
 
     Promise.all([fetchRuns, fetchTechCards]).finally(() => setLoading(false));
-  }, [name, live.config?.eventCode, live.config?.season]);
+  }, [name, live.config?.eventCode, live.config?.season, live.dataVersion]);
 
   if (loading) {
     return (

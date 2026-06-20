@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import BracketView from "@/components/BracketView";
 import { useLiveData } from "@/components/LiveDataProvider";
 
@@ -43,11 +43,11 @@ export default function BracketsPage() {
       .finally(() => setFiltersLoading(false));
   }, [selectedEvent, selectedSeason]);
 
-  async function loadBrackets() {
+  const loadBrackets = useCallback(async () => {
     if (!selectedEvent || !selectedSeason || !selectedCategory) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/stats?type=brackets&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&category=${encodeURIComponent(selectedCategory)}`);
+      const res = await fetch(`/api/stats?type=brackets&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&category=${encodeURIComponent(selectedCategory)}`, { cache: "no-store" });
       const data = await res.json();
       setRuns(data.runs || []);
     } catch (err) {
@@ -55,7 +55,14 @@ export default function BracketsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [selectedEvent, selectedSeason, selectedCategory]);
+
+  // Re-fetch the displayed bracket whenever new live data arrives, but only
+  // after the user has already loaded a category so we don't fetch on mount.
+  useEffect(() => {
+    if (selectedCategory && runs.length > 0) loadBrackets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   return (
     <div className="max-w-7xl mx-auto">
