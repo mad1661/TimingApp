@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useLiveData } from "./LiveDataProvider";
+import ThemeToggle from "./ThemeToggle";
+import { APP_VERSION } from "@/lib/version";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
@@ -48,16 +50,17 @@ export default function Navbar() {
       </button>
 
       <nav className={`fixed top-0 left-0 h-full w-64 bg-nhra-dark border-r border-nhra-border z-40 transition-transform duration-200 ${mobileOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 flex flex-col`}>
-        <div className="p-6 border-b border-nhra-border">
-          <Link href="/" className="flex items-center gap-3" onClick={() => setMobileOpen(false)}>
-            <div className="w-10 h-10 rounded-lg bg-nhra-red flex items-center justify-center font-bold text-white text-lg">
+        <div className="p-6 border-b border-nhra-border flex items-center justify-between gap-3">
+          <Link href="/" className="flex items-center gap-3 min-w-0" onClick={() => setMobileOpen(false)}>
+            <div className="w-10 h-10 rounded-lg bg-nhra-red flex items-center justify-center font-bold text-white text-lg shrink-0">
               TD
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-tight">Timing Data</h1>
-              <p className="text-xs text-gray-400">Rice is Great All Year</p>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold text-white tracking-tight truncate">Timing Data</h1>
+              <p className="text-xs text-gray-400 truncate">Rice is Great All Year</p>
             </div>
           </Link>
+          <ThemeToggle />
         </div>
 
         <div className="p-4 space-y-1 flex-1 overflow-y-auto">
@@ -155,6 +158,8 @@ export default function Navbar() {
             </svg>
             Change Event
           </Link>
+
+          <p className="text-[10px] text-gray-600 text-center pt-1">v{APP_VERSION}</p>
         </div>
       </nav>
 

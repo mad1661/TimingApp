@@ -13,10 +13,47 @@
   --color-nhra-orange: #f97316;
 }
 
+/* Light theme. Tailwind v4 utilities resolve to var(--color-nhra-*), so
+   overriding the design tokens here flips every bg-nhra-*/border-nhra-*/
+   text-nhra-* utility across the app at once. The hardcoded white/gray text
+   utilities don't reference these vars, so they're remapped explicitly below. */
+[data-theme="light"] {
+  --color-nhra-dark: #ffffff;
+  --color-nhra-darker: #f1f5f9;
+  --color-nhra-card: #ffffff;
+  --color-nhra-border: #d8dee9;
+  --color-nhra-accent: #2563eb;
+}
+
 body {
   background: var(--color-nhra-darker);
   color: #e2e8f0;
 }
+[data-theme="light"] body {
+  color: #0f172a;
+}
+
+/* Retrofit light mode onto the dark-only palette: the app uses text-white as
+   "primary text" and text-gray-300/400/500/600 as muted text. Flip those to
+   dark-on-light. */
+[data-theme="light"] .text-white { color: #0f172a; }
+[data-theme="light"] .text-gray-300 { color: #334155; }
+[data-theme="light"] .text-gray-400 { color: #475569; }
+[data-theme="light"] .text-gray-500 { color: #64748b; }
+[data-theme="light"] .text-gray-600 { color: #64748b; }
+
+/* ...but keep text white when it sits on a solid colored surface (buttons,
+   badges, the logo) — higher specificity wins over the remaps above. */
+[data-theme="light"] .bg-nhra-red.text-white,
+[data-theme="light"] .bg-nhra-red .text-white,
+[data-theme="light"] .bg-nhra-accent.text-white,
+[data-theme="light"] .bg-nhra-accent .text-white,
+[data-theme="light"] .bg-green-600.text-white,
+[data-theme="light"] .bg-green-600 .text-white,
+[data-theme="light"] .bg-red-600.text-white,
+[data-theme="light"] .bg-red-600 .text-white,
+[data-theme="light"] .bg-blue-600.text-white,
+[data-theme="light"] .bg-blue-600 .text-white { color: #ffffff; }
 
 ::-webkit-scrollbar {
   width: 8px;

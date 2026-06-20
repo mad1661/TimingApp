@@ -81,12 +81,12 @@ export default function StatsPage() {
     const eventQS = eventCode
       ? `&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season || "")}`
       : "";
-    fetch(`/api/stats?type=detailed_categories${eventQS}`)
+    fetch(`/api/stats?type=detailed_categories${eventQS}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => setStats(data.categories || []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [live.config?.eventCode, live.config?.season]);
+  }, [live.config?.eventCode, live.config?.season, live.dataVersion]);
 
   if (loading) {
     return (

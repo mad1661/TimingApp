@@ -40,6 +40,9 @@ export default function SearchPage() {
   const [selectedLabel, setSelectedLabel] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Remembers the currently displayed selection so we can re-fetch it when new
+  // live data arrives without requiring a fresh dropdown pick.
+  const loadedRef = useRef<{ by: "number" | "name"; value: string } | null>(null);
 
   const eventCode = live.config?.eventCode || "";
   const season = live.config?.season || "";
@@ -53,6 +56,16 @@ export default function SearchPage() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Re-fetch the currently displayed runs when new live data arrives so the
+  // results table updates in place without a page reload.
+  useEffect(() => {
+    const sel = loadedRef.current;
+    if (!sel) return;
+    if (sel.by === "number") loadRunsByNumber(sel.value);
+    else loadRunsByName(sel.value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   const doSearch = useCallback((term: string) => {
     if (!eventCode || !season || term.length < 1) {
@@ -90,9 +103,11 @@ export default function SearchPage() {
     if (!eventCode || !season) return;
     setLoading(true);
     setSelectedLabel(`#${carNumber}`);
+    loadedRef.current = { by: "number", value: carNumber };
     try {
       const res = await fetch(
-        `/api/runs?car_number=${encodeURIComponent(carNumber)}&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&limit=500&sort_by=timestamp&sort_dir=DESC`
+        `/api/runs?car_number=${encodeURIComponent(carNumber)}&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&limit=500&sort_by=timestamp&sort_dir=DESC`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       setRuns(data.runs || []);
@@ -108,9 +123,11 @@ export default function SearchPage() {
     if (!eventCode || !season) return;
     setLoading(true);
     setSelectedLabel(name);
+    loadedRef.current = { by: "name", value: name };
     try {
       const res = await fetch(
-        `/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`
+        `/api/stats?type=racer&name=${encodeURIComponent(name)}&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       setRuns(data.runs || []);

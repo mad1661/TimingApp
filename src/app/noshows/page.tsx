@@ -90,7 +90,7 @@ export default function NoShowsPage() {
     setNoShowsLoading(true);
     setManuallyFinished(false);
     try {
-      const res = await fetch(`/api/stats?type=noshows&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}`);
+      const res = await fetch(`/api/stats?type=noshows&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}`, { cache: "no-store" });
       const data = await res.json();
       setNoShows(data.noShows || []);
       setActiveCategory(data.activeCategory || null);
@@ -107,7 +107,7 @@ export default function NoShowsPage() {
     setMissingLoading(true);
     try {
       const qs = `event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&event_name=${encodeURIComponent(selectedEventName)}`;
-      const res = await fetch(`/api/stats?type=missing-elims&${qs}`);
+      const res = await fetch(`/api/stats?type=missing-elims&${qs}`, { cache: "no-store" });
       const data = await res.json();
       setMissing(data.missing || []);
       setMissingSearched(true);
@@ -117,6 +117,14 @@ export default function NoShowsPage() {
       setMissingLoading(false);
     }
   }
+
+  // Re-run whichever searches the user has already triggered when new live
+  // data arrives, so the displayed lists refresh without a page reload.
+  useEffect(() => {
+    if (noShowsSearched) searchNoShows();
+    if (missingSearched) searchMissing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   // Pull every category that shows up across both result sets so the
   // checkbox bar is stable regardless of which sections are populated.

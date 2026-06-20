@@ -319,9 +319,9 @@ export default function SchedulePage() {
     setLoading(true);
     try {
       const [schedRes, planRes, dtRes] = await Promise.all([
-        fetch(`/api/stats?type=schedule&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${pmStart ? "&pm_start=1" : ""}`),
-        eventKey ? fetch(`/api/schedule-plan?event_key=${encodeURIComponent(eventKey)}`) : Promise.resolve(null),
-        fetch(`/api/downtime?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`),
+        fetch(`/api/stats?type=schedule&event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${pmStart ? "&pm_start=1" : ""}`, { cache: "no-store" }),
+        eventKey ? fetch(`/api/schedule-plan?event_key=${encodeURIComponent(eventKey)}`, { cache: "no-store" }) : Promise.resolve(null),
+        fetch(`/api/downtime?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`, { cache: "no-store" }),
       ]);
       const schedData = await schedRes.json();
       setSchedule(schedData.schedule || []);
@@ -343,7 +343,7 @@ export default function SchedulePage() {
       console.error(err);
     }
     setLoading(false);
-  }, [eventCode, season, eventKey, pmStart]);
+  }, [eventCode, season, eventKey, pmStart, live.dataVersion]);
 
   useEffect(() => {
     if (eventCode && season) loadSchedule();

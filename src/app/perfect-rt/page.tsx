@@ -48,7 +48,8 @@ export default function PerfectRTPage() {
     try {
       const rtParam = Array.from(roundTypes).join(",");
       const res = await fetch(
-        `/api/stats?type=perfect-rt&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&round_types=${encodeURIComponent(rtParam)}`
+        `/api/stats?type=perfect-rt&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&round_types=${encodeURIComponent(rtParam)}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || {});
@@ -60,6 +61,13 @@ export default function PerfectRTPage() {
       setLoading(false);
     }
   }
+
+  // Re-run the search when new live data arrives, but only once the user has
+  // already searched so we don't fetch on mount.
+  useEffect(() => {
+    if (searched) search();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   const totalCount = Object.values(results).reduce((sum, arr) => sum + arr.length, 0);
 

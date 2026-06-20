@@ -189,7 +189,8 @@ export default function QualifyingPage() {
     try {
       const rounds = Array.from(selectedRounds).join(",");
       const res = await fetch(
-        `/api/stats?type=qualifying&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&category=${encodeURIComponent(selectedCategory)}&rounds=${encodeURIComponent(rounds)}&mode=${encodeURIComponent(selectedMode)}&tiebreaker=${encodeURIComponent(tiebreaker)}`
+        `/api/stats?type=qualifying&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&category=${encodeURIComponent(selectedCategory)}&rounds=${encodeURIComponent(rounds)}&mode=${encodeURIComponent(selectedMode)}&tiebreaker=${encodeURIComponent(tiebreaker)}`,
+        { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || []);
@@ -200,6 +201,13 @@ export default function QualifyingPage() {
       setLoading(false);
     }
   }
+
+  // Re-run the qualifying query when new live data arrives, but only once the
+  // user has already generated an order so we don't fetch on mount.
+  useEffect(() => {
+    if (searched) search();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.dataVersion]);
 
   const modeInfo = MODES.find((m) => m.id === selectedMode);
   const isIndexMode = selectedMode === "closest_index_no_breakout" || selectedMode === "closest_index_breakout_ok" || selectedMode === "comp_eliminator" || selectedMode === "stock_super_stock";
