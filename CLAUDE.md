@@ -20,6 +20,10 @@ There is **no test framework** configured. Validate changes with `npm run lint` 
 
 Next.js 14 App Router (React 18, TypeScript `strict`), Tailwind CSS v4 (theme tokens like `nhra-red`/`nhra-card` come from the `@theme` block in `src/app/globals.css` — **not** the vestigial `tailwind.config.ts`; see Gotchas), Firebase Admin SDK → Firestore. Deployed to Cloud Run via **Firebase App Hosting** (`apphosting.yaml`), which injects `NHRA_USERNAME`/`NHRA_PASSWORD` secrets and `FB_ADMIN_PROJECT_ID`. Import alias: `@/*` → `src/*`.
 
+## Versioning
+
+The app version shows in the navbar footer, sourced from `src/lib/version.ts` (`APP_VERSION`) and mirrored in `package.json` `"version"`. **Bump it on every change shipped to `main`** — patch (`1.1.1`→`1.1.2`) for fixes/small changes, minor (`1.1.x`→`1.2.0`) for features — and keep the two files in sync. This is how the user confirms a new deploy actually rolled out, so it is not optional.
+
 ## Architecture
 
 ### The data pipeline (read these files together to understand the app)
