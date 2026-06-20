@@ -15,7 +15,7 @@ export interface LiveConfig {
   racingStartHour?: number;
   pmStart?: boolean;
   categoryAliases?: Record<string, string>;
-  /** Live data source. "api" = official api.nhra.com (default); "scraper" = getresults.nhradata.com. */
+  /** Live data source. "scraper" = getresults.nhradata.com (default); "api" = official api.nhra.com. */
   dataSource?: "api" | "scraper";
 }
 
@@ -107,7 +107,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
           startDate: cfg.startDate,
           eventName: cfg.eventName,
           dateFilter: cfg.dateFilter,
-          dataSource: cfg.dataSource ?? "api",
+          dataSource: cfg.dataSource ?? "scraper",
         }),
       });
       const data = await res.json();

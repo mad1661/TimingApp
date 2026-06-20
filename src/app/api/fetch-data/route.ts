@@ -17,10 +17,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { username, password, season, eventType, eventCode, startDate, eventName, dateFilter, purge, dataSource } = body;
 
-    // Data source: "api" (official api.nhra.com, default) or "scraper"
-    // (getresults.nhradata.com). Both produce identical RunRows, so everything
+    // Data source: "scraper" (getresults.nhradata.com, default) or "api"
+    // (official api.nhra.com). Both produce identical RunRows, so everything
     // downstream — persistence, dedup, the entire app — is source-agnostic.
-    const source: "api" | "scraper" = dataSource === "scraper" ? "scraper" : "api";
+    const source: "api" | "scraper" = dataSource === "api" ? "api" : "scraper";
 
     if (!season || !eventType || !eventCode || !startDate || !eventName) {
       return NextResponse.json({ error: "Event details are required" }, { status: 400 });

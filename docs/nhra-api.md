@@ -3,10 +3,10 @@
 Live timing can come from **two interchangeable sources**, selectable per-event
 via the **Source** toggle in the navbar footer:
 
-- **API** (default) — the official `api.nhra.com` (Azure API Management).
-  Client + mapper: `src/lib/nhra-api.ts`.
-- **getresults** — the legacy `getresults.nhradata.com` scraper:
+- **getresults** (default) — the `getresults.nhradata.com` scraper:
   `src/lib/scraper.ts`.
+- **API** — the official `api.nhra.com` (Azure API Management).
+  Client + mapper: `src/lib/nhra-api.ts`.
 
 Both produce identical `RunRow[]`, so persistence (`insertRuns`), dedup, and the
 entire app are **source-agnostic**. The choice lives in `LiveConfig.dataSource`
@@ -14,8 +14,8 @@ entire app are **source-agnostic**. The choice lives in `LiveConfig.dataSource`
 
 ```
 LiveDataProvider (dataSource) → POST /api/fetch-data
-  dataSource === "scraper" → loginAndFetch()        (scraper.ts)
-  else                     → fetchEventRunsViaApi()  (nhra-api.ts)  [default]
+  dataSource === "api" → fetchEventRunsViaApi()  (nhra-api.ts)
+  else                 → loginAndFetch()         (scraper.ts)  [default]
 → invalidateEventCache → insertRuns → logFetch   (shared tail)
 ```
 

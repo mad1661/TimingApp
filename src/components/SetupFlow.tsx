@@ -49,7 +49,7 @@ export default function SetupFlow() {
       eventName: selectedEvent.displayName,
       intervalSeconds,
       dateFilter: selectedDate || undefined,
-      dataSource: "api",
+      dataSource: "scraper",
     };
     live.setConfig(config);
     live.start();

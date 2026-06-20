@@ -111,11 +111,11 @@ export default function Navbar() {
               {live.totalNewRuns > 0 && (
                 <p className="text-xs text-green-400">{live.totalNewRuns} new runs this session</p>
               )}
-              {/* Data source toggle: official API (default) vs getresults scraper */}
+              {/* Data source toggle: getresults scraper (default) vs official API */}
               <div className="flex items-center gap-1 rounded-lg bg-nhra-card border border-nhra-border p-1">
                 <span className="text-[10px] uppercase tracking-wide text-gray-500 px-1 shrink-0">Source</span>
-                {(["api", "scraper"] as const).map((src) => {
-                  const active = (live.config?.dataSource ?? "api") === src;
+                {(["scraper", "api"] as const).map((src) => {
+                  const active = (live.config?.dataSource ?? "scraper") === src;
                   return (
                     <button
                       key={src}
