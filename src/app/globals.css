@@ -13,29 +13,43 @@
   --color-nhra-orange: #f97316;
 }
 
-/* Light theme. Tailwind v4 utilities resolve to var(--color-nhra-*), so
-   overriding the design tokens here flips every bg-nhra-*/border-nhra-*/
-   text-nhra-* utility across the app at once. The hardcoded white/gray text
-   utilities don't reference these vars, so they're remapped explicitly below. */
-[data-theme="light"] {
-  --color-nhra-dark: #ffffff;
-  --color-nhra-darker: #f1f5f9;
-  --color-nhra-card: #ffffff;
-  --color-nhra-border: #d8dee9;
-  --color-nhra-accent: #2563eb;
-}
-
+/* Dark theme is the default (the @theme tokens above). */
 body {
   background: var(--color-nhra-darker);
   color: #e2e8f0;
 }
-[data-theme="light"] body {
-  color: #0f172a;
-}
 
-/* Retrofit light mode onto the dark-only palette: the app uses text-white as
-   "primary text" and text-gray-300/400/500/600 as muted text. Flip those to
-   dark-on-light. */
+/* Light theme.
+   Tailwind v4 hoists the @theme --color-* tokens into :root and DROPS scoped
+   redefinitions of them, so overriding those variables under [data-theme]
+   does not survive the build. We override the generated utility classes
+   directly instead (which does survive) — flipping the dark surfaces to light
+   and the white/gray text to dark-on-light, while keeping white text on solid
+   colored buttons. Everything here is scoped to [data-theme="light"], so dark
+   mode (the default) is untouched. */
+
+/* Surfaces */
+[data-theme="light"] body { background: #eef2f6; color: #0f172a; }
+[data-theme="light"] .bg-nhra-darker { background-color: #eef2f6; }
+[data-theme="light"] .bg-nhra-dark { background-color: #ffffff; }
+[data-theme="light"] .bg-nhra-card { background-color: #ffffff; }
+[data-theme="light"] .hover\:bg-nhra-card:hover { background-color: #e7ecf3; }
+[data-theme="light"] .bg-gray-900,
+[data-theme="light"] .bg-gray-800,
+[data-theme="light"] .bg-gray-700,
+[data-theme="light"] .bg-gray-600 { background-color: #e2e8f0; }
+
+/* Borders / dividers */
+[data-theme="light"] .border-nhra-border { border-color: #d4dae4; }
+[data-theme="light"] .divide-nhra-border > :not(:last-child) { border-color: #d4dae4; }
+
+/* Accent (#4a9eff is too pale on white — darken for buttons, links, borders) */
+[data-theme="light"] .bg-nhra-accent { background-color: #2563eb; }
+[data-theme="light"] .text-nhra-accent { color: #2563eb; }
+[data-theme="light"] .border-nhra-accent { border-color: #2563eb; }
+
+/* Text: the app uses text-white as primary text and text-gray-300/400/500/600
+   as muted text — flip those to dark-on-light. */
 [data-theme="light"] .text-white { color: #0f172a; }
 [data-theme="light"] .text-gray-300 { color: #334155; }
 [data-theme="light"] .text-gray-400 { color: #475569; }
@@ -55,6 +69,10 @@ body {
 [data-theme="light"] .bg-blue-600.text-white,
 [data-theme="light"] .bg-blue-600 .text-white { color: #ffffff; }
 
+/* Scrollbar in light mode (track/thumb otherwise read the dark vars). */
+[data-theme="light"] ::-webkit-scrollbar-track { background: #eef2f6; }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cbd3df; }
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -72,6 +90,12 @@ body {
   nav, .print\:hidden { display: none !important; }
   main { margin: 0 !important; padding: 0 !important; }
   .timeslip-card { box-shadow: none !important; margin: 0 auto; }
+  /* The timeslip's dark header/footer (bg-gray-900/800) don't print on most
+     setups, so their light text — including the time in the footer — came out
+     invisible. Force the card to print black-on-white so every value shows. */
+  .timeslip-card .bg-gray-900,
+  .timeslip-card .bg-gray-800 { background: #fff !important; }
+  .timeslip-card, .timeslip-card * { color: #000 !important; }
   .round-print { color: black !important; background: white !important; font-size: 10pt !important; }
   .round-print * { color: black !important; }
   .round-print table { width: 100% !important; }
