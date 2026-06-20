@@ -10,7 +10,10 @@ env:
     secret: NHRA_USERNAME
   - variable: NHRA_PASSWORD
     secret: NHRA_PASSWORD
-  - variable: NHRA_API_KEY
-    secret: NHRA_API_KEY
+  # NHRA_API_KEY intentionally omitted: App Hosting fails the build if it
+  # references a secret that doesn't exist in Secret Manager, which was blocking
+  # deploys. getresults is the default data source and doesn't need this key
+  # (nhra-api.ts reads it lazily and only the optional "API" source uses it).
+  # Re-add this once the NHRA_API_KEY secret exists, to re-enable the API source.
   - variable: FB_ADMIN_PROJECT_ID
     value: nhra-timing-app
