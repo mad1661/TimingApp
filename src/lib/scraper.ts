@@ -69,7 +69,11 @@ interface CachedSession {
   expiresAt: number;
 }
 
-const SESSION_TTL_MS = 10 * 60 * 1000;
+// Cap warm-session reuse at 2 min. With a long window the fast refresh kept
+// replaying a cached session and could keep returning the same grid, so new
+// runs lagged ("won't update all the time"); a short TTL forces a fresh full
+// login often so polling reliably picks up new runs.
+const SESSION_TTL_MS = 2 * 60 * 1000;
 const _sessions = new Map<string, CachedSession>();
 
 function sessionKey(username: string): string {
