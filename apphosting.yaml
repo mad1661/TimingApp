@@ -1,6 +1,10 @@
 runConfig:
   minInstances: 0
-  maxInstances: 4
+  # Pin to a single instance so the in-memory event cache stays coherent: with
+  # multiple instances a read can land on a worker that hasn't yet seen another
+  # worker's just-scraped runs, so the page shows stale data until that worker's
+  # 30s cache TTL lapses. One instance (concurrency 80) is plenty at this scale.
+  maxInstances: 1
   cpu: 1
   memoryMiB: 512
   concurrency: 80
