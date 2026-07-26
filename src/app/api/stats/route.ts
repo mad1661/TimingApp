@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -142,6 +142,11 @@ export async function GET(request: NextRequest) {
     if (type === "noshows") {
       const result = await getAllNoShows(eventCode, season);
       return jsonResponse({ noShows: result.noShows, activeCategory: result.activeCategory });
+    }
+
+    if (type === "doubles") {
+      const doubles = await getDoubledUpRacers(eventCode, season);
+      return jsonResponse({ doubles });
     }
 
     if (type === "didnotrace") {
