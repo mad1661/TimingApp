@@ -1453,6 +1453,185 @@ export async function getMissingFromEliminations(
   );
 }
 
+// ─── Doubled-up racers (same driver entered in multiple classes) ──────────
+//
+// Groups the event's runs by driver name across categories. A racer who
+// appears in 2+ categories is "doubled up"; for each of their classes we work
+// out whether they're still alive in eliminations or already out (and at
+// which round they lost). Race control uses this to predict staging waits: a
+// racer still alive in two classes will hold up whichever class is called
+// while they're in the other lane.
+
+export interface DoubleClassEntry {
+  category: string;
+  car_number: string;
+  // "in" = still alive in elims; "out" = lost / missed elims; "won" = won the
+  // event (done racing, but not by losing); "qualifying" = class hasn't
+  // started eliminations yet (treated as alive).
+  status: "in" | "out" | "won" | "qualifying";
+  lastElimRound: string | null;  // deepest E/F round they ran, if any
+  lostRound: string | null;      // round where they lost (when status is "out")
+  outReason: "lost" | "missed_elims" | null;
+  // They won their deepest round but a later round already has runs without
+  // them — either their pair simply hasn't run yet, or a potential no-show.
+  laterRoundStarted: boolean;
+  runCount: number;
+}
+
+export interface DoubledRacer {
+  name: string;
+  member_number: string | null;
+  // "doubled" = alive in 2+ classes (the waiting case), "single" = alive in
+  // exactly one, "done" = out (or event winner) everywhere.
+  status: "doubled" | "single" | "done";
+  aliveCount: number;
+  entries: DoubleClassEntry[];
+}
+
+function isElimRound(round: string | null | undefined): boolean {
+  return !!round && (/^E\d+$/.test(round) || round === "F");
+}
+
+function isRunWinner(run: RunRow): boolean {
+  const r = (run.result || "").trim().toUpperCase();
+  return r === "W" || (!r && run.is_winner === 1);
+}
+
+export async function getDoubledUpRacers(
+  eventCode: string,
+  season: string,
+): Promise<DoubledRacer[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+
+  // Per-category elimination context: which rounds have run, and which car
+  // numbers appear in each round (for "later round already started" checks).
+  const catElimRounds = new Map<string, Map<string, Set<string>>>();
+  for (const run of allRuns) {
+    if (!run.category || !isElimRound(run.round)) continue;
+    let rounds = catElimRounds.get(run.category);
+    if (!rounds) catElimRounds.set(run.category, (rounds = new Map()));
+    let cars = rounds.get(run.round!);
+    if (!cars) rounds.set(run.round!, (cars = new Set()));
+    if (run.car_number) cars.add(run.car_number.trim());
+  }
+
+  // Group runs by driver name (normalized), split by category. Names are the
+  // only identity that survives across classes — the same driver usually
+  // carries a different car number in each class.
+  const byRacer = new Map<string, { name: string; byCategory: Map<string, RunRow[]> }>();
+  for (const run of allRuns) {
+    const rawName = (run.name || "").trim();
+    if (!rawName || !run.category) continue;
+    if (/^(BYE|TBD|COMPETITION BYE)$/i.test(rawName)) continue;
+    const key = rawName.toUpperCase().replace(/\s+/g, " ");
+    let racer = byRacer.get(key);
+    if (!racer) byRacer.set(key, (racer = { name: rawName, byCategory: new Map() }));
+    const list = racer.byCategory.get(run.category);
+    if (list) list.push(run);
+    else racer.byCategory.set(run.category, [run]);
+  }
+
+  const doubled = [...byRacer.values()].filter((r) => r.byCategory.size >= 2);
+
+  let memberMap = new Map<string, string>();
+  try {
+    memberMap = await bulkLookupMembership(doubled.map((r) => r.name));
+  } catch (err) {
+    console.error("[DB] Membership lookup failed for doubles:", err);
+  }
+
+  const results: DoubledRacer[] = doubled.map((racer) => {
+    const entries: DoubleClassEntry[] = [];
+
+    for (const [category, runs] of racer.byCategory) {
+      const sorted = [...runs].sort((a, b) =>
+        tsSortKey(a.timestamp || "").localeCompare(tsSortKey(b.timestamp || "")),
+      );
+      const carNumber =
+        [...sorted].reverse().find((r) => r.car_number?.trim())?.car_number?.trim() || "";
+
+      const elimRuns = sorted.filter((r) => isElimRound(r.round));
+      const categoryRounds = catElimRounds.get(category) || new Map<string, Set<string>>();
+
+      const entry: DoubleClassEntry = {
+        category,
+        car_number: carNumber,
+        status: "in",
+        lastElimRound: null,
+        lostRound: null,
+        outReason: null,
+        laterRoundStarted: false,
+        runCount: runs.length,
+      };
+
+      if (elimRuns.length === 0) {
+        if (categoryRounds.size === 0) {
+          entry.status = "qualifying";
+        } else {
+          // Class is into eliminations and they never ran one — DNQ'd or sat out.
+          entry.status = "out";
+          entry.outReason = "missed_elims";
+        }
+        entries.push(entry);
+        continue;
+      }
+
+      // Deepest round they reached; if they somehow have multiple runs in that
+      // round (rerun), the latest one decides.
+      let deepest = elimRuns[0];
+      for (const r of elimRuns) {
+        if (roundOrder(r.round!) >= roundOrder(deepest.round!)) deepest = r;
+      }
+      entry.lastElimRound = deepest.round;
+
+      if (!isRunWinner(deepest)) {
+        entry.status = "out";
+        entry.outReason = "lost";
+        entry.lostRound = deepest.round;
+        entries.push(entry);
+        continue;
+      }
+
+      if (deepest.round === "F") {
+        entry.status = "won";
+        entries.push(entry);
+        continue;
+      }
+
+      // Won their last round — still in. Note when a later round has already
+      // started without them, so the UI can hint at a pending pair / no-show.
+      const deepestOrder = roundOrder(deepest.round!);
+      for (const [round, cars] of categoryRounds) {
+        if (roundOrder(round) <= deepestOrder) continue;
+        if (cars.size > 0 && !(carNumber && cars.has(carNumber))) {
+          entry.laterRoundStarted = true;
+          break;
+        }
+      }
+      entries.push(entry);
+    }
+
+    entries.sort((a, b) => a.category.localeCompare(b.category));
+    const aliveCount = entries.filter(
+      (e) => e.status === "in" || e.status === "qualifying",
+    ).length;
+
+    return {
+      name: racer.name,
+      member_number: memberMap.get(racer.name) || null,
+      status: aliveCount >= 2 ? "doubled" : aliveCount === 1 ? "single" : "done",
+      aliveCount,
+      entries,
+    } as DoubledRacer;
+  });
+
+  const statusRank = { doubled: 0, single: 1, done: 2 } as const;
+  return results.sort(
+    (a, b) => statusRank[a.status] - statusRank[b.status] || a.name.localeCompare(b.name),
+  );
+}
+
 export async function getFetchLog(): Promise<{ id: string; event_code: string; season: string; event_type: string; fetched_at: string; run_count: number }[]> {
   try {
     const db = getDb();
