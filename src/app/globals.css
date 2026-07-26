@@ -104,5 +104,11 @@ body {
   .round-print tr { break-inside: avoid; page-break-inside: avoid; }
   .round-print-page { break-inside: auto; }
   .round-print-page:not(:last-child) { break-after: page; page-break-after: always; }
+  /* Class elimination ladder sheets: black on white, one ladder per block */
+  .class-ladder-sheet { color: #000 !important; }
+  .class-ladder-sheet * { color: #000 !important; border-color: #000 !important; }
+  .class-ladder-sheet .ladder-block { background: #fff !important; break-inside: avoid; page-break-inside: avoid; margin-bottom: 0.25in; }
+  .class-ladder-sheet .ladder-block > div > div { background: #fff !important; }
+  .class-ladder-sheet .invisible { visibility: hidden !important; }
   @page { size: letter landscape; margin: 0.35in; }
 }
