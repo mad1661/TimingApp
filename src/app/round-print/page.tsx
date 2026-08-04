@@ -22,9 +22,34 @@ const ALL_ROUNDS = "__ALL__";
 async function fetchOne(eventCode: string, season: string, round: string, category: string): Promise<RoundPrintPayload> {
   const params = new URLSearchParams({ event_code: eventCode, season, round });
   if (category) params.set("category", category);
-  const res = await fetch(`/api/round-print?${params}`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  // Cloud Run rejects request bursts beyond the single instance's capacity
+  // with a bare 429 "Rate exceeded." — retry those with a short backoff.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`/api/round-print?${params}`);
+    if (res.ok) return res.json();
+    if (res.status === 429 && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+      continue;
+    }
+    throw new Error(await res.text());
+  }
+}
+
+// Run fetch tasks a few at a time. The "All Rounds" view used to fire one
+// request per round x category simultaneously (easily 100+), which blew past
+// the Cloud Run instance's concurrency cap (maxInstances is pinned to 1 for
+// cache coherence) and surfaced as "Rate exceeded." on the page.
+async function runLimited<T>(tasks: (() => Promise<T>)[], limit = 5): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  async function worker() {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
 }
 
 export default function RoundPrintPage() {
@@ -83,13 +108,13 @@ export default function RoundPrintPage() {
       try {
         if (round === ALL_ROUNDS) {
           const targetCategories = category ? [category] : categories;
-          const requests: Promise<RoundPrintPayload>[] = [];
+          const tasks: (() => Promise<RoundPrintPayload>)[] = [];
           for (const r of rounds) {
             for (const c of targetCategories) {
-              requests.push(fetchOne(eventCode, season, r, c));
+              tasks.push(() => fetchOne(eventCode, season, r, c));
             }
           }
-          const results = await Promise.all(requests);
+          const results = await runLimited(tasks);
           if (!cancelled) setSections(results.filter((p) => p.pairs.length > 0));
         } else {
           const payload = await fetchOne(eventCode, season, round, category);
