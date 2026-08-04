@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/stats", label: "Statistics", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
   { href: "/brackets", label: "Brackets", icon: "M4 6h16M4 12h8m-8 6h16" },
   { href: "/ladder-builder", label: "Ladder Builder", icon: "M4 4h6v6H4zM4 14h6v6H4zM14 4h6v16h-6zM10 7h4M10 17h4" },
+  { href: "/class-elims", label: "Class Elims", icon: "M3 5h8M3 9h8M3 13h8M3 17h8M15 7h6M15 12h6M15 17h6M11 5v4M11 13v4" },
   { href: "/qualifying", label: "Qualifying", icon: "M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" },
   { href: "/best-losing-package", label: "Best Losing Package", icon: "M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" },
   { href: "/perfect-rt", label: "Perfect RT", icon: "M13 10V3L4 14h7v7l9-11h-7z" },

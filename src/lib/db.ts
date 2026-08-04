@@ -1,5 +1,14 @@
 import { getDb } from "./firebase-admin";
 import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
+import {
+  categoryKindFor,
+  normalizeDesignation,
+  fixedComboFor,
+  transmissionFromDesignation,
+  comboForTrans,
+  type CategoryKind,
+  type ComboAssignment,
+} from "./class-elims";
 
 // --------------- Types ---------------
 
@@ -2880,4 +2889,318 @@ export async function getLadderRoundResults(
     });
   }
   return results;
+}
+
+// ─── Class Eliminations (Stock / Super Stock) ─────────────────────────────
+//
+// Digests qualifying into the class-eliminations breakdown from the NHRA
+// class elimination guide: every individual class designation with 2+ cars
+// gets its own ladder; single-car classes fold into transmission combos.
+// Pure classification/ladder logic lives in src/lib/class-elims.ts (shared
+// with the client); this section handles run aggregation and the persisted
+// per-event overrides (manual stick/auto calls, scratched cars).
+
+export interface ClassElimConfig {
+  // Manual stick/auto calls for singles whose class code doesn't encode the
+  // transmission (keyed by car number).
+  trans: Record<string, "auto" | "stick">;
+  // Car numbers scratched from class (didn't make the call).
+  excluded: string[];
+}
+
+export interface ClassElimCar {
+  car_number: string;
+  name: string;
+  designation: string;
+  et: number | null;         // best qualifying ET (furthest under index)
+  index: number | null;      // class index for that run
+  underOver: number | null;  // et - index (negative = under)
+  bestRound: string | null;
+  bestTimestamp: string | null;
+  runCount: number;
+  seed: number;              // position within its ladder group (1-based; 0 = unseeded)
+  excluded: boolean;
+  transmission: "auto" | "stick" | null;
+  transSource: "designation" | "override" | "fixed" | null;
+  combo: ComboAssignment | null; // set for singles routed to a combo
+  noTime: boolean;               // no valid qualifying time recorded
+}
+
+export interface ClassElimGroup {
+  designation: string;
+  cars: ClassElimCar[];
+}
+
+export interface ClassElimCombo {
+  key: string;
+  label: string;
+  cars: ClassElimCar[];
+}
+
+export interface ClassElimBreakdown {
+  category: string;
+  categoryKind: CategoryKind;
+  roundsUsed: string[];
+  totalCars: number;
+  classes: ClassElimGroup[];     // designations with 2+ active cars → own ladder
+  singles: ClassElimCar[];       // one-car classes (assigned or unresolved)
+  combos: ClassElimCombo[];      // assembled combo ladders
+  unresolved: ClassElimCar[];    // singles awaiting a stick/auto call
+  noDesignation: ClassElimCar[]; // cars with runs but no class designation
+  excludedCars: ClassElimCar[];  // scratched from class
+  config: ClassElimConfig;
+}
+
+function classElimConfigDocId(eventCode: string, season: string, category: string): string {
+  const cat = (category || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  return `${eventCode}_${season}_${cat}`;
+}
+
+export async function getClassElimConfig(
+  eventCode: string,
+  season: string,
+  category: string,
+): Promise<ClassElimConfig> {
+  try {
+    const db = getDb();
+    const doc = await db
+      .collection("class_elim_configs")
+      .doc(classElimConfigDocId(eventCode, season, category))
+      .get();
+    const data = doc.data() || {};
+    return {
+      trans: (data.trans as Record<string, "auto" | "stick">) || {},
+      excluded: Array.isArray(data.excluded) ? data.excluded : [],
+    };
+  } catch (err) {
+    console.error("[DB] Failed to load class elim config:", err);
+    return { trans: {}, excluded: [] };
+  }
+}
+
+export async function saveClassElimConfig(
+  eventCode: string,
+  season: string,
+  category: string,
+  config: ClassElimConfig,
+): Promise<void> {
+  const db = getDb();
+  await db
+    .collection("class_elim_configs")
+    .doc(classElimConfigDocId(eventCode, season, category))
+    .set(
+      {
+        event_code: eventCode,
+        season,
+        category,
+        trans: config.trans || {},
+        excluded: config.excluded || [],
+        updated_at: new Date().toISOString(),
+      },
+      { merge: true },
+    );
+}
+
+// Seeding: furthest under index first; index-less cars follow by raw ET;
+// no-time cars go to the bottom (per NHRA: no qualifying run = bottom of
+// ladder). Ties break to whoever posted the time first.
+function classElimSeedSort(a: ClassElimCar, b: ClassElimCar): number {
+  const rank = (c: ClassElimCar) => (c.underOver !== null ? 0 : c.et !== null ? 1 : 2);
+  if (rank(a) !== rank(b)) return rank(a) - rank(b);
+  if (a.underOver !== null && b.underOver !== null && Math.abs(a.underOver - b.underOver) > 0.00001) {
+    return a.underOver - b.underOver;
+  }
+  if (a.et !== null && b.et !== null && Math.abs(a.et - b.et) > 0.00001) {
+    return a.et - b.et;
+  }
+  return (a.bestTimestamp || "").localeCompare(b.bestTimestamp || "");
+}
+
+export async function getClassElimBreakdown(
+  eventCode: string,
+  season: string,
+  category: string,
+  rounds?: string[],
+): Promise<ClassElimBreakdown> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+  const catRuns = allRuns.filter((r) => r.category === category);
+
+  // Default to qualifying rounds; fall back to time trials for events that
+  // only log T sessions.
+  let roundsUsed: string[];
+  if (rounds && rounds.length > 0) {
+    roundsUsed = rounds;
+  } else {
+    const qRounds = [...new Set(
+      catRuns.map((r) => r.round).filter((rd): rd is string => !!rd && rd.startsWith("Q")),
+    )].sort();
+    roundsUsed = qRounds.length > 0
+      ? qRounds
+      : [...new Set(
+          catRuns.map((r) => r.round).filter((rd): rd is string => !!rd && rd.startsWith("T")),
+        )].sort();
+  }
+  const roundSet = new Set(roundsUsed);
+
+  const kind = categoryKindFor(category);
+  const config = await getClassElimConfig(eventCode, season, category);
+  const excludedSet = new Set(config.excluded.map((c) => c.trim()));
+
+  // Aggregate per car number across the selected rounds.
+  interface Agg {
+    car_number: string;
+    name: string;
+    designation: string;
+    nameSeq: number;
+    desigSeq: number;
+    runCount: number;
+    best: { et: number; index: number | null; diff: number | null; round: string; timestamp: string } | null;
+  }
+  const byCar = new Map<string, Agg>();
+  let seq = 0;
+  for (const run of catRuns) {
+    if (!run.car_number) continue;
+    const carNum = run.car_number.trim();
+    if (!carNum) continue;
+    seq++;
+    let agg = byCar.get(carNum);
+    if (!agg) {
+      agg = { car_number: carNum, name: "", designation: "", nameSeq: -1, desigSeq: -1, runCount: 0, best: null };
+      byCar.set(carNum, agg);
+    }
+    const order = run._scrape_seq ?? seq;
+    if (run.name && order > agg.nameSeq) {
+      agg.name = run.name;
+      agg.nameSeq = order;
+    }
+    const desig = normalizeDesignation(run.class_index);
+    if (desig && order > agg.desigSeq) {
+      agg.designation = desig;
+      agg.desigSeq = order;
+    }
+
+    if (!run.round || !roundSet.has(run.round)) continue;
+    agg.runCount++;
+    if (run.is_dq === 1 || run.ft1320 == null || run.ft1320 <= 0) continue;
+    const index = run.dial_in && run.dial_in > 0 ? run.dial_in : null;
+    const diff = index !== null ? run.ft1320 - index : null;
+    const cand = {
+      et: run.ft1320,
+      index,
+      diff,
+      round: run.round,
+      timestamp: run.timestamp || "",
+    };
+    const cur = agg.best;
+    if (!cur) {
+      agg.best = cand;
+    } else if (diff !== null && cur.diff === null) {
+      agg.best = cand;
+    } else if (diff !== null && cur.diff !== null && diff < cur.diff) {
+      agg.best = cand;
+    } else if (diff === null && cur.diff === null && cand.et < cur.et) {
+      agg.best = cand;
+    }
+  }
+
+  const cars: ClassElimCar[] = [...byCar.values()]
+    // Only cars that actually appeared in the selected qualifying rounds.
+    .filter((a) => a.runCount > 0)
+    .map((a) => ({
+      car_number: a.car_number,
+      name: a.name,
+      designation: a.designation,
+      et: a.best ? a.best.et : null,
+      index: a.best ? a.best.index : null,
+      underOver: a.best ? a.best.diff : null,
+      bestRound: a.best ? a.best.round : null,
+      bestTimestamp: a.best ? a.best.timestamp : null,
+      runCount: a.runCount,
+      seed: 0,
+      excluded: excludedSet.has(a.car_number),
+      transmission: null,
+      transSource: null,
+      combo: null,
+      noTime: !a.best,
+    }));
+
+  const excludedCars = cars.filter((c) => c.excluded).sort(classElimSeedSort);
+  const active = cars.filter((c) => !c.excluded);
+  const noDesignation = active.filter((c) => !c.designation).sort(classElimSeedSort);
+
+  // Group by designation.
+  const groups = new Map<string, ClassElimCar[]>();
+  for (const car of active) {
+    if (!car.designation) continue;
+    const list = groups.get(car.designation);
+    if (list) list.push(car);
+    else groups.set(car.designation, [car]);
+  }
+
+  const classes: ClassElimGroup[] = [];
+  const singles: ClassElimCar[] = [];
+  for (const [designation, list] of groups) {
+    list.sort(classElimSeedSort);
+    if (list.length >= 2) {
+      list.forEach((c, i) => { c.seed = i + 1; });
+      classes.push({ designation, cars: list });
+    } else {
+      singles.push(list[0]);
+    }
+  }
+  classes.sort((a, b) => a.designation.localeCompare(b.designation));
+
+  // Route singles into combos.
+  const comboMap = new Map<string, ClassElimCombo>();
+  const unresolved: ClassElimCar[] = [];
+  for (const car of singles) {
+    const fixed = fixedComboFor(car.designation, kind);
+    let assignment: ComboAssignment | null = fixed;
+    if (fixed) {
+      car.transSource = "fixed";
+    } else {
+      const override = config.trans[car.car_number];
+      const call = override || transmissionFromDesignation(car.designation, kind);
+      if (call === "auto" || call === "stick") {
+        car.transmission = call;
+        car.transSource = override ? "override" : "designation";
+        assignment = comboForTrans(call, kind);
+      }
+    }
+    if (assignment) {
+      car.combo = assignment;
+      let combo = comboMap.get(assignment.key);
+      if (!combo) {
+        combo = { key: assignment.key, label: assignment.label, cars: [] };
+        comboMap.set(assignment.key, combo);
+      }
+      combo.cars.push(car);
+    } else {
+      unresolved.push(car);
+    }
+  }
+
+  const combos = [...comboMap.values()];
+  for (const combo of combos) {
+    combo.cars.sort(classElimSeedSort);
+    combo.cars.forEach((c, i) => { c.seed = i + 1; });
+  }
+  combos.sort((a, b) => a.label.localeCompare(b.label));
+  singles.sort(classElimSeedSort);
+  unresolved.sort(classElimSeedSort);
+
+  return {
+    category,
+    categoryKind: kind,
+    roundsUsed,
+    totalCars: active.length,
+    classes,
+    singles,
+    combos,
+    unresolved,
+    noDesignation,
+    excludedCars,
+    config,
+  };
 }

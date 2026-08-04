@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults, getClassElimBreakdown, saveClassElimConfig } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -250,6 +250,14 @@ export async function GET(request: NextRequest) {
       return jsonResponse({ runs, noShows });
     }
 
+    if (type === "class-elims") {
+      const category = params.get("category");
+      if (!category) return jsonResponse({ error: "category required" }, { status: 400 });
+      const rounds = params.get("rounds")?.split(",").filter(Boolean);
+      const breakdown = await getClassElimBreakdown(eventCode, season, category, rounds);
+      return jsonResponse({ breakdown });
+    }
+
     if (type === "ladder-header") {
       const category = params.get("category") || "";
       const header = await getLadderHeader(eventCode, season, category);
@@ -299,6 +307,18 @@ export async function POST(request: NextRequest) {
       await saveQualifyingConfig(event_code, season, {
         classMode: body.classMode || {},
         tiebreaker: body.tiebreaker || "mph",
+      });
+      return jsonResponse({ ok: true });
+    }
+
+    if (type === "save-class-elims") {
+      const { category, trans, excluded } = body;
+      if (!event_code || !season || !category) {
+        return jsonResponse({ error: "event_code, season, category required" }, { status: 400 });
+      }
+      await saveClassElimConfig(event_code, season, category, {
+        trans: trans && typeof trans === "object" ? trans : {},
+        excluded: Array.isArray(excluded) ? excluded : [],
       });
       return jsonResponse({ ok: true });
     }
