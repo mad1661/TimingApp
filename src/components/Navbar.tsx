@@ -58,7 +58,12 @@ export default function Navbar() {
               TD
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg font-bold text-white tracking-tight truncate">Timing Data</h1>
+              <h1 className="text-lg font-bold text-white tracking-tight truncate">
+                Timing Data
+                <span className="ml-2 align-middle text-[10px] font-semibold text-gray-400 bg-nhra-card border border-nhra-border rounded px-1.5 py-0.5">
+                  v{APP_VERSION}
+                </span>
+              </h1>
               <p className="text-xs text-gray-400 truncate">Rice is Great All Year</p>
             </div>
           </Link>
