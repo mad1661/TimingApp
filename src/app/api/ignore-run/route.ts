@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/firebase-admin";
+import { normalizeDedupKey } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,10 @@ export async function GET(req: NextRequest) {
   try {
     const db = getDb();
     const doc = await db.collection("ignored_runs").doc(docId(eventCode, season)).get();
-    const keys: string[] = doc.exists ? doc.data()?.keys || [] : [];
+    const raw: string[] = doc.exists ? doc.data()?.keys || [] : [];
+    // Stored keys may predate the current dedup-key shape; normalize so the
+    // client's comparisons against live _dedup_key values match.
+    const keys = [...new Set(raw.map(normalizeDedupKey))];
     return NextResponse.json({ keys });
   } catch (err) {
     console.error("Ignored runs GET error:", err);
@@ -35,12 +39,16 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const ref = db.collection("ignored_runs").doc(docId(event_code, season));
     const doc = await ref.get();
-    let keys: string[] = doc.exists ? doc.data()?.keys || [] : [];
+    const raw: string[] = doc.exists ? doc.data()?.keys || [] : [];
+    // Normalize both the stored list and the incoming key so add/restore work
+    // against keys saved under the older dedup-key shape.
+    let keys = [...new Set(raw.map(normalizeDedupKey))];
+    const key = normalizeDedupKey(dedup_key);
 
     if (action === "restore") {
-      keys = keys.filter((k) => k !== dedup_key);
+      keys = keys.filter((k) => k !== key);
     } else {
-      if (!keys.includes(dedup_key)) keys.push(dedup_key);
+      if (!keys.includes(key)) keys.push(key);
     }
 
     await ref.set({ keys, updatedAt: new Date().toISOString() }, { merge: true });
