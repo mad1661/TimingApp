@@ -284,16 +284,44 @@ function dedupKey(run: Omit<RunRow, "id" | "created_at" | "_dedup_key">): string
   // differently — the timestamp (AM/PM marker, leading zeros, 12h vs 24h), the
   // lane ("L"/"R" vs "Left"/"Right"), and car/round casing/whitespace — so
   // without normalizing here, an API row and a scraper row for the same pass
-  // land as two rows. The timestamp is parsed to a canonical YYYYMMDDHHMMSS;
+  // land as two rows. The timestamp is parsed to a canonical YYYYMMDDhhMMSS;
   // if it can't be parsed we fall back to the AM/PM-stripped string.
+  //
+  // The hour is taken MODULO 12 so the AM/PM marker does not contribute to a
+  // run's identity. The marker on scraper rows is *inferred* (inferAmPm /
+  // tagRunTimestamps walk the day's runs), and the inference for ambiguous
+  // hours (6-11) can flip between scrapes as the day's grid grows — e.g. an
+  // evening session first seen starting at hour 8 tags AM, then a later scrape
+  // that includes earlier runs tags the same rows PM. If the marker were part
+  // of the key, each flip would mint new identities 12 hours apart (far outside
+  // the same-pass guard's window) and store the whole session twice. A car
+  // can't make two passes in the same round+lane at the same 12-hour clock
+  // second, so dropping the marker is safe — and 24-hour API times still
+  // collapse with 12-hour scraper times (21:04 % 12 == 9:04).
   const d = parseTsToDateShared(run.timestamp || "");
   const p = (n: number) => String(n).padStart(2, "0");
   const ts = d
-    ? `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+    ? `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours() % 12)}${p(d.getMinutes())}${p(d.getSeconds())}`
     : (run.timestamp || "").replace(/\s+(AM|PM)\s*$/i, "").trim();
   const car = (run.car_number || "").trim().toUpperCase();
   const round = (run.round || "").trim().toUpperCase();
   return `${ts}|${car}|${round}|${laneKey(run.lane)}|${run.event_code}|${run.season}`;
+}
+
+/**
+ * Rewrite a persisted dedup key to the current (12-hour) shape. Keys saved
+ * while dedupKey() encoded the hour in 24-hour form (e.g. in ignored_runs
+ * docs) carry HH 12-23 in the leading YYYYMMDDHHMMSS block; live keys now use
+ * HH % 12. Without this, previously ignored afternoon runs would reappear.
+ * Keys that don't start with a 14-digit timestamp pass through unchanged.
+ */
+export function normalizeDedupKey(key: string): string {
+  const m = key.match(/^(\d{8})(\d{2})(\d{4})\|/);
+  if (!m) return key;
+  const hour = parseInt(m[2], 10);
+  if (hour < 12 || hour > 23) return key;
+  const h12 = String(hour % 12).padStart(2, "0");
+  return `${m[1]}${h12}${m[3]}${key.slice(14)}`;
 }
 
 function hasTimingData(run: RunRow | Omit<RunRow, "id" | "created_at" | "_dedup_key">): boolean {
@@ -1829,7 +1857,7 @@ export async function getIgnoredKeys(eventCode: string, season: string): Promise
     const doc = await db.collection("ignored_runs").doc(`${eventCode}_${season}`).get();
     if (doc.exists) {
       const keys: string[] = doc.data()?.keys || [];
-      return new Set(keys);
+      return new Set(keys.map(normalizeDedupKey));
     }
   } catch (err) {
     console.error("[DB] Failed to load ignored keys:", err);
