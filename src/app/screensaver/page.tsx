@@ -62,6 +62,11 @@ const BRANDS: BillboardContent[] = [
   { text: "MIDDLE-OUT", sub: "MOTORSPORTS", bg: "#4f9d69", fg: "#ffffff" },
   { text: "TREE.JS", sub: "REACTION TIME FRAMEWORK", bg: "#232a2f", fg: "#7ef29a" },
   { text: "BIG HEAD", sub: "CYLINDER HEADS", bg: "#5b8cc4", fg: "#ffffff" },
+  { text: "THREE COMMA", sub: "RACING CO.", bg: "#1f2a44", fg: "#f2b134" },
+  { text: "NUCLEUS", sub: "TELEMETRY BY HOOLI", bg: "#374785", fg: "#ffffff" },
+  { text: "BACHMANITY", sub: "NITRO NIGHTS", bg: "#c94f7c", fg: "#ffffff" },
+  { text: "SANDBAGGERS", sub: "ANONYMOUS", bg: "#8d9b6a", fg: "#2c3218" },
+  { text: "DEEP STAGE", sub: "COLD BREW CO.", bg: "#4b3832", fg: "#f3e9dc" },
 ];
 
 interface Billboard {
@@ -70,7 +75,10 @@ interface Billboard {
   poleH: number;
   period: number;
   phase: number;
-  seq: number[]; // per-board shuffled brand order, so neighbors rarely match
+  seq: number[]; // per-board shuffled brand order
+  ptr: number; // position in seq
+  curIdx: number; // brand currently shown
+  lastCycle: number;
 }
 
 interface Grandstand {
@@ -104,6 +112,7 @@ interface Trailer {
 
 interface World {
   billboards: Billboard[];
+  usedBrands: Set<number>;
   grandstands: Grandstand[];
   towerX: number;
   waterTowerX: number;
@@ -145,15 +154,16 @@ function makeWorld(seed: number): World {
   });
 
   const billboardXs = [90, 1120, 1460, 1790, 2130, 3480, 3790, 4130, 4520, 5640, 5960, 6320, 6700, 7000];
-  const billboards: Billboard[] = billboardXs.map((x, i) => {
+  const usedBrands = new Set<number>();
+  const billboards: Billboard[] = billboardXs.map((x) => {
     const seq = BRANDS.map((_, k) => k);
     for (let k = seq.length - 1; k > 0; k--) {
       const j = Math.floor(r() * (k + 1));
       [seq[k], seq[j]] = [seq[j], seq[k]];
     }
-    // Rotate so the first shown brand is unique per board
-    const rot = i % seq.length;
-    seq.push(...seq.splice(0, seq.indexOf(rot)));
+    let ptr = 0;
+    while (usedBrands.has(seq[ptr])) ptr++;
+    usedBrands.add(seq[ptr]);
     return {
       x: x + (r() - 0.5) * 60,
       w: 170 + r() * 60,
@@ -161,6 +171,9 @@ function makeWorld(seed: number): World {
       period: 15 + r() * 12,
       phase: r() * 25,
       seq,
+      ptr,
+      curIdx: seq[ptr],
+      lastCycle: -1,
     };
   });
 
@@ -197,7 +210,7 @@ function makeWorld(seed: number): World {
     spd: 3 + r() * 6,
   }));
 
-  return { billboards, grandstands, towerX: 2320, waterTowerX: 4270, trees, midTrees, turbines, trailers, clouds };
+  return { billboards, usedBrands, grandstands, towerX: 2320, waterTowerX: 4270, trees, midTrees, turbines, trailers, clouds };
 }
 
 // ---------------------------------------------------------------------------
@@ -570,13 +583,28 @@ function drawTrailer(f: Frame, tr: Trailer) {
   }
 }
 
-function drawBillboard(f: Frame, bb: Billboard) {
+function drawBillboard(f: Frame, bb: Billboard, usedBrands: Set<number>) {
   const { ctx, H, u, t, trackTop, wallH } = f;
+  const { s, cycle } = popScale(t, bb.period, bb.phase);
+
+  // Swap brands between cycles (scale is ~0 there), never duplicating a brand
+  // that another board is currently showing.
+  if (bb.lastCycle === -1) {
+    bb.lastCycle = cycle;
+  } else if (cycle !== bb.lastCycle) {
+    bb.lastCycle = cycle;
+    usedBrands.delete(bb.curIdx);
+    do {
+      bb.ptr = (bb.ptr + 1) % bb.seq.length;
+    } while (usedBrands.has(bb.seq[bb.ptr]));
+    bb.curIdx = bb.seq[bb.ptr];
+    usedBrands.add(bb.curIdx);
+  }
+
   const sx = screenX(f, bb.x, 1, 300);
   if (sx === null) return;
-  const { s, cycle } = popScale(t, bb.period, bb.phase);
   if (s <= 0.01) return;
-  const content = BRANDS[bb.seq[cycle % bb.seq.length]];
+  const content = BRANDS[bb.curIdx];
 
   const gy = trackTop - wallH - H * 0.004;
   const w = bb.w * u;
@@ -1324,7 +1352,7 @@ export default function ScreensaverPage() {
         drawWaterTower(f);
         ctx.restore();
       }
-      for (const bb of world.billboards) drawBillboard(f, bb);
+      for (const bb of world.billboards) drawBillboard(f, bb, world.usedBrands);
 
       drawTrack(f);
       if (fx.race) {
