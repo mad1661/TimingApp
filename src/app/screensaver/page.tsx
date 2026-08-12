@@ -70,7 +70,7 @@ interface Billboard {
   poleH: number;
   period: number;
   phase: number;
-  contentOffset: number;
+  seq: number[]; // per-board shuffled brand order, so neighbors rarely match
 }
 
 interface Grandstand {
@@ -145,14 +145,24 @@ function makeWorld(seed: number): World {
   });
 
   const billboardXs = [90, 1120, 1460, 1790, 2130, 3480, 3790, 4130, 4520, 5640, 5960, 6320, 6700, 7000];
-  const billboards: Billboard[] = billboardXs.map((x, i) => ({
-    x: x + (r() - 0.5) * 60,
-    w: 170 + r() * 60,
-    poleH: 46 + r() * 40,
-    period: 15 + r() * 12,
-    phase: r() * 25,
-    contentOffset: i,
-  }));
+  const billboards: Billboard[] = billboardXs.map((x, i) => {
+    const seq = BRANDS.map((_, k) => k);
+    for (let k = seq.length - 1; k > 0; k--) {
+      const j = Math.floor(r() * (k + 1));
+      [seq[k], seq[j]] = [seq[j], seq[k]];
+    }
+    // Rotate so the first shown brand is unique per board
+    const rot = i % seq.length;
+    seq.push(...seq.splice(0, seq.indexOf(rot)));
+    return {
+      x: x + (r() - 0.5) * 60,
+      w: 170 + r() * 60,
+      poleH: 46 + r() * 40,
+      period: 15 + r() * 12,
+      phase: r() * 25,
+      seq,
+    };
+  });
 
   const trees: Tree[] = [];
   for (let i = 0; i < 64; i++) trees.push({ x: r() * WORLD_W, s: 0.7 + r() * 0.8, shade: r() });
@@ -379,6 +389,22 @@ function drawSkyAndHills(f: Frame, world: World) {
     ctx.fill();
   }
 
+  // A few gliding birds
+  ctx.strokeStyle = "rgba(50,68,78,0.65)";
+  ctx.lineWidth = Math.max(1.4, 1.8 * u);
+  ctx.lineCap = "round";
+  for (let i = 0; i < 4; i++) {
+    const sx = screenX(f, 900 + i * 1900 + t * (26 + i * 5), 0.16, 60);
+    if (sx === null) continue;
+    const by = H * (0.2 + 0.07 * Math.sin(i * 2.4)) + Math.sin(t * 1.1 + i * 2) * H * 0.012;
+    const flap = Math.sin(t * 6 + i * 1.9) * 3 * u;
+    ctx.beginPath();
+    ctx.moveTo(sx - 7 * u, by - flap);
+    ctx.quadraticCurveTo(sx - 2 * u, by + 2 * u, sx, by);
+    ctx.quadraticCurveTo(sx + 2 * u, by + 2 * u, sx + 7 * u, by - flap);
+    ctx.stroke();
+  }
+
   drawBlimp(f);
 
   // Two ranges of rolling hills
@@ -477,6 +503,17 @@ function drawGrassAndRoad(f: Frame, world: World) {
   ctx.fillStyle = PALETTE.grassDark;
   ctx.fillRect(0, horizon + (trackTop - horizon) * 0.55, W, (trackTop - horizon) * 0.45);
 
+  // Lighter mowed patches break up the flat green
+  ctx.fillStyle = "rgba(255,255,255,0.07)";
+  for (let i = 0; i < 9; i++) {
+    const px = screenX(f, i * 810 + (i % 3) * 140, 0.9, 500);
+    if (px === null) continue;
+    const pw = (260 + (i % 4) * 120) * u;
+    const py = horizon + (trackTop - horizon) * (0.08 + (i % 3) * 0.14);
+    rr(ctx, px, py, pw, (trackTop - horizon) * 0.16, 8 * u);
+    ctx.fill();
+  }
+
   // Access road the pit rigs park along
   const roadY = horizon + (trackTop - horizon) * 0.42;
   ctx.fillStyle = PALETTE.road;
@@ -539,7 +576,7 @@ function drawBillboard(f: Frame, bb: Billboard) {
   if (sx === null) return;
   const { s, cycle } = popScale(t, bb.period, bb.phase);
   if (s <= 0.01) return;
-  const content = BRANDS[(bb.contentOffset + cycle) % BRANDS.length];
+  const content = BRANDS[bb.seq[cycle % bb.seq.length]];
 
   const gy = trackTop - wallH - H * 0.004;
   const w = bb.w * u;
@@ -615,11 +652,12 @@ function drawGrandstand(f: Frame, g: Grandstand) {
   }
 
   // Roof + supports
-  const roofY = gy - rowH * g.rows - H * 0.028;
+  const roofY = gy - rowH * g.rows - H * 0.014;
   ctx.fillStyle = PALETTE.steel;
-  ctx.fillRect(sx + w * 0.08 - 1.6 * u, roofY, 3.2 * u, gy - roofY - rowH * (g.rows - 1));
-  ctx.fillRect(sx + w * 0.92 - 1.6 * u, roofY, 3.2 * u, gy - roofY - rowH * (g.rows - 1));
-  rr(ctx, sx - 6 * u, roofY - 7 * u, w + 12 * u, 9 * u, 4 * u);
+  for (const fr of [0.06, 0.5, 0.94]) {
+    ctx.fillRect(sx + w * fr - 2.2 * u, roofY, 4.4 * u, gy - rowH * (g.rows - 1) - roofY);
+  }
+  rr(ctx, sx - 6 * u, roofY - 8 * u, w + 12 * u, 10 * u, 4 * u);
   ctx.fillStyle = PALETTE.cream;
   ctx.fill();
   ctx.fillStyle = PALETTE.stripe;
@@ -1022,7 +1060,7 @@ function drawScoreboard(f: Frame, race: Race) {
   const sx = (race.startX + 430 - f.camX) * u;
   if (sx < -200 || sx > f.W + 200) return;
 
-  const w = 190 * u;
+  const w = 208 * u;
   const h = 52 * u;
   const y = trackTop - wallH - H * 0.005 - h - 26 * u;
   ctx.fillStyle = PALETTE.steel;
@@ -1103,14 +1141,14 @@ function drawForeground(f: Frame) {
   ctx.fillStyle = PALETTE.grassDark;
   ctx.fillRect(0, topY, W, H - topY);
 
-  // Chain-link fence, slightly faster parallax for depth
+  // Spectator fence, slightly faster parallax for depth
   const p = 1.3;
-  ctx.strokeStyle = "rgba(70,80,88,0.55)";
+  const postTop = topY + H * 0.006;
+  const postBot = topY + H * 0.042;
+  ctx.strokeStyle = "rgba(70,80,88,0.5)";
   ctx.lineWidth = Math.max(1.5, 2 * u);
   const gap = 110;
   const first = Math.floor((camX * p) / gap) * gap;
-  const postTop = topY + H * 0.012;
-  const postBot = topY + H * 0.075;
   for (let m = first - gap; m < camX * p + W / u + gap; m += gap) {
     const sx = (m - camX * p) * u;
     ctx.beginPath();
@@ -1119,24 +1157,25 @@ function drawForeground(f: Frame) {
     ctx.stroke();
   }
   ctx.beginPath();
-  ctx.moveTo(0, postTop + 2 * u);
-  ctx.lineTo(W, postTop + 2 * u);
-  ctx.moveTo(0, postBot - 3 * u);
-  ctx.lineTo(W, postBot - 3 * u);
+  ctx.moveTo(0, postTop + 3 * u);
+  ctx.lineTo(W, postTop + 3 * u);
+  ctx.moveTo(0, postBot - 4 * u);
+  ctx.lineTo(W, postBot - 4 * u);
   ctx.stroke();
 
-  // Bushes along the fence line
-  const bGap = 240;
+  // Bushes in front of the fence line
+  const bGap = 190;
   const bFirst = Math.floor((camX * p) / bGap) * bGap;
   for (let m = bFirst - bGap; m < camX * p + W / u + bGap; m += bGap) {
-    const sx = (m - camX * p) * u;
-    const jitter = (Math.sin(m * 12.9898) * 43758.5453) % 1;
-    const s = (0.8 + Math.abs(jitter) * 0.6) * u;
-    ctx.fillStyle = Math.abs(jitter) > 0.5 ? "#5e9e54" : "#549240";
+    const sx = (m - camX * p) * u + Math.sin(m * 0.71) * 40 * u;
+    const jitter = Math.abs(Math.sin(m * 12.9898) % 1);
+    const s = (1.1 + jitter * 0.9) * u;
+    const by = postBot + H * 0.02 + jitter * H * 0.015;
+    ctx.fillStyle = jitter > 0.5 ? "#5e9e54" : "#549240";
     ctx.beginPath();
-    ctx.arc(sx, postBot + 10 * s, 11 * s, 0, Math.PI * 2);
-    ctx.arc(sx + 9 * s, postBot + 12 * s, 8 * s, 0, Math.PI * 2);
-    ctx.arc(sx - 9 * s, postBot + 12 * s, 8 * s, 0, Math.PI * 2);
+    ctx.arc(sx, by, 13 * s, 0, Math.PI * 2);
+    ctx.arc(sx + 11 * s, by + 3 * s, 9 * s, 0, Math.PI * 2);
+    ctx.arc(sx - 11 * s, by + 3 * s, 9 * s, 0, Math.PI * 2);
     ctx.fill();
   }
 }
