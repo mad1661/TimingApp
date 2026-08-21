@@ -68,6 +68,21 @@ function downloadCsv(filename: string, header: string[], rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string));
+}
+
+// The classes a racer still has to run — what the staging crew tracks.
+function aliveEntries(r: DoubledRacer): DoubleClassEntry[] {
+  return r.entries.filter((e) => e.status === "in" || e.status === "qualifying");
+}
+
+// Short round label for a class a racer is still in.
+function aliveRoundLabel(e: DoubleClassEntry): string {
+  if (e.status === "qualifying") return "Qualifying";
+  return e.lastElimRound ? `Thru ${displayRound(e.lastElimRound)}` : "Eliminations";
+}
+
 function ClassChip({ entry }: { entry: DoubleClassEntry }) {
   const styles =
     entry.status === "out"
@@ -143,6 +158,7 @@ export default function DoublesPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     if (!selectedEvent || !selectedSeason) return;
@@ -189,6 +205,107 @@ export default function DoublesPage() {
     );
   }
 
+  function flash(msg: string) {
+    setNotice(msg);
+    setTimeout(() => setNotice(""), 2500);
+  }
+
+  // Plain-text list of the currently doubled-up racers, for pasting into a
+  // text/notes app for the staging crew.
+  function buildCopyText(): string {
+    const when = new Date().toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const title = live.config?.eventName || selectedEvent;
+    const lines: string[] = [
+      `DOUBLED UP — ${title}`,
+      `As of ${when} · ${stillDoubled.length} still in 2+ classes`,
+      "",
+    ];
+    stillDoubled.forEach((r, i) => {
+      lines.push(`${i + 1}. ${r.name}${r.member_number ? ` (Member #${r.member_number})` : ""}`);
+      for (const e of aliveEntries(r)) {
+        const car = e.car_number ? `#${e.car_number}` : "no car #";
+        lines.push(`     ${e.category} — ${car} (${aliveRoundLabel(e)})`);
+      }
+    });
+    return lines.join("\n");
+  }
+
+  async function copyList() {
+    if (stillDoubled.length === 0) { flash("No racers are doubled up right now"); return; }
+    try {
+      await navigator.clipboard.writeText(buildCopyText());
+      flash("Copied to clipboard");
+    } catch {
+      flash("Copy failed — use Print sheet instead");
+    }
+  }
+
+  // Neat, printable staging-lane checklist: one row per class each doubled-up
+  // racer still has to run, with a box to check off as they complete each.
+  function printSheet() {
+    if (stillDoubled.length === 0) { flash("No racers are doubled up right now"); return; }
+    const when = new Date().toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const title = live.config?.eventName || selectedEvent;
+    const body = stillDoubled
+      .map((r, gi) =>
+        aliveEntries(r)
+          .map(
+            (e, j) => `
+          <tr class="${j === 0 && gi > 0 ? "grp" : ""}">
+            <td class="chk"><span class="box"></span></td>
+            <td class="racer">${j === 0 ? escapeHtml(r.name) + (r.member_number ? ` <span class="mem">#${escapeHtml(r.member_number)}</span>` : "") : ""}</td>
+            <td class="car">${e.car_number ? "#" + escapeHtml(e.car_number) : "—"}</td>
+            <td>${escapeHtml(e.category)}</td>
+            <td class="round">${escapeHtml(aliveRoundLabel(e))}</td>
+          </tr>`,
+          )
+          .join(""),
+      )
+      .join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Doubled Up — Staging Sheet</title>
+      <style>
+        @page { size: letter portrait; margin: 0.55in 0.6in; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .head { border-bottom: 3px solid #000; padding-bottom: 8pt; }
+        .head h1 { font-size: 20pt; margin: 0; letter-spacing: .05em; }
+        .head .st { font-size: 10pt; font-weight: bold; color: #C8102E; letter-spacing: .16em; text-transform: uppercase; margin-top: 3pt; }
+        .head .meta { font-size: 10pt; color: #333; margin-top: 7pt; display: flex; justify-content: space-between; gap: 12pt; }
+        .head .meta b { color: #000; }
+        .note { font-size: 9pt; color: #555; font-style: italic; margin: 8pt 0 10pt; }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { text-align: left; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .08em; border-bottom: 2px solid #000; padding: 5pt 6pt; }
+        thead th.c { text-align: center; width: 0.55in; }
+        tbody td { padding: 8pt 6pt; border-bottom: 1px solid #d3d3d3; font-size: 11.5pt; vertical-align: middle; }
+        tbody tr.grp td { border-top: 2px solid #000; }
+        td.chk { text-align: center; }
+        .box { display: inline-block; width: 16pt; height: 16pt; border: 1.5px solid #000; border-radius: 3px; }
+        .racer { font-weight: bold; white-space: nowrap; }
+        .racer .mem { font-weight: normal; font-size: 9pt; color: #666; }
+        .car { font-weight: bold; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .round { color: #333; white-space: nowrap; }
+        @media screen { body { background: #e9e9e9; padding: 20px; } .page { background: #fff; max-width: 8.5in; margin: 0 auto; padding: 0.55in 0.6in; box-shadow: 0 0 10px #0004; } }
+      </style></head>
+      <body><div class="page">
+        <div class="head">
+          <h1>DOUBLED UP</h1>
+          <div class="st">Staging Lane Sheet</div>
+          <div class="meta"><span><b>${escapeHtml(title)}</b>${selectedSeason ? " · " + escapeHtml(selectedSeason) : ""}</span><span>${escapeHtml(when)} · <b>${stillDoubled.length}</b> racers</span></div>
+        </div>
+        <div class="note">Each racer is still alive in 2 or more classes. Check the box as they complete each class's run.</div>
+        <table>
+          <thead><tr><th class="c">Done</th><th>Racer</th><th>Car #</th><th>Class</th><th>Round</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+      <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 250); };<\/script>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { flash("Pop-up blocked — allow pop-ups to print"); return; }
+    w.document.write(html);
+    w.document.close();
+  }
+
   return (
     <div className="max-w-6xl mx-auto">
       <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
@@ -198,22 +315,41 @@ export default function DoublesPage() {
             Racers entered in more than one class — who&apos;s still in both, and who&apos;s already lost
           </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={load}
-            disabled={loading || !selectedEvent}
-            className="px-4 py-2 bg-nhra-red text-white rounded-lg font-bold text-sm hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-          {racers.length > 0 && (
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
             <button
-              onClick={exportCsv}
-              className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg font-bold text-sm hover:text-white transition-colors"
+              onClick={load}
+              disabled={loading || !selectedEvent}
+              className="px-4 py-2 bg-nhra-red text-white rounded-lg font-bold text-sm hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Export CSV
+              {loading ? "Loading…" : "Refresh"}
             </button>
-          )}
+            {stillDoubled.length > 0 && (
+              <>
+                <button
+                  onClick={copyList}
+                  className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg font-bold text-sm hover:text-white transition-colors"
+                >
+                  Copy list
+                </button>
+                <button
+                  onClick={printSheet}
+                  className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg font-bold text-sm hover:text-white transition-colors"
+                >
+                  Print sheet
+                </button>
+              </>
+            )}
+            {racers.length > 0 && (
+              <button
+                onClick={exportCsv}
+                className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg font-bold text-sm hover:text-white transition-colors"
+              >
+                Export CSV
+              </button>
+            )}
+          </div>
+          {notice && <span className="text-xs font-semibold text-nhra-accent">{notice}</span>}
         </div>
       </div>
 
