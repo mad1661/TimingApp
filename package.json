@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "backfill": "tsx scripts/backfill.ts"
+    "backfill": "tsx scripts/backfill.ts",
+    "build:saver": "tsx scripts/build-saver-html.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.1",
@@ -30,6 +31,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "tsx": "^4.21.0"
   }
 }
