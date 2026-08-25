@@ -92,6 +92,13 @@ export interface EtFinalsConfig {
    * (`${trackCode}|${division}|${slot}`). Beats every automatic route.
    */
   manualMatches: Record<string, string>;
+  /**
+   * Hand-set points eligibility, keyed by roster entry key
+   * (`${trackCode}|${division}|${slot}`). Overrides what the roster sheet said,
+   * for the cases the sheet gets wrong — a junior filed in a points row who
+   * shouldn't be scoring, or the reverse. `false` = earns nothing.
+   */
+  eligibilityOverrides: Record<string, boolean>;
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
@@ -101,6 +108,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     buybackRounds: {},
     pointsPerRoundWin: 1,
     manualMatches: {},
+    eligibilityOverrides: {},
   };
 }
 
@@ -183,6 +191,11 @@ export interface EtUnmatchedRacer {
   division: EtDivision;
   roundsWon: number;
   reason: "no_roster_entry" | "ambiguous";
+  /** Track code from the racer's tech card, when one was found. A suggestion
+   *  for the picker — the roster still decides where the points land. */
+  techTeam: string;
+  /** Member number from the tech card, to identify them when pinning. */
+  memberNumber: string;
 }
 
 export interface EtFinalsStandings {
@@ -222,22 +235,53 @@ export function normalizeCarKey(v: string | null | undefined): string {
 }
 
 /**
- * Order-independent name key. Rosters write "LAST, FIRST" while the timing
- * system may show either order, so tokens are sorted rather than positional.
- * Nicknames in quotes and generational suffixes are dropped.
+ * Split a name into comparable tokens. Rosters write "LAST, FIRST" while the
+ * timing system and the tech cards may show either order, so callers sort
+ * rather than rely on position. Dropped along the way: nicknames in quotes or
+ * parentheses, generational suffixes, and lone initials — all of which appear
+ * in one source and not the other for the same racer.
  */
-export function normalizeNameKey(raw: string | null | undefined): string {
+function nameTokens(raw: string | null | undefined): string[] {
   const cleaned = (raw || "")
     .toUpperCase()
     .replace(/"[^"]*"/g, " ")
     .replace(/'[^']*'/g, " ")
+    .replace(/\([^)]*\)/g, " ")
     .replace(/[^A-Z\s]/g, " ");
-  const tokens = cleaned
+  return cleaned
     .split(/\s+/)
     .filter(Boolean)
-    .filter((t) => !NAME_SUFFIXES.has(t));
+    .filter((t) => !NAME_SUFFIXES.has(t))
+    .filter((t) => t.length > 1);
+}
+
+/**
+ * Order-independent name key: tokens sorted and de-duplicated. The de-dup
+ * matters because the tech-card export sometimes repeats a name part across
+ * its first- and last-name cells.
+ */
+export function normalizeNameKey(raw: string | null | undefined): string {
+  const tokens = nameTokens(raw);
   if (tokens.length === 0) return "";
-  return tokens.sort().join(" ");
+  return Array.from(new Set(tokens)).sort().join(" ");
+}
+
+/**
+ * Looser key: longest token (nearly always the surname) plus the first letter
+ * of each other token. Catches "Bob Smith" against "Robert Smith" only when the
+ * initial survives, so it is a last-resort route and used only when it lands on
+ * exactly one racer.
+ */
+export function looseNameKey(raw: string | null | undefined): string {
+  const tokens = nameTokens(raw);
+  if (tokens.length < 2) return "";
+  const surname = tokens.reduce((a, b) => (b.length > a.length ? b : a));
+  const initials = tokens
+    .filter((t) => t !== surname)
+    .map((t) => t[0])
+    .sort()
+    .join("");
+  return initials ? `${surname}|${initials}` : "";
 }
 
 const JR_HINT = /\b(JR|JUNIOR|JDRL|JR\.?\s*DRAGSTER|JR\.?\s*STREET)\b/;
@@ -286,6 +330,8 @@ function isDecidedLoss(run: RunRow): boolean {
 interface RosterIndexEntry {
   entry: EtRosterEntry;
   roster: EtFinalsRoster;
+  /** Roster eligibility after any hand-set override is applied. */
+  eligible: boolean;
 }
 
 interface Bucket {
@@ -303,19 +349,37 @@ function addToBucket(map: Map<string, Bucket>, key: string, val: RosterIndexEntr
  * Resolve a bucket to a single roster entry. Several roster rows can share a
  * key legitimately — one racer entered in two Summit categories, say — and that
  * is fine as long as they all belong to the same team with the same
- * eligibility, because the points land on the team either way. A key that spans
- * teams is genuinely ambiguous and is left unmatched instead of guessed.
+ * eligibility, because the points land on the team either way.
+ *
+ * A key that spans teams is genuinely ambiguous. `teamHint` (the track code on
+ * the racer's tech card) narrows it when exactly one candidate is on that team;
+ * with no hint, or a hint that doesn't single one out, the racer is left
+ * unmatched for a human to pin rather than guessed at.
  */
-function resolveBucket(b: Bucket | undefined): RosterIndexEntry | "ambiguous" | null {
+function resolveBucket(
+  b: Bucket | undefined,
+  teamHint?: string,
+): RosterIndexEntry | "ambiguous" | null {
   if (!b || b.matches.length === 0) return null;
   if (b.matches.length === 1) return b.matches[0];
   const first = b.matches[0];
   const uniform = b.matches.every(
     (m) =>
       m.roster.track_code === first.roster.track_code &&
-      m.entry.points_eligible === first.entry.points_eligible,
+      m.eligible === first.eligible,
   );
-  return uniform ? first : "ambiguous";
+  if (uniform) return first;
+  if (teamHint) {
+    const onHinted = b.matches.filter(
+      (m) => m.roster.track_code.toUpperCase() === teamHint.toUpperCase(),
+    );
+    if (onHinted.length === 1) return onHinted[0];
+    if (onHinted.length > 1) {
+      const h = onHinted[0];
+      if (onHinted.every((m) => m.eligible === h.eligible)) return h;
+    }
+  }
+  return "ambiguous";
 }
 
 interface RunnerAggregate {
@@ -328,12 +392,60 @@ interface RunnerAggregate {
   runs: RunRow[];
 }
 
+/**
+ * The parts of a tech card this engine uses. Tech cards are the bridge between
+ * a roster and the timing system: they carry the member number (the only truly
+ * stable identity), the personal car number a racer may run instead of their
+ * roster-assigned one, and the track team they entered under.
+ */
+export interface EtTechCardRef {
+  memberNumber: string;
+  /** Track code, uppercased. A hint only — the roster decides team membership. */
+  trackTeam: string;
+  carKey: string;
+  nameKey: string;
+  looseKey: string;
+}
+
+/**
+ * Index tech cards by each handle the timing system might show. A handle
+ * claimed by two different member numbers is dropped rather than guessed —
+ * personal car numbers do repeat across the division.
+ */
+function indexTechCards(cards: EtTechCardRef[]): {
+  byCar: Map<string, EtTechCardRef>;
+  byName: Map<string, EtTechCardRef>;
+  byLoose: Map<string, EtTechCardRef>;
+  byMember: Map<string, EtTechCardRef>;
+} {
+  const build = (keyOf: (c: EtTechCardRef) => string): Map<string, EtTechCardRef> => {
+    const map = new Map<string, EtTechCardRef>();
+    const conflicted = new Set<string>();
+    for (const card of cards) {
+      const key = keyOf(card);
+      if (!key) continue;
+      const existing = map.get(key);
+      if (existing && existing.memberNumber !== card.memberNumber) conflicted.add(key);
+      else if (!existing) map.set(key, card);
+    }
+    for (const key of conflicted) map.delete(key);
+    return map;
+  };
+  return {
+    byCar: build((c) => c.carKey),
+    byName: build((c) => c.nameKey),
+    byLoose: build((c) => c.looseKey),
+    byMember: build((c) => c.memberNumber),
+  };
+}
+
 export function computeEtFinalsStandings(
   runs: RunRow[],
   rosters: EtFinalsRoster[],
   config: EtFinalsConfig,
-  /** Optional car number -> member number map, from tech cards. */
-  memberByCar?: Map<string, string>,
+  /** Tech cards, when any have been loaded. Optional — matching degrades to
+   *  name and car number without them. */
+  techCards: EtTechCardRef[] = [],
 ): EtFinalsStandings {
   const pointsPerWin = config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1;
 
@@ -372,34 +484,69 @@ export function computeEtFinalsStandings(
   const byName = new Map<string, Bucket>();
   const byNameAnyDivision = new Map<string, Bucket>();
   const byMember = new Map<string, Bucket>();
+  const byLoose = new Map<string, Bucket>();
+  const byLooseAnyDivision = new Map<string, Bucket>();
   // Roster entry key: track + board + slot. Deliberately free of the car
   // number, so correcting a roster's number doesn't orphan a manual pin.
   const manualEntries = new Map<string, RosterIndexEntry>();
   const entryKeys = new Map<EtRosterEntry, string>();
 
+  const tech = indexTechCards(techCards);
+
+  // Roster entry -> its stable key, so eligibility overrides and manual pins
+  // can be looked up by the same handle everywhere below.
+  const keyForEntry = new Map<EtRosterEntry, string>();
+  const isEligible = (entry: EtRosterEntry): boolean =>
+    config.eligibilityOverrides?.[keyForEntry.get(entry) || ""] ?? entry.points_eligible;
+
   for (const roster of rosters) {
     for (const entry of roster.entries) {
-      const ref: RosterIndexEntry = { entry, roster };
       let key = `${roster.track_code}|${entry.division}|${entry.slot}`;
       // A sheet with duplicate slot numbers would otherwise collapse two
       // racers onto one row; suffix the later ones in sheet order.
       for (let n = 2; manualEntries.has(key); n++) {
         key = `${roster.track_code}|${entry.division}|${entry.slot}#${n}`;
       }
+      const ref: RosterIndexEntry = {
+        entry,
+        roster,
+        eligible: config.eligibilityOverrides?.[key] ?? entry.points_eligible,
+      };
       manualEntries.set(key, ref);
       entryKeys.set(entry, key);
-      const car = normalizeCarKey(entry.car_number);
-      if (car) {
+      keyForEntry.set(entry, key);
+
+      const member = (entry.member_number || "").trim();
+      if (member) addToBucket(byMember, member, ref);
+
+      // Car numbers this entry could appear under: the roster-assigned one,
+      // plus the personal number on their tech card. Racers are told to display
+      // the roster number, but the timing system frequently carries whichever
+      // one they registered with, so index both.
+      const cars = new Set<string>();
+      const rosterCar = normalizeCarKey(entry.car_number);
+      if (rosterCar) cars.add(rosterCar);
+      const card = member ? tech.byMember.get(member) : undefined;
+      if (card?.carKey) cars.add(card.carKey);
+      for (const car of cars) {
         addToBucket(byCar, `${entry.division}|${car}`, ref);
         addToBucket(byCarAnyDivision, car, ref);
       }
-      const nameKey = normalizeNameKey(entry.name);
-      if (nameKey) {
+
+      // Names: the roster spelling plus the tech-card spelling, which is often
+      // the one the timing system echoes.
+      const nameKeys = new Set([normalizeNameKey(entry.name), card?.nameKey || ""]);
+      for (const nameKey of nameKeys) {
+        if (!nameKey) continue;
         addToBucket(byName, `${entry.division}|${nameKey}`, ref);
         addToBucket(byNameAnyDivision, nameKey, ref);
       }
-      const member = (entry.member_number || "").trim();
-      if (member) addToBucket(byMember, member, ref);
+      const looseKeys = new Set([looseNameKey(entry.name), card?.looseKey || ""]);
+      for (const looseKey of looseKeys) {
+        if (!looseKey) continue;
+        addToBucket(byLoose, `${entry.division}|${looseKey}`, ref);
+        addToBucket(byLooseAnyDivision, looseKey, ref);
+      }
     }
   }
 
@@ -525,6 +672,7 @@ export function computeEtFinalsStandings(
     // the wrong team's board. A manual pin set on the page beats all of it.
     const carKey = normalizeCarKey(agg.car_number);
     const nameKey = normalizeNameKey(agg.name);
+    const looseKey = looseNameKey(agg.name);
     let ref: RosterIndexEntry | "ambiguous" | null = null;
     let matchedBy: "car" | "name" | "member" | "manual" = "name";
     let sawAmbiguous = false;
@@ -548,22 +696,40 @@ export function computeEtFinalsStandings(
       config.manualMatches?.[agg.identity];
     if (manualTarget) take(manualEntries.get(manualTarget) ?? null, "manual");
 
-    if (!ref) {
-      const member = memberByCar?.get(`${agg.category}|${carKey}`) || memberByCar?.get(carKey);
-      if (member) take(resolveBucket(byMember.get(member.trim())), "member");
+    // Find this racer's tech card from whatever the timing system shows. It
+    // supplies the member number (the strongest route) and the track team,
+    // which breaks ties a name or car number alone can't.
+    const card =
+      tech.byCar.get(carKey) ||
+      tech.byName.get(nameKey) ||
+      tech.byLoose.get(looseKey) ||
+      undefined;
+    const teamHint = card?.trackTeam || "";
+
+    if (!ref && card?.memberNumber) {
+      take(resolveBucket(byMember.get(card.memberNumber), teamHint), "member");
     }
     if (!ref) {
       take(
-        resolveBucket(byName.get(`${agg.division}|${nameKey}`)) ??
-          resolveBucket(byNameAnyDivision.get(nameKey)),
+        resolveBucket(byName.get(`${agg.division}|${nameKey}`), teamHint) ??
+          resolveBucket(byNameAnyDivision.get(nameKey), teamHint),
         "name",
       );
     }
     if (!ref) {
       take(
-        resolveBucket(byCar.get(`${agg.division}|${carKey}`)) ??
-          resolveBucket(byCarAnyDivision.get(carKey)),
+        resolveBucket(byCar.get(`${agg.division}|${carKey}`), teamHint) ??
+          resolveBucket(byCarAnyDivision.get(carKey), teamHint),
         "car",
+      );
+    }
+    // Last resort: surname plus initials, for a racer the timing system lists
+    // under a shortened or differently-spelled first name.
+    if (!ref && looseKey) {
+      take(
+        resolveBucket(byLoose.get(`${agg.division}|${looseKey}`), teamHint) ??
+          resolveBucket(byLooseAnyDivision.get(looseKey), teamHint),
+        "name",
       );
     }
 
@@ -576,6 +742,8 @@ export function computeEtFinalsStandings(
         division: agg.division,
         roundsWon,
         reason: sawAmbiguous ? "ambiguous" : "no_roster_entry",
+        techTeam: teamHint,
+        memberNumber: card?.memberNumber || "",
       });
       continue;
     }
@@ -611,7 +779,7 @@ export function computeEtFinalsStandings(
       rank: 0,
       bigEntries: roster.entries.filter((e) => e.division === "big").length,
       jrEntries: roster.entries.filter((e) => e.division === "jr").length,
-      jrPointsEntries: roster.entries.filter((e) => e.division === "jr" && e.points_eligible).length,
+      jrPointsEntries: roster.entries.filter((e) => e.division === "jr" && isEligible(e)).length,
       racersScoring: 0,
       racersStillAlive: 0,
       byCategory: [],
@@ -630,7 +798,7 @@ export function computeEtFinalsStandings(
         division: entry.division,
         roster_category: entry.category,
         categories: [],
-        points_eligible: entry.points_eligible,
+        points_eligible: isEligible(entry),
         points: 0,
         roundsWon: 0,
         status: "not_entered",
@@ -655,7 +823,7 @@ export function computeEtFinalsStandings(
 
     // Only eligible racers put points on the board; ineligible junior entries
     // still get their rounds recorded so the team page shows they raced.
-    const award = s.ref.entry.points_eligible ? s.points : 0;
+    const award = s.ref.eligible ? s.points : 0;
 
     racer.run_car_number = racer.run_car_number || s.agg.car_number;
     racer.matchedBy = racer.matchedBy || s.matchedBy;
@@ -734,7 +902,7 @@ export function computeEtFinalsStandings(
       trackCode: roster.track_code,
       division: entry.division,
       rosterCarNumber: entry.car_number,
-      eligible: entry.points_eligible,
+      eligible: isEligible(entry),
     })),
   );
   rosterOptions.sort(

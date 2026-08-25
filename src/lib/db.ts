@@ -12,7 +12,10 @@ import {
 import {
   computeEtFinalsStandings,
   emptyEtFinalsConfig,
+  looseNameKey,
   normalizeCarKey,
+  normalizeNameKey,
+  type EtTechCardRef,
   type EtFinalsConfig,
   type EtFinalsRoster,
   type EtFinalsStandings,
@@ -2329,6 +2332,14 @@ export interface TechCardEntry {
   payee_city?: string;
   payee_state?: string;
   payee_zip?: string;
+  // Team the racer entered under, from the divisional ET tech-card export's
+  // `trackteam` column (an NHRA track code like "LV"). Their track team's
+  // roster is still what decides who scores; this is an identity hint, used to
+  // break a tie when a name or car number would otherwise match two teams.
+  track_team?: string;
+  // "Team 1" / "Team 2" / "Alternate" from the same export, for tracks fielding
+  // more than one team.
+  team_slot?: string;
 }
 
 export async function saveTechCards(entries: TechCardEntry[]): Promise<{ saved: number; skipped: number }> {
@@ -3302,6 +3313,7 @@ export async function getEtFinalsConfig(eventCode: string, season: string): Prom
         ? data.pointsPerRoundWin
         : 1,
       manualMatches: (data.manualMatches as Record<string, string>) || {},
+      eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
     };
   } catch (err) {
     console.error("[DB] Failed to load ET Finals config:", err);
@@ -3324,6 +3336,7 @@ export async function saveEtFinalsConfig(
       buybackRounds: config.buybackRounds || {},
       pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
       manualMatches: config.manualMatches || {},
+      eligibilityOverrides: config.eligibilityOverrides || {},
       updated_at: new Date().toISOString(),
     },
     { merge: true },
@@ -3331,31 +3344,34 @@ export async function saveEtFinalsConfig(
 }
 
 /**
- * Car number -> member number, from whatever tech cards have been loaded.
- * Optional: it only sharpens roster matching for racers whose name or car
- * number on the roster doesn't line up with what the timing system shows.
- * A car number claimed by more than one member is dropped rather than guessed.
+ * Tech cards reshaped for the ET Finals matcher. Tech cards are the bridge
+ * between a roster and the timing system: the member number is the only truly
+ * stable identity, and the card also carries the personal car number a racer
+ * may run instead of their roster-assigned one plus the track team they entered
+ * under. Cards missing a member number are dropped — without it a card can't
+ * anchor anything.
  */
-async function buildMemberByCar(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const ambiguous = new Set<string>();
+async function buildEtTechCardRefs(): Promise<EtTechCardRef[]> {
   try {
     const cards = await getAllTechCards();
+    const refs: EtTechCardRef[] = [];
     for (const card of cards) {
-      const member = (card.member_number || "").trim();
-      const car = normalizeCarKey(card.car_number);
-      if (!member || !car) continue;
-      const existing = map.get(car);
-      if (existing && existing !== member) ambiguous.add(car);
-      else map.set(car, member);
-      const scoped = `${(card.class_name || card.category || "").trim()}|${car}`;
-      if (!map.has(scoped)) map.set(scoped, member);
+      const memberNumber = (card.member_number || "").trim();
+      if (!memberNumber) continue;
+      const name = [card.first_name, card.last_name].filter(Boolean).join(" ").trim();
+      refs.push({
+        memberNumber,
+        trackTeam: (card.track_team || "").trim().toUpperCase(),
+        carKey: normalizeCarKey(card.car_number),
+        nameKey: normalizeNameKey(name),
+        looseKey: looseNameKey(name),
+      });
     }
-    for (const car of ambiguous) map.delete(car);
+    return refs;
   } catch (err) {
-    console.error("[DB] Failed to build member-by-car index:", err);
+    console.error("[DB] Failed to build ET Finals tech card index:", err);
+    return [];
   }
-  return map;
 }
 
 export async function getEtFinalsStandings(
@@ -3374,7 +3390,7 @@ export async function getEtFinalsStandings(
   const seasonRosters = rostersAll.filter((r) => (r.season || "").trim() === (season || "").trim());
   const rosters = seasonRosters.length > 0 ? seasonRosters : rostersAll;
 
-  const memberByCar = await buildMemberByCar();
-  const standings = computeEtFinalsStandings(runs, rosters, config, memberByCar);
+  const techCards = await buildEtTechCardRefs();
+  const standings = computeEtFinalsStandings(runs, rosters, config, techCards);
   return { ...standings, config, rosterCount: rosters.length };
 }
