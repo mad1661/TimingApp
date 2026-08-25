@@ -55,6 +55,15 @@ The app is effectively a client SPA. `LiveDataProvider` (React context, `src/com
 - **`/contacts` (Contacts & Mailing)** reads `GET /api/tech-cards?all=1` and **collapses many tech-card rows into one `Contact` per person** (by member number, merging categories/email/phone/address). It offers year/category/division/event filters and bulk actions: print **mailing labels** (opens a print window with a 3-column Avery-5160-style grid), **copy emails**, **copy phones**, and a **mailto bcc** link. It's a fully client-side page — no contacts-specific API route.
 - Tech cards also feed no-show detection: `getMissingFromEliminations()` in db.ts cross-references entered cars against actual runs, matching scrape categories (e.g. "SUPER STREET") to tech-card class codes (e.g. "SST") via `CATEGORY_CODE_TABLE`.
 
+### ET Finals Points D1
+
+Team points for the Summit Racing Series E.T. Finals / JDRL divisional championship, at `/et-finals`.
+
+- **Rosters** — one combined workbook per track (sheets `Team & Instructions`, `Summit ET Roster`, `JDRL & Jr Street`), uploaded on the page and parsed by `parseEtFinalsRosterWorkbook` (`src/lib/et-finals-parse.ts`) into the `et_finals_rosters` collection, one doc per `{season}_{trackCode}`. Every Summit E.T. entry scores; on the junior sheet only rows 1-10 score, rows 11+ enter but never earn. The parser repairs Excel's date-mangled age brackets (`12-Oct` → `10-12`) and stamps a resolved track code onto rows that left the cell blank.
+- **Scoring** — `computeEtFinalsStandings` (`src/lib/et-finals.ts`, pure, no firebase import) gives 1 point per **main-race** round win and freezes a racer's points at their first main-race loss. Winning the buy-back puts them back on track but never back on the points board, so their later main-race wins score nothing (`racedAfterElimination` marks them). Big-car and junior points are tallied separately; the overall standing is the two combined.
+- **Class setup** — which timing-system class is the main race, the buy-back, or not scored at all is per-event config in `et_finals_configs` (`{eventCode}_{season}`), along with each class's points board (big/jr). Unconfigured classes fall back to a name-based guess. Buy-back classes are optional — some events don't run one. A track that runs the second chance as an extra round of the *same* class uses the per-category `buybackRounds` list instead.
+- **Matching** roster entries to runs goes member number (via tech cards) → car number → name, scoped by division first because a junior `1LV` and a Super ET `1LV` are different cars. A key that spans two teams is reported as unmatched rather than guessed; the page surfaces every unmatched racer so roster typos are visible.
+
 ### Domain glossary
 
 - **Rounds**: `Q*` qualifying, `E*` eliminations, `T*` time trials/test, `F` final (`roundSortKey` / `roundSortWeight` order them).

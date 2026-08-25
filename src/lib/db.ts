@@ -9,6 +9,14 @@ import {
   type CategoryKind,
   type ComboAssignment,
 } from "./class-elims";
+import {
+  computeEtFinalsStandings,
+  emptyEtFinalsConfig,
+  normalizeCarKey,
+  type EtFinalsConfig,
+  type EtFinalsRoster,
+  type EtFinalsStandings,
+} from "./et-finals";
 
 // --------------- Types ---------------
 
@@ -3231,4 +3239,140 @@ export async function getClassElimBreakdown(
     excludedCars,
     config,
   };
+}
+
+// --------------- ET Finals Points D1 ---------------
+// Team points for the Summit E.T. Finals / JDRL divisional championship.
+// Rosters are stored per track (one document per team per season) and the
+// main-race/buy-back class mapping is stored per event. The scoring itself
+// lives in et-finals.ts so it stays pure and testable.
+
+const ET_FINALS_ROSTERS = "et_finals_rosters";
+const ET_FINALS_CONFIGS = "et_finals_configs";
+
+function etRosterDocId(season: string, trackCode: string): string {
+  const code = (trackCode || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "") || "UNKNOWN";
+  return `${(season || "").trim()}_${code}`;
+}
+
+export async function saveEtFinalsRoster(roster: EtFinalsRoster): Promise<string> {
+  const db = getDb();
+  const id = etRosterDocId(roster.season, roster.track_code);
+  // Replace rather than merge: a re-uploaded roster is the new truth, and a
+  // merge would leave entries that were deleted from the sheet behind.
+  await db.collection(ET_FINALS_ROSTERS).doc(id).set({ ...roster, id });
+  return id;
+}
+
+export async function getEtFinalsRosters(season?: string): Promise<EtFinalsRoster[]> {
+  try {
+    const db = getDb();
+    const snap = await db.collection(ET_FINALS_ROSTERS).get();
+    const rosters: EtFinalsRoster[] = [];
+    snap.forEach((doc) => {
+      const data = doc.data() as EtFinalsRoster;
+      if (season && (data.season || "").trim() !== season.trim()) return;
+      rosters.push({ ...data, id: doc.id, entries: Array.isArray(data.entries) ? data.entries : [] });
+    });
+    rosters.sort((a, b) => (a.team_name || a.track_code).localeCompare(b.team_name || b.track_code));
+    return rosters;
+  } catch (err) {
+    console.error("[DB] Failed to load ET Finals rosters:", err);
+    return [];
+  }
+}
+
+export async function deleteEtFinalsRoster(id: string): Promise<void> {
+  const db = getDb();
+  await db.collection(ET_FINALS_ROSTERS).doc(id).delete();
+}
+
+export async function getEtFinalsConfig(eventCode: string, season: string): Promise<EtFinalsConfig> {
+  const fallback = emptyEtFinalsConfig();
+  try {
+    const db = getDb();
+    const doc = await db.collection(ET_FINALS_CONFIGS).doc(`${eventCode}_${season}`).get();
+    if (!doc.exists) return fallback;
+    const data = doc.data() || {};
+    return {
+      categoryRoles: (data.categoryRoles as EtFinalsConfig["categoryRoles"]) || {},
+      categoryDivision: (data.categoryDivision as EtFinalsConfig["categoryDivision"]) || {},
+      buybackRounds: (data.buybackRounds as Record<string, string[]>) || {},
+      pointsPerRoundWin: typeof data.pointsPerRoundWin === "number" && data.pointsPerRoundWin > 0
+        ? data.pointsPerRoundWin
+        : 1,
+    };
+  } catch (err) {
+    console.error("[DB] Failed to load ET Finals config:", err);
+    return fallback;
+  }
+}
+
+export async function saveEtFinalsConfig(
+  eventCode: string,
+  season: string,
+  config: EtFinalsConfig,
+): Promise<void> {
+  const db = getDb();
+  await db.collection(ET_FINALS_CONFIGS).doc(`${eventCode}_${season}`).set(
+    {
+      event_code: eventCode,
+      season,
+      categoryRoles: config.categoryRoles || {},
+      categoryDivision: config.categoryDivision || {},
+      buybackRounds: config.buybackRounds || {},
+      pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
+      updated_at: new Date().toISOString(),
+    },
+    { merge: true },
+  );
+}
+
+/**
+ * Car number -> member number, from whatever tech cards have been loaded.
+ * Optional: it only sharpens roster matching for racers whose name or car
+ * number on the roster doesn't line up with what the timing system shows.
+ * A car number claimed by more than one member is dropped rather than guessed.
+ */
+async function buildMemberByCar(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  try {
+    const cards = await getAllTechCards();
+    for (const card of cards) {
+      const member = (card.member_number || "").trim();
+      const car = normalizeCarKey(card.car_number);
+      if (!member || !car) continue;
+      const existing = map.get(car);
+      if (existing && existing !== member) ambiguous.add(car);
+      else map.set(car, member);
+      const scoped = `${(card.class_name || card.category || "").trim()}|${car}`;
+      if (!map.has(scoped)) map.set(scoped, member);
+    }
+    for (const car of ambiguous) map.delete(car);
+  } catch (err) {
+    console.error("[DB] Failed to build member-by-car index:", err);
+  }
+  return map;
+}
+
+export async function getEtFinalsStandings(
+  eventCode: string,
+  season: string,
+): Promise<EtFinalsStandings & { config: EtFinalsConfig; rosterCount: number }> {
+  const [runs, rostersAll, config] = await Promise.all([
+    getEventRuns(eventCode, season),
+    getEtFinalsRosters(),
+    getEtFinalsConfig(eventCode, season),
+  ]);
+  tagRunTimestamps(runs);
+
+  // Prefer rosters filed under this season; fall back to every roster on file
+  // so a season mismatch in a submitted template doesn't blank the standings.
+  const seasonRosters = rostersAll.filter((r) => (r.season || "").trim() === (season || "").trim());
+  const rosters = seasonRosters.length > 0 ? seasonRosters : rostersAll;
+
+  const memberByCar = await buildMemberByCar();
+  const standings = computeEtFinalsStandings(runs, rosters, config, memberByCar);
+  return { ...standings, config, rosterCount: rosters.length };
 }
