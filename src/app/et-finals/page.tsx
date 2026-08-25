@@ -376,6 +376,20 @@ export default function EtFinalsPage() {
     return [...data.teams].sort((a, b) => pointsOf(b) - pointsOf(a) || a.team_name.localeCompare(b.team_name));
   }, [data, view]);
 
+  const techPlaced = useMemo(
+    () => (data?.teams || []).reduce((n, t) => n + t.racersFromTechCards, 0),
+    [data],
+  );
+  const jrTechPlaced = useMemo(
+    () =>
+      (data?.teams || []).reduce(
+        (n, t) =>
+          n + t.racers.filter((r) => r.source === "tech_card" && r.division === "jr").length,
+        0,
+      ),
+    [data],
+  );
+
   const mainCategories = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
@@ -405,7 +419,7 @@ export default function EtFinalsPage() {
     if (!data) return;
     downloadCsv(
       `et-finals-points-d1-racers-${eventCode}-${season}.csv`,
-      ["Team", "Track Code", "Division", "Roster Class", "Car #", "Driver", "Points", "Rounds Won", "Status", "Out In", "Eligible"],
+      ["Team", "Track Code", "Division", "Roster Class", "Car #", "Driver", "Points", "Rounds Won", "Status", "Out In", "Eligible", "Source"],
       data.teams.flatMap((t) =>
         t.racers.map((r) => [
           t.team_name,
@@ -419,6 +433,7 @@ export default function EtFinalsPage() {
           r.status,
           r.eliminatedIn || "",
           r.points_eligible ? "Yes" : "No",
+          r.source === "tech_card" ? "Tech card" : "Roster",
         ]),
       ),
     );
@@ -483,7 +498,11 @@ export default function EtFinalsPage() {
             { label: "Big Cars", value: data.totals.bigPoints, accent: "text-white" },
             { label: "Jrs", value: data.totals.jrPoints, accent: "text-white" },
             { label: "Combined", value: data.totals.totalPoints, accent: "text-nhra-red" },
-            { label: "Teams", value: data.teams.length, accent: "text-white" },
+            {
+              label: "Teams",
+              value: data.teams.length,
+              accent: "text-white",
+            },
           ].map((s) => (
             <div key={s.label} className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
               <div className="text-xs uppercase tracking-wider text-gray-500 mb-1">{s.label}</div>
@@ -494,6 +513,26 @@ export default function EtFinalsPage() {
       )}
 
       {/* ── Setup warnings ─────────────────────────────────────────────── */}
+      {data && techPlaced > 0 && (
+        <div className="mb-6 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 text-sm">
+          <span className="text-white font-semibold">{techPlaced}</span>
+          <span className="text-gray-400">
+            {" "}
+            racer{techPlaced === 1 ? "" : "s"} placed on a team by their tech card&apos;s team code,
+            with no roster entry claiming them.
+          </span>
+          {jrTechPlaced > 0 && (
+            <span className="text-gray-400">
+              {" "}
+              <span className="text-yellow-500 font-semibold">{jrTechPlaced}</span> of them{" "}
+              {jrTechPlaced === 1 ? "is a junior and earns" : "are juniors and earn"} nothing yet —
+              only roster rows 1-10 score and there&apos;s no roster here saying which ten, so switch
+              them on individually with the <span className="text-gray-300">Earns</span> toggle in
+              the team drill-down.
+            </span>
+          )}
+        </div>
+      )}
       {data && data.rosterCount === 0 && (
         <div className="mb-6 bg-yellow-500/10 border border-yellow-500/40 text-yellow-500 rounded-xl px-4 py-3 text-sm">
           No team rosters uploaded yet. Nothing can score until at least one roster is loaded — open{" "}
@@ -959,6 +998,14 @@ export default function EtFinalsPage() {
                           <div className="text-[11px] text-gray-500">
                             {team.track_code}
                             {team.captain ? ` · ${team.captain}` : ""}
+                            {!team.hasRoster && (
+                              <span
+                                className="ml-2 text-yellow-600"
+                                title="No roster uploaded for this team — its racers are placed from their tech cards"
+                              >
+                                · tech cards only
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td
@@ -1034,15 +1081,24 @@ export default function EtFinalsPage() {
                                     <td className="py-1.5 text-right text-gray-300">{r.roundsWon}</td>
                                     <td className="py-1.5 text-right font-bold text-white">{r.points}</td>
                                     <td className="py-1.5 text-right text-gray-500">
-                                      {r.matchedBy === "manual"
-                                        ? "pinned"
-                                        : r.matchedBy === "member"
-                                          ? "member #"
-                                          : r.matchedBy === "car"
-                                            ? "car #"
-                                            : r.matchedBy === "name"
-                                              ? "name"
-                                              : "—"}
+                                      {r.source === "tech_card" ? (
+                                        <span
+                                          className="text-yellow-600"
+                                          title="Not on any roster — placed on this team by their tech card's team code"
+                                        >
+                                          tech card
+                                        </span>
+                                      ) : r.matchedBy === "manual" ? (
+                                        "pinned"
+                                      ) : r.matchedBy === "member" ? (
+                                        "member #"
+                                      ) : r.matchedBy === "car" ? (
+                                        "car #"
+                                      ) : r.matchedBy === "name" ? (
+                                        "name"
+                                      ) : (
+                                        "—"
+                                      )}
                                     </td>
                                     <td className="py-1.5 text-right">
                                       <StatusBadge racer={r} />

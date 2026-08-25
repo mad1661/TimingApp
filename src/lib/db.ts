@@ -3597,7 +3597,7 @@ export async function getEtFinalsStandings(
     buildEtTechCardRefs(),
     getEtFinalsTrackCodes(season),
   ]);
-  const standings = computeEtFinalsStandings(runs, rosters, config, techCards);
+  const standings = computeEtFinalsStandings(runs, rosters, config, techCards, trackNames);
   return {
     ...standings,
     config,
