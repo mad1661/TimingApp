@@ -209,6 +209,35 @@ export default function EtFinalsPage() {
     }
   }
 
+  // Force a racer's points eligibility on or off, for when the roster sheet
+  // has it wrong. Saved immediately, like a pin.
+  async function setEligibility(entryKey: string, eligible: boolean | null) {
+    const base = draftConfig ?? data?.config;
+    if (!base || !eventCode || !season) return;
+    const overrides = { ...(base.eligibilityOverrides || {}) };
+    if (eligible === null) delete overrides[entryKey];
+    else overrides[entryKey] = eligible;
+    const next = { ...base, eligibilityOverrides: overrides };
+    setDraftConfig(next);
+    setAssigning(entryKey);
+    try {
+      const res = await fetch("/api/et-finals/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, config: next }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to save");
+      }
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change eligibility");
+    } finally {
+      setAssigning(null);
+    }
+  }
+
   async function saveConfig() {
     if (!draftConfig || !eventCode || !season) return;
     setSavingConfig(true);
@@ -270,6 +299,11 @@ export default function EtFinalsPage() {
     await loadRosters();
     await loadStandings();
   }
+
+  // Marks a racer whose eligibility was set by hand rather than read off the
+  // roster, so an override is never invisible.
+  const overrideFor = (key: string): boolean | undefined =>
+    (draftConfig ?? data?.config)?.eligibilityOverrides?.[key];
 
   const sortedTeams = useMemo(() => {
     if (!data) return [];
@@ -783,6 +817,7 @@ export default function EtFinalsPage() {
                                   <th className="text-right py-1.5 font-medium">Points</th>
                                   <th className="text-right py-1.5 font-medium">Matched</th>
                                   <th className="text-right py-1.5 font-medium">Status</th>
+                                  <th className="text-right py-1.5 font-medium">Earns</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -823,6 +858,25 @@ export default function EtFinalsPage() {
                                     <td className="py-1.5 text-right">
                                       <StatusBadge racer={r} />
                                     </td>
+                                    <td className="py-1.5 text-right">
+                                      <button
+                                        disabled={assigning === r.key}
+                                        onClick={() => setEligibility(r.key, !r.points_eligible)}
+                                        title={
+                                          r.points_eligible
+                                            ? "Mark this racer a non-points earner"
+                                            : "Let this racer earn points again"
+                                        }
+                                        className={`px-2 py-0.5 rounded border text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                                          r.points_eligible
+                                            ? "bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40"
+                                            : "bg-gray-600/20 text-gray-400 border-gray-600/40 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/40"
+                                        }`}
+                                      >
+                                        {overrideFor(r.key) !== undefined ? "★ " : ""}
+                                        {r.points_eligible ? "Yes" : "No"}
+                                      </button>
+                                    </td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -859,6 +913,7 @@ export default function EtFinalsPage() {
                   <th className="text-left px-6 py-2 font-medium">Car #</th>
                   <th className="text-left px-3 py-2 font-medium">Driver</th>
                   <th className="text-left px-3 py-2 font-medium">Class</th>
+                  <th className="text-left px-3 py-2 font-medium">Tech Card Team</th>
                   <th className="text-right px-3 py-2 font-medium">Rounds Won</th>
                   <th className="text-left px-3 py-2 font-medium">Assign To</th>
                   <th className="text-right px-6 py-2 font-medium">Reason</th>
@@ -870,6 +925,15 @@ export default function EtFinalsPage() {
                     <td className="px-6 py-2 text-gray-300">{u.car_number || "—"}</td>
                     <td className="px-3 py-2 text-white">{u.name || "—"}</td>
                     <td className="px-3 py-2 text-gray-400">{u.category}</td>
+                    <td className="px-3 py-2 text-gray-400">
+                      {u.techTeam ? (
+                        <span title={u.memberNumber ? `Member #${u.memberNumber}` : undefined}>
+                          {u.techTeam}
+                        </span>
+                      ) : (
+                        <span className="text-gray-600">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right text-gray-300">{u.roundsWon}</td>
                     <td className="px-3 py-2">
                       <select
@@ -883,6 +947,13 @@ export default function EtFinalsPage() {
                         </option>
                         {(data.rosterOptions || [])
                           .filter((o) => o.division === u.division)
+                          // Their tech card's team first — that is almost
+                          // always the roster they belong on.
+                          .sort((a, b) =>
+                            u.techTeam
+                              ? Number(b.trackCode === u.techTeam) - Number(a.trackCode === u.techTeam)
+                              : 0,
+                          )
                           .map((o) => (
                             <option key={o.key} value={o.key}>
                               {o.team} · {o.label}
