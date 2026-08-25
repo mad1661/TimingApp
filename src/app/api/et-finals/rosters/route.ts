@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteEtFinalsRoster, getEtFinalsRosters, saveEtFinalsRoster } from "@/lib/db";
+import {
+  deleteEtFinalsRoster,
+  getEtFinalsRosters,
+  recodeEtFinalsRoster,
+  saveEtFinalsRoster,
+} from "@/lib/db";
 import { parseEtFinalsRosterWorkbook } from "@/lib/et-finals-parse";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +72,26 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("ET Finals roster upload error:", err);
     return NextResponse.json({ error: "Failed to process roster file" }, { status: 500 });
+  }
+}
+
+// Re-key a roster onto a different track code. Needed when a template arrives
+// with the code cell blank and the roster lands under a guessed code that the
+// tech cards don't share.
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = (await request.json()) as { id?: string; track_code?: string };
+    if (!body.id || !body.track_code) {
+      return NextResponse.json({ error: "id and track_code are required" }, { status: 400 });
+    }
+    const newId = await recodeEtFinalsRoster(body.id, body.track_code);
+    return NextResponse.json({ success: true, id: newId });
+  } catch (err) {
+    console.error("ET Finals roster recode error:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to change the track code" },
+      { status: 500 },
+    );
   }
 }
 

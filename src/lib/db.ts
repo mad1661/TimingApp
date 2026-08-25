@@ -13,6 +13,8 @@ import {
   computeEtFinalsStandings,
   emptyEtFinalsConfig,
   looseNameKey,
+  type EtCategoryRole,
+  type EtDivision,
   normalizeCarKey,
   normalizeNameKey,
   type EtTechCardRef,
@@ -3321,12 +3323,70 @@ export async function getEtFinalsConfig(eventCode: string, season: string): Prom
   }
 }
 
+const ET_FINALS_CLASS_DEFAULTS = "et_finals_class_defaults";
+
+/**
+ * Remembered class setup, by class name, across every event in a season.
+ * Without this each new race starts blank and the whole main-race / buy-back
+ * mapping has to be redone, which is both tedious and easy to get wrong
+ * mid-event. An event's own saved choices always win; these only fill the gaps.
+ */
+export interface EtFinalsClassDefaults {
+  categoryRoles: Record<string, EtCategoryRole>;
+  categoryDivision: Record<string, EtDivision>;
+  buybackRounds: Record<string, string[]>;
+}
+
+export async function getEtFinalsClassDefaults(season: string): Promise<EtFinalsClassDefaults> {
+  const empty: EtFinalsClassDefaults = { categoryRoles: {}, categoryDivision: {}, buybackRounds: {} };
+  try {
+    const db = getDb();
+    const doc = await db.collection(ET_FINALS_CLASS_DEFAULTS).doc((season || "").trim()).get();
+    if (!doc.exists) return empty;
+    const data = doc.data() || {};
+    return {
+      categoryRoles: (data.categoryRoles as Record<string, EtCategoryRole>) || {},
+      categoryDivision: (data.categoryDivision as Record<string, EtDivision>) || {},
+      buybackRounds: (data.buybackRounds as Record<string, string[]>) || {},
+    };
+  } catch (err) {
+    console.error("[DB] Failed to load ET Finals class defaults:", err);
+    return empty;
+  }
+}
+
+/**
+ * Fold an event's explicit class choices into the season's remembered defaults,
+ * so the next race at another track starts already configured. Merged rather
+ * than replaced: a class this event didn't run keeps whatever it was last set
+ * to elsewhere.
+ */
+async function rememberEtFinalsClassDefaults(season: string, config: EtFinalsConfig): Promise<void> {
+  try {
+    const existing = await getEtFinalsClassDefaults(season);
+    const merged: EtFinalsClassDefaults = {
+      categoryRoles: { ...existing.categoryRoles, ...(config.categoryRoles || {}) },
+      categoryDivision: { ...existing.categoryDivision, ...(config.categoryDivision || {}) },
+      buybackRounds: { ...existing.buybackRounds, ...(config.buybackRounds || {}) },
+    };
+    const db = getDb();
+    await db
+      .collection(ET_FINALS_CLASS_DEFAULTS)
+      .doc((season || "").trim())
+      .set({ season, ...merged, updated_at: new Date().toISOString() });
+  } catch (err) {
+    // Never fail the event's own save because the defaults couldn't be written.
+    console.error("[DB] Failed to remember ET Finals class defaults:", err);
+  }
+}
+
 export async function saveEtFinalsConfig(
   eventCode: string,
   season: string,
   config: EtFinalsConfig,
 ): Promise<void> {
   const db = getDb();
+  await rememberEtFinalsClassDefaults(season, config);
   await db.collection(ET_FINALS_CONFIGS).doc(`${eventCode}_${season}`).set(
     {
       event_code: eventCode,
@@ -3374,23 +3434,176 @@ async function buildEtTechCardRefs(): Promise<EtTechCardRef[]> {
   }
 }
 
+/**
+ * Display names for track codes. A roster template often arrives with the track
+ * name cell blank, and a tech card only ever gives the bare code, so the name a
+ * team shows up under is editable rather than whatever the spreadsheet happened
+ * to contain. Keyed by track code within one document per season.
+ */
+export interface EtTrackName {
+  track_name: string;
+  team_name: string;
+}
+
+const ET_FINALS_TRACKS = "et_finals_tracks";
+
+export async function getEtFinalsTrackNames(season: string): Promise<Record<string, EtTrackName>> {
+  try {
+    const db = getDb();
+    const doc = await db.collection(ET_FINALS_TRACKS).doc((season || "").trim()).get();
+    const data = doc.data() || {};
+    const tracks = (data.tracks as Record<string, EtTrackName>) || {};
+    const out: Record<string, EtTrackName> = {};
+    for (const [code, v] of Object.entries(tracks)) {
+      out[code.trim().toUpperCase()] = {
+        track_name: (v?.track_name || "").trim(),
+        team_name: (v?.team_name || "").trim(),
+      };
+    }
+    return out;
+  } catch (err) {
+    console.error("[DB] Failed to load ET Finals track names:", err);
+    return {};
+  }
+}
+
+export async function saveEtFinalsTrackNames(
+  season: string,
+  tracks: Record<string, EtTrackName>,
+): Promise<void> {
+  const db = getDb();
+  const clean: Record<string, EtTrackName> = {};
+  for (const [code, v] of Object.entries(tracks || {})) {
+    const key = (code || "").trim().toUpperCase();
+    if (!key) continue;
+    const track_name = (v?.track_name || "").trim();
+    const team_name = (v?.team_name || "").trim();
+    // An entry with nothing in it is a deletion, not a blank override.
+    if (!track_name && !team_name) continue;
+    clean[key] = { track_name, team_name };
+  }
+  // Replace rather than merge, so clearing a name actually clears it.
+  await db
+    .collection(ET_FINALS_TRACKS)
+    .doc((season || "").trim())
+    .set({ season, tracks: clean, updated_at: new Date().toISOString() });
+}
+
+/** Re-key a roster onto a different track code, entries included. */
+export async function recodeEtFinalsRoster(id: string, newTrackCode: string): Promise<string> {
+  const code = (newTrackCode || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  if (!code) throw new Error("A track code is required");
+  const db = getDb();
+  const doc = await db.collection(ET_FINALS_ROSTERS).doc(id).get();
+  if (!doc.exists) throw new Error("Roster not found");
+  const roster = doc.data() as EtFinalsRoster;
+
+  const entries = (roster.entries || []).map((e) => ({
+    ...e,
+    track_code: code,
+    // The car number carries the track code, so it has to move with it.
+    car_number: e.vehicle_number ? `${e.vehicle_number}${code}` : e.car_number,
+  }));
+
+  const updated: EtFinalsRoster = { ...roster, track_code: code, entries };
+  const newId = await saveEtFinalsRoster(updated);
+  if (newId !== id) await db.collection(ET_FINALS_ROSTERS).doc(id).delete();
+  return newId;
+}
+
+/**
+ * Every track code in play — the ones rosters were filed under plus the ones
+ * only tech cards mention — so a code can be named before its roster arrives.
+ */
+export async function getEtFinalsTrackCodes(season: string): Promise<
+  { code: string; hasRoster: boolean; techCardCount: number }[]
+> {
+  const [rosters, cards] = await Promise.all([getEtFinalsRosters(season), getAllTechCards()]);
+  const codes = new Map<string, { hasRoster: boolean; techCardCount: number }>();
+  const touch = (raw: string) => {
+    const code = (raw || "").trim().toUpperCase();
+    if (!code) return null;
+    let e = codes.get(code);
+    if (!e) codes.set(code, (e = { hasRoster: false, techCardCount: 0 }));
+    return e;
+  };
+  for (const r of rosters) {
+    const e = touch(r.track_code);
+    if (e) e.hasRoster = true;
+  }
+  for (const c of cards) {
+    const e = touch(c.track_team || "");
+    if (e) e.techCardCount++;
+  }
+  return Array.from(codes.entries())
+    .map(([code, v]) => ({ code, ...v }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+}
+
 export async function getEtFinalsStandings(
   eventCode: string,
   season: string,
-): Promise<EtFinalsStandings & { config: EtFinalsConfig; rosterCount: number }> {
-  const [runs, rostersAll, config] = await Promise.all([
+): Promise<
+  EtFinalsStandings & {
+    config: EtFinalsConfig;
+    rosterCount: number;
+    trackNames: Record<string, EtTrackName>;
+    trackCodes: { code: string; hasRoster: boolean; techCardCount: number }[];
+    /** Classes configured from the season's remembered setup, not this event. */
+    classesFromDefaults: string[];
+  }
+> {
+  const [runs, rostersAll, savedConfig, trackNames, classDefaults] = await Promise.all([
     getEventRuns(eventCode, season),
     getEtFinalsRosters(),
     getEtFinalsConfig(eventCode, season),
+    getEtFinalsTrackNames(season),
+    getEtFinalsClassDefaults(season),
   ]);
+
+  // Season defaults fill in classes this event hasn't been told about; the
+  // event's own choices always win.
+  const config: EtFinalsConfig = {
+    ...savedConfig,
+    categoryRoles: { ...classDefaults.categoryRoles, ...savedConfig.categoryRoles },
+    categoryDivision: { ...classDefaults.categoryDivision, ...savedConfig.categoryDivision },
+    buybackRounds: { ...classDefaults.buybackRounds, ...savedConfig.buybackRounds },
+  };
+  // Which classes are running on a remembered default rather than a choice made
+  // for this event, so the page can say so instead of implying it was set here.
+  const fromDefaults = Object.keys(classDefaults.categoryRoles).filter(
+    (cat) => savedConfig.categoryRoles[cat] === undefined,
+  );
   tagRunTimestamps(runs);
 
   // Prefer rosters filed under this season; fall back to every roster on file
   // so a season mismatch in a submitted template doesn't blank the standings.
   const seasonRosters = rostersAll.filter((r) => (r.season || "").trim() === (season || "").trim());
-  const rosters = seasonRosters.length > 0 ? seasonRosters : rostersAll;
+  const rosterSet = seasonRosters.length > 0 ? seasonRosters : rostersAll;
 
-  const techCards = await buildEtTechCardRefs();
+  // Apply the track directory before scoring, so the chosen names flow through
+  // the standings, the drill-downs and the exports alike.
+  const rosters = rosterSet.map((r) => {
+    const override = trackNames[(r.track_code || "").trim().toUpperCase()];
+    if (!override) return r;
+    return {
+      ...r,
+      track_name: override.track_name || r.track_name,
+      team_name: override.team_name || override.track_name || r.team_name,
+    };
+  });
+
+  const [techCards, trackCodes] = await Promise.all([
+    buildEtTechCardRefs(),
+    getEtFinalsTrackCodes(season),
+  ]);
   const standings = computeEtFinalsStandings(runs, rosters, config, techCards);
-  return { ...standings, config, rosterCount: rosters.length };
+  return {
+    ...standings,
+    config,
+    rosterCount: rosters.length,
+    trackNames,
+    trackCodes,
+    classesFromDefaults: fromDefaults,
+  };
 }

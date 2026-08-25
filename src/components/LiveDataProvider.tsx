@@ -15,8 +15,14 @@ export interface LiveConfig {
   racingStartHour?: number;
   pmStart?: boolean;
   categoryAliases?: Record<string, string>;
-  /** Live data source. "scraper" = getresults.nhradata.com (default); "api" = official api.nhra.com. */
-  dataSource?: "api" | "scraper";
+  /**
+   * Live data source. "scraper" = getresults.nhradata.com (default);
+   * "api" = official api.nhra.com; "edata" = CompuLink EData files uploaded on
+   * /edata. EData is a manual import, so on that setting nothing is polled at
+   * all — the uploaded rounds are the only source, and neither getresults nor
+   * the API can overwrite them.
+   */
+  dataSource?: "api" | "scraper" | "edata";
 }
 
 interface LiveDataState {
@@ -29,7 +35,7 @@ interface LiveDataState {
   totalNewRuns: number;
   dataVersion: number;
   setConfig: (config: LiveConfig) => void;
-  setDataSource: (src: "api" | "scraper") => void;
+  setDataSource: (src: "api" | "scraper" | "edata") => void;
   start: () => void;
   stop: () => void;
   fetchNow: () => Promise<void>;
@@ -135,7 +141,16 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
       intervalRef.current = null;
     }
 
-    if (isActive && config && config.username && config.password && config.eventCode) {
+    // On the EData setting the event's runs come from uploaded files, so
+    // polling is skipped entirely rather than merged in.
+    if (
+      isActive &&
+      config &&
+      (config.dataSource ?? "scraper") !== "edata" &&
+      config.username &&
+      config.password &&
+      config.eventCode
+    ) {
       doFetch();
       if (config.intervalSeconds > 0) {
         intervalRef.current = setInterval(doFetch, config.intervalSeconds * 1000);
@@ -154,7 +169,7 @@ export function LiveDataProvider({ children }: { children: ReactNode }) {
 
   // Flip the live data source and persist it. Changing config re-runs the
   // polling effect, so the next fetch immediately uses the new source.
-  const setDataSource = useCallback((src: "api" | "scraper") => {
+  const setDataSource = useCallback((src: "api" | "scraper" | "edata") => {
     const cur = configRef.current;
     if (!cur) return;
     const next = { ...cur, dataSource: src };
