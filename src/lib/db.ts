@@ -3316,6 +3316,7 @@ export async function getEtFinalsConfig(eventCode: string, season: string): Prom
         : 1,
       manualMatches: (data.manualMatches as Record<string, string>) || {},
       eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
+      scoringDates: Array.isArray(data.scoringDates) ? (data.scoringDates as string[]) : [],
     };
   } catch (err) {
     console.error("[DB] Failed to load ET Finals config:", err);
@@ -3397,6 +3398,7 @@ export async function saveEtFinalsConfig(
       pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
       manualMatches: config.manualMatches || {},
       eligibilityOverrides: config.eligibilityOverrides || {},
+      scoringDates: config.scoringDates || [],
       updated_at: new Date().toISOString(),
     },
     { merge: true },

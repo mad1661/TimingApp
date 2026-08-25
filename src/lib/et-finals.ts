@@ -103,6 +103,13 @@ export interface EtFinalsConfig {
    * shouldn't be scoring, or the reverse. `false` = earns nothing.
    */
   eligibilityOverrides: Record<string, boolean>;
+  /**
+   * Days whose runs count towards points, as "YYYY-MM-DD". Empty means every
+   * day. A track often runs more than one event under a single event code —
+   * the divisional alongside its own weekly program — and only some of those
+   * days are the E.T. Finals.
+   */
+  scoringDates: string[];
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
@@ -113,6 +120,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     pointsPerRoundWin: 1,
     manualMatches: {},
     eligibilityOverrides: {},
+    scoringDates: [],
   };
 }
 
@@ -226,6 +234,11 @@ export interface EtFinalsStandings {
   totals: { bigPoints: number; jrPoints: number; totalPoints: number };
   /** Main-race rounds that have run, in order, for the progress readout. */
   roundsScored: string[];
+  /**
+   * Every day the event has runs on, whether or not it is currently scoring —
+   * so days can be picked without having to guess what is in the data.
+   */
+  days: { date: string; runCount: number; categories: string[]; scoring: boolean }[];
   /** Every roster entry, for the manual-assignment picker on the page. */
   rosterOptions: {
     key: string;
@@ -254,18 +267,21 @@ export function normalizeCarKey(v: string | null | undefined): string {
  * parentheses, generational suffixes, and lone initials — all of which appear
  * in one source and not the other for the same racer.
  */
-function nameTokens(raw: string | null | undefined): string[] {
+function nameTokens(raw: string | null | undefined, keepInitials = false): string[] {
   const cleaned = (raw || "")
     .toUpperCase()
     .replace(/"[^"]*"/g, " ")
     .replace(/'[^']*'/g, " ")
     .replace(/\([^)]*\)/g, " ")
     .replace(/[^A-Z\s]/g, " ");
-  return cleaned
+  const tokens = cleaned
     .split(/\s+/)
     .filter(Boolean)
-    .filter((t) => !NAME_SUFFIXES.has(t))
-    .filter((t) => t.length > 1);
+    .filter((t) => !NAME_SUFFIXES.has(t));
+  // The exact key drops lone initials, because one source writes "Robert W
+  // Bates" and the other "Bates, Robert". The loose key keeps them — an
+  // initial is the only thing it has to work with for "A Beecher".
+  return keepInitials ? tokens : tokens.filter((t) => t.length > 1);
 }
 
 /**
@@ -286,7 +302,7 @@ export function normalizeNameKey(raw: string | null | undefined): string {
  * exactly one racer.
  */
 export function looseNameKey(raw: string | null | undefined): string {
-  const tokens = nameTokens(raw);
+  const tokens = nameTokens(raw, true);
   if (tokens.length < 2) return "";
   const surname = tokens.reduce((a, b) => (b.length > a.length ? b : a));
   const initials = tokens
@@ -309,6 +325,20 @@ export function guessCategoryRole(category: string): EtCategoryRole {
 }
 
 // --------------- Round helpers ---------------
+
+/**
+ * The calendar day a run happened, as "YYYY-MM-DD", read straight off the
+ * timestamp's leading date. Deliberately string-based: constructing a Date
+ * would drag timezone conversion into what is just a label.
+ */
+export function runDateKey(timestamp: string | null | undefined): string {
+  const m = (timestamp || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return "";
+  let year = parseInt(m[3], 10);
+  if (year < 100) year += 2000;
+  const p = (n: string) => n.padStart(2, "0");
+  return `${year}-${p(m[1])}-${p(m[2])}`;
+}
 
 /** E1 before E2 before ... before F. Non-elimination rounds sort last. */
 export function elimRoundOrder(round: string): number {
@@ -453,7 +483,7 @@ function indexTechCards(cards: EtTechCardRef[]): {
 }
 
 export function computeEtFinalsStandings(
-  runs: RunRow[],
+  allRuns: RunRow[],
   rosters: EtFinalsRoster[],
   config: EtFinalsConfig,
   /** Tech cards, when any have been loaded. Optional — matching degrades to
@@ -464,6 +494,40 @@ export function computeEtFinalsStandings(
   trackNames: Record<string, { track_name: string; team_name: string }> = {},
 ): EtFinalsStandings {
   const pointsPerWin = config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1;
+
+  // ── Scoring days ──────────────────────────────────────────────────────────
+  // Catalogue every day in the data before filtering, so the page can offer
+  // days that are currently switched off.
+  const dayStats = new Map<string, { runCount: number; categories: Set<string> }>();
+  for (const run of allRuns) {
+    const date = runDateKey(run.timestamp);
+    if (!date) continue;
+    let d = dayStats.get(date);
+    if (!d) dayStats.set(date, (d = { runCount: 0, categories: new Set() }));
+    d.runCount++;
+    if (run.category) d.categories.add(run.category.trim());
+  }
+
+  const selectedDates = new Set((config.scoringDates || []).filter(Boolean));
+  const days = Array.from(dayStats.entries())
+    .map(([date, d]) => ({
+      date,
+      runCount: d.runCount,
+      categories: Array.from(d.categories).sort(),
+      scoring: selectedDates.size === 0 || selectedDates.has(date),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // With no days chosen, everything counts — a single-event weekend needs no
+  // setup. Runs with no parseable date are kept either way rather than
+  // silently dropped.
+  const runs =
+    selectedDates.size === 0
+      ? allRuns
+      : allRuns.filter((r) => {
+          const date = runDateKey(r.timestamp);
+          return !date || selectedDates.has(date);
+        });
 
   // ── Category roles ────────────────────────────────────────────────────────
   const catStats = new Map<string, { runCount: number; rounds: Set<string> }>();
@@ -563,6 +627,28 @@ export function computeEtFinalsStandings(
         addToBucket(byLoose, `${entry.division}|${looseKey}`, ref);
         addToBucket(byLooseAnyDivision, looseKey, ref);
       }
+    }
+  }
+
+  // The tech card carries the racer's own car number, which is usually not the
+  // number the roster assigned them and not what the timing system shows. So
+  // every car number a member is known by is registered against their card:
+  // whichever number comes down the track now resolves to a member number, and
+  // from there to an exact roster entry. Without this, a racer running their
+  // roster-assigned number matches only on that number, and the member link —
+  // the one identity that never changes — is never reached.
+  for (const roster of rosters) {
+    for (const entry of roster.entries) {
+      const member = (entry.member_number || "").trim();
+      if (!member) continue;
+      const card = tech.byMember.get(member);
+      if (!card) continue;
+      const rosterCar = normalizeCarKey(entry.car_number);
+      if (!rosterCar) continue;
+      const claimed = tech.byCar.get(rosterCar);
+      // Don't let one team's roster number hijack another member's card.
+      if (claimed && claimed.memberNumber !== member) continue;
+      if (!claimed) tech.byCar.set(rosterCar, card);
     }
   }
 
@@ -1029,6 +1115,7 @@ export function computeEtFinalsStandings(
     teams: standings,
     unmatched,
     categories,
+    days,
     rosterOptions,
     totals: {
       bigPoints: standings.reduce((s, t) => s + t.bigPoints, 0),

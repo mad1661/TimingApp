@@ -24,6 +24,15 @@ type StandingsResponse = EtFinalsStandings & {
   classesFromDefaults: string[];
 };
 
+function formatDay(date: string): string {
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return date;
+  // Built from the parts rather than parsed, so the label can't shift a day
+  // in a timezone west of the track.
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
 interface RosterSummary {
   id: string;
   track_code: string;
@@ -116,6 +125,8 @@ export default function EtFinalsPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [showSetup, setShowSetup] = useState(false);
+  const [showDays, setShowDays] = useState(false);
+  const [savingDays, setSavingDays] = useState(false);
   const [showTracks, setShowTracks] = useState(false);
   const [draftTracks, setDraftTracks] = useState<Record<string, TrackName> | null>(null);
   const [savingTracks, setSavingTracks] = useState(false);
@@ -343,6 +354,43 @@ export default function EtFinalsPage() {
     await loadStandings();
   }
 
+  // Days are saved as they're toggled — the point is to watch the standings
+  // change as the right days are picked.
+  async function toggleScoringDay(date: string) {
+    const base = draftConfig ?? data?.config;
+    if (!base || !eventCode || !season) return;
+    const current = new Set(base.scoringDates || []);
+    // An empty list means "every day", so the first click has to start from
+    // every day being on, or unchecking one would switch all the others off.
+    if (current.size === 0) for (const d of data?.days || []) current.add(d.date);
+    if (current.has(date)) current.delete(date);
+    else current.add(date);
+    // Back to every day selected is the same as no filter at all.
+    const allDates = (data?.days || []).map((d) => d.date);
+    const next = {
+      ...base,
+      scoringDates: current.size === allDates.length ? [] : Array.from(current).sort(),
+    };
+    setDraftConfig(next);
+    setSavingDays(true);
+    try {
+      const res = await fetch("/api/et-finals/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, config: next }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to save");
+      }
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change scoring days");
+    } finally {
+      setSavingDays(false);
+    }
+  }
+
   function setTrackField(code: string, field: keyof TrackName, value: string) {
     const base = draftTracks ?? data?.trackNames ?? {};
     const existing = base[code] || { track_name: "", team_name: "" };
@@ -480,6 +528,28 @@ export default function EtFinalsPage() {
     [data],
   );
 
+  // How each racer on the board was linked. Member number is the identity that
+  // never changes, so seeing how many came through that route is the quickest
+  // read on whether the tech cards are doing their job.
+  const linkRoutes = useMemo(() => {
+    const counts = { member: 0, manual: 0, name: 0, car: 0 };
+    for (const t of data?.teams || []) {
+      for (const r of t.racers) {
+        if (!r.run_car_number || !r.matchedBy) continue;
+        if (r.matchedBy === "member") counts.member++;
+        else if (r.matchedBy === "manual") counts.manual++;
+        else if (r.matchedBy === "name") counts.name++;
+        else if (r.matchedBy === "car") counts.car++;
+      }
+    }
+    return counts;
+  }, [data]);
+
+  const scoringDayCount = useMemo(
+    () => (data?.days || []).filter((d) => d.scoring).length,
+    [data],
+  );
+
   const mainCategories = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
@@ -602,6 +672,35 @@ export default function EtFinalsPage() {
         </div>
       )}
 
+      {/* ── How racers were linked ─────────────────────────────────────── */}
+      {data &&
+        linkRoutes.member + linkRoutes.manual + linkRoutes.name + linkRoutes.car > 0 && (
+          <div className="mb-6 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 text-sm flex flex-wrap items-center gap-x-5 gap-y-1">
+            <span className="text-xs uppercase tracking-wider text-gray-500">Linked by</span>
+            <span className="text-gray-300">
+              <span className="text-white font-semibold">{linkRoutes.member}</span> member number
+            </span>
+            {linkRoutes.name > 0 && (
+              <span className="text-gray-400">
+                <span className="text-gray-300 font-semibold">{linkRoutes.name}</span> name
+              </span>
+            )}
+            {linkRoutes.car > 0 && (
+              <span className="text-gray-400">
+                <span className="text-gray-300 font-semibold">{linkRoutes.car}</span> car number
+              </span>
+            )}
+            {linkRoutes.manual > 0 && (
+              <span className="text-gray-400">
+                <span className="text-gray-300 font-semibold">{linkRoutes.manual}</span> pinned by hand
+              </span>
+            )}
+            <span className="text-[11px] text-gray-600">
+              Member number is tried first — upload tech cards to link more racers that way.
+            </span>
+          </div>
+        )}
+
       {/* ── Setup warnings ─────────────────────────────────────────────── */}
       {data && techPlaced > 0 && (
         <div className="mb-6 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 text-sm">
@@ -641,6 +740,66 @@ export default function EtFinalsPage() {
           .
         </div>
       )}
+
+      {/* ── Scoring days ───────────────────────────────────────────────── */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+        <button
+          onClick={() => setShowDays((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        >
+          <div>
+            <h2 className="text-white font-bold">Scoring Days</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {scoringDayCount === 0 || scoringDayCount === (data?.days || []).length
+                ? `All ${(data?.days || []).length || ""} day${(data?.days || []).length === 1 ? "" : "s"} count`
+                : `${scoringDayCount} of ${(data?.days || []).length} days count`}
+            </p>
+          </div>
+          <span className="text-gray-400 text-sm">{showDays ? "Hide" : "Choose"}</span>
+        </button>
+
+        {showDays && (
+          <div className="border-t border-nhra-border">
+            <div className="px-6 py-3 bg-nhra-darker/50 text-xs text-gray-400 leading-relaxed">
+              A track often runs more than one event under a single event code. Pick the days that
+              are the E.T. Finals and everything else is left out of the points — runs on the other
+              days stay in the app, they just stop scoring. With nothing picked, every day counts.
+            </div>
+            <div className="divide-y divide-nhra-border/60">
+              {(data?.days || []).map((d) => (
+                <label
+                  key={d.date}
+                  className="flex items-center gap-3 px-6 py-3 cursor-pointer hover:bg-nhra-darker/40"
+                >
+                  <input
+                    type="checkbox"
+                    checked={d.scoring}
+                    disabled={savingDays}
+                    onChange={() => toggleScoringDay(d.date)}
+                    className="accent-nhra-red w-4 h-4"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-sm font-medium ${d.scoring ? "text-white" : "text-gray-500"}`}>
+                      {formatDay(d.date)}
+                      <span className="ml-2 text-[11px] text-gray-600">{d.date}</span>
+                    </div>
+                    <div className="text-[11px] text-gray-500 truncate">
+                      {d.runCount} run{d.runCount === 1 ? "" : "s"}
+                      {d.categories.length > 0 && ` · ${d.categories.slice(0, 6).join(", ")}`}
+                      {d.categories.length > 6 && ` +${d.categories.length - 6} more`}
+                    </div>
+                  </div>
+                </label>
+              ))}
+              {(data?.days || []).length === 0 && (
+                <div className="px-6 py-8 text-center text-gray-500 text-sm">
+                  No runs loaded for this event yet.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ── Track names ────────────────────────────────────────────────── */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
