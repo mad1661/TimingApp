@@ -66,6 +66,15 @@ Team points for the Summit Racing Series E.T. Finals / JDRL divisional champions
 - **Matching** roster entries to runs is **name-first**: manual pin → member number (via tech cards) → name → car number, scoped by division first because a junior `1LV` and a Super ET `1LV` are different cars. What the timing system shows is authoritative — the number a racer actually runs often isn't the one the roster assigned them, so matching on the car number first would put a racer's round wins on the wrong team's board whenever a stale roster number has been reassigned. A key that spans two teams is resolved by the tech card's `trackteam` when that singles one out, and otherwise reported as unmatched rather than guessed; the page lists every unmatched racer with a picker to pin them onto a roster entry (stored in `manualMatches`, keyed `{category}|{carKey||nameKey}` → `{trackCode}|{division}|{slot}`), and flags any racer whose roster car number differs from the one they're running.
 - **Eligibility overrides** — `eligibilityOverrides` in the same config (roster entry key → boolean) forces a racer's points eligibility on or off when the roster sheet has it wrong, toggled per racer in the team drill-down. Everything that reads eligibility goes through `isEligible()` so an override applies to scoring, the roster counts and the exports alike.
 
+### EData import (timing-system fallback)
+
+`/edata` loads elimination results straight from CompuLink StarTrak **EData** files (`C##EDAT.TXT`) — the timing system's own export — for when getresults is down or lagging. Parsed by `parseEdataFile` (`src/lib/edata-parse.ts`), posted to `/api/edata`, stored through the normal `insertRuns` path.
+
+- **Winners are implicit in the ordering**: within a round the rows are consecutive pairs, winner first; a bye is a lone row followed by a `SINGLE,<member#>` marker. Verified against the sample files by re-deriving every winner from the timing data (breakouts, red lights, no-shows) — 140 pairs, zero disagreements. The parser writes `result` `W`/`L` explicitly so nothing downstream re-derives it.
+- Twelve comma-separated fields: car, member #, class, qual pos, driver, city/state, vehicle, engine, RT, dial/index, ET, MPH. Files are DOS-era (CRLF plus `0x1A` padding) and read as **latin1**.
+- EData has **no clock times and no lanes**, but the rest of the app identifies a pass by its timestamp (dedup keys, pair grouping, ordering all use it). Each pass therefore gets a *synthetic* timestamp derived only from round + pair position + a per-category offset, so both cars in a pair share one and a re-import reproduces it exactly (idempotent). These are ordering markers, not wall-clock times — the page says so.
+- **`dataSource: "edata"`** (LiveConfig, switchable in the navbar or on the page) stops `LiveDataProvider` polling entirely, so nothing from getresults or the API can overwrite the imported rounds.
+
 ### Domain glossary
 
 - **Rounds**: `Q*` qualifying, `E*` eliminations, `T*` time trials/test, `F` final (`roundSortKey` / `roundSortWeight` order them).
