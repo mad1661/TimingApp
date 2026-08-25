@@ -480,6 +480,23 @@ export default function EtFinalsPage() {
     [data],
   );
 
+  // How each racer on the board was linked. Member number is the identity that
+  // never changes, so seeing how many came through that route is the quickest
+  // read on whether the tech cards are doing their job.
+  const linkRoutes = useMemo(() => {
+    const counts = { member: 0, manual: 0, name: 0, car: 0 };
+    for (const t of data?.teams || []) {
+      for (const r of t.racers) {
+        if (!r.run_car_number || !r.matchedBy) continue;
+        if (r.matchedBy === "member") counts.member++;
+        else if (r.matchedBy === "manual") counts.manual++;
+        else if (r.matchedBy === "name") counts.name++;
+        else if (r.matchedBy === "car") counts.car++;
+      }
+    }
+    return counts;
+  }, [data]);
+
   const mainCategories = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
@@ -601,6 +618,35 @@ export default function EtFinalsPage() {
           ))}
         </div>
       )}
+
+      {/* ── How racers were linked ─────────────────────────────────────── */}
+      {data &&
+        linkRoutes.member + linkRoutes.manual + linkRoutes.name + linkRoutes.car > 0 && (
+          <div className="mb-6 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 text-sm flex flex-wrap items-center gap-x-5 gap-y-1">
+            <span className="text-xs uppercase tracking-wider text-gray-500">Linked by</span>
+            <span className="text-gray-300">
+              <span className="text-white font-semibold">{linkRoutes.member}</span> member number
+            </span>
+            {linkRoutes.name > 0 && (
+              <span className="text-gray-400">
+                <span className="text-gray-300 font-semibold">{linkRoutes.name}</span> name
+              </span>
+            )}
+            {linkRoutes.car > 0 && (
+              <span className="text-gray-400">
+                <span className="text-gray-300 font-semibold">{linkRoutes.car}</span> car number
+              </span>
+            )}
+            {linkRoutes.manual > 0 && (
+              <span className="text-gray-400">
+                <span className="text-gray-300 font-semibold">{linkRoutes.manual}</span> pinned by hand
+              </span>
+            )}
+            <span className="text-[11px] text-gray-600">
+              Member number is tried first — upload tech cards to link more racers that way.
+            </span>
+          </div>
+        )}
 
       {/* ── Setup warnings ─────────────────────────────────────────────── */}
       {data && techPlaced > 0 && (

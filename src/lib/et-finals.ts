@@ -254,18 +254,21 @@ export function normalizeCarKey(v: string | null | undefined): string {
  * parentheses, generational suffixes, and lone initials — all of which appear
  * in one source and not the other for the same racer.
  */
-function nameTokens(raw: string | null | undefined): string[] {
+function nameTokens(raw: string | null | undefined, keepInitials = false): string[] {
   const cleaned = (raw || "")
     .toUpperCase()
     .replace(/"[^"]*"/g, " ")
     .replace(/'[^']*'/g, " ")
     .replace(/\([^)]*\)/g, " ")
     .replace(/[^A-Z\s]/g, " ");
-  return cleaned
+  const tokens = cleaned
     .split(/\s+/)
     .filter(Boolean)
-    .filter((t) => !NAME_SUFFIXES.has(t))
-    .filter((t) => t.length > 1);
+    .filter((t) => !NAME_SUFFIXES.has(t));
+  // The exact key drops lone initials, because one source writes "Robert W
+  // Bates" and the other "Bates, Robert". The loose key keeps them — an
+  // initial is the only thing it has to work with for "A Beecher".
+  return keepInitials ? tokens : tokens.filter((t) => t.length > 1);
 }
 
 /**
@@ -286,7 +289,7 @@ export function normalizeNameKey(raw: string | null | undefined): string {
  * exactly one racer.
  */
 export function looseNameKey(raw: string | null | undefined): string {
-  const tokens = nameTokens(raw);
+  const tokens = nameTokens(raw, true);
   if (tokens.length < 2) return "";
   const surname = tokens.reduce((a, b) => (b.length > a.length ? b : a));
   const initials = tokens
@@ -563,6 +566,28 @@ export function computeEtFinalsStandings(
         addToBucket(byLoose, `${entry.division}|${looseKey}`, ref);
         addToBucket(byLooseAnyDivision, looseKey, ref);
       }
+    }
+  }
+
+  // The tech card carries the racer's own car number, which is usually not the
+  // number the roster assigned them and not what the timing system shows. So
+  // every car number a member is known by is registered against their card:
+  // whichever number comes down the track now resolves to a member number, and
+  // from there to an exact roster entry. Without this, a racer running their
+  // roster-assigned number matches only on that number, and the member link —
+  // the one identity that never changes — is never reached.
+  for (const roster of rosters) {
+    for (const entry of roster.entries) {
+      const member = (entry.member_number || "").trim();
+      if (!member) continue;
+      const card = tech.byMember.get(member);
+      if (!card) continue;
+      const rosterCar = normalizeCarKey(entry.car_number);
+      if (!rosterCar) continue;
+      const claimed = tech.byCar.get(rosterCar);
+      // Don't let one team's roster number hijack another member's card.
+      if (claimed && claimed.memberNumber !== member) continue;
+      if (!claimed) tech.byCar.set(rosterCar, card);
     }
   }
 
