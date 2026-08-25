@@ -3301,6 +3301,7 @@ export async function getEtFinalsConfig(eventCode: string, season: string): Prom
       pointsPerRoundWin: typeof data.pointsPerRoundWin === "number" && data.pointsPerRoundWin > 0
         ? data.pointsPerRoundWin
         : 1,
+      manualMatches: (data.manualMatches as Record<string, string>) || {},
     };
   } catch (err) {
     console.error("[DB] Failed to load ET Finals config:", err);
@@ -3322,6 +3323,7 @@ export async function saveEtFinalsConfig(
       categoryDivision: config.categoryDivision || {},
       buybackRounds: config.buybackRounds || {},
       pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
+      manualMatches: config.manualMatches || {},
       updated_at: new Date().toISOString(),
     },
     { merge: true },

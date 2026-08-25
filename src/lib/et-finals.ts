@@ -84,10 +84,24 @@ export interface EtFinalsConfig {
   buybackRounds: Record<string, string[]>;
   /** Points awarded per main-race round win. Defaults to 1. */
   pointsPerRoundWin: number;
+  /**
+   * Hand-assigned matches for racers the automatic matching can't place —
+   * a nickname in the timing system, a married name, a car running a number
+   * nobody's roster claims. Maps a timing-system racer identity
+   * (`${category}|${carKey || nameKey}`) to a roster entry key
+   * (`${trackCode}|${division}|${slot}`). Beats every automatic route.
+   */
+  manualMatches: Record<string, string>;
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
-  return { categoryRoles: {}, categoryDivision: {}, buybackRounds: {}, pointsPerRoundWin: 1 };
+  return {
+    categoryRoles: {},
+    categoryDivision: {},
+    buybackRounds: {},
+    pointsPerRoundWin: 1,
+    manualMatches: {},
+  };
 }
 
 export type EtRacerStatus =
@@ -130,7 +144,7 @@ export interface EtRacerPoints {
    * flat points total.
    */
   racedAfterElimination: boolean;
-  matchedBy: "car" | "name" | "member" | null;
+  matchedBy: "car" | "name" | "member" | "manual" | null;
   rounds: EtRoundResult[];
 }
 
@@ -161,6 +175,8 @@ export interface EtTeamStanding {
 
 /** A racer seen in a scoring class that no roster entry claims. */
 export interface EtUnmatchedRacer {
+  /** Stable handle for this racer, to hand back as a manual match. */
+  identity: string;
   name: string;
   car_number: string;
   category: string;
@@ -184,6 +200,16 @@ export interface EtFinalsStandings {
   totals: { bigPoints: number; jrPoints: number; totalPoints: number };
   /** Main-race rounds that have run, in order, for the progress readout. */
   roundsScored: string[];
+  /** Every roster entry, for the manual-assignment picker on the page. */
+  rosterOptions: {
+    key: string;
+    label: string;
+    team: string;
+    trackCode: string;
+    division: EtDivision;
+    rosterCarNumber: string;
+    eligible: boolean;
+  }[];
 }
 
 // --------------- Normalization + matching keys ---------------
@@ -297,6 +323,8 @@ interface RunnerAggregate {
   car_number: string;
   category: string;
   division: EtDivision;
+  /** Car number if the timing system gave one, else the normalized name. */
+  identity: string;
   runs: RunRow[];
 }
 
@@ -344,10 +372,22 @@ export function computeEtFinalsStandings(
   const byName = new Map<string, Bucket>();
   const byNameAnyDivision = new Map<string, Bucket>();
   const byMember = new Map<string, Bucket>();
+  // Roster entry key: track + board + slot. Deliberately free of the car
+  // number, so correcting a roster's number doesn't orphan a manual pin.
+  const manualEntries = new Map<string, RosterIndexEntry>();
+  const entryKeys = new Map<EtRosterEntry, string>();
 
   for (const roster of rosters) {
     for (const entry of roster.entries) {
       const ref: RosterIndexEntry = { entry, roster };
+      let key = `${roster.track_code}|${entry.division}|${entry.slot}`;
+      // A sheet with duplicate slot numbers would otherwise collapse two
+      // racers onto one row; suffix the later ones in sheet order.
+      for (let n = 2; manualEntries.has(key); n++) {
+        key = `${roster.track_code}|${entry.division}|${entry.slot}#${n}`;
+      }
+      manualEntries.set(key, ref);
+      entryKeys.set(entry, key);
       const car = normalizeCarKey(entry.car_number);
       if (car) {
         addToBucket(byCar, `${entry.division}|${car}`, ref);
@@ -385,6 +425,7 @@ export function computeEtFinalsStandings(
           car_number: (run.car_number || "").trim(),
           category: cat,
           division: divisionFor(cat),
+          identity: ident,
           runs: [],
         }),
       );
@@ -475,50 +516,66 @@ export function computeEtFinalsStandings(
       }
     }
 
-    // Match to a roster entry: member number (via tech cards) first, then the
-    // car number, then the name.
+    // Match to a roster entry. What the timing system shows is the truth, and
+    // the number a racer actually runs often isn't the one the roster assigned
+    // them — so the NAME leads, and the car number is only a fallback for a
+    // racer whose name is spelled differently in the two places. Matching on
+    // the car number first would be worse than useless: a stale roster number
+    // that some other racer is now running would put that racer's round wins on
+    // the wrong team's board. A manual pin set on the page beats all of it.
     const carKey = normalizeCarKey(agg.car_number);
     const nameKey = normalizeNameKey(agg.name);
     let ref: RosterIndexEntry | "ambiguous" | null = null;
-    let matchedBy: "car" | "name" | "member" = "car";
+    let matchedBy: "car" | "name" | "member" | "manual" = "name";
+    let sawAmbiguous = false;
 
-    const member = memberByCar?.get(`${agg.category}|${carKey}`) || memberByCar?.get(carKey);
-    if (member) {
-      const r = resolveBucket(byMember.get(member.trim()));
-      if (r && r !== "ambiguous") {
-        ref = r;
-        matchedBy = "member";
+    const take = (
+      r: RosterIndexEntry | "ambiguous" | null,
+      by: "car" | "name" | "member" | "manual",
+    ): boolean => {
+      if (r === "ambiguous") {
+        sawAmbiguous = true;
+        return false;
       }
+      if (!r) return false;
+      ref = r;
+      matchedBy = by;
+      return true;
+    };
+
+    const manualTarget =
+      config.manualMatches?.[`${agg.category}|${agg.identity}`] ??
+      config.manualMatches?.[agg.identity];
+    if (manualTarget) take(manualEntries.get(manualTarget) ?? null, "manual");
+
+    if (!ref) {
+      const member = memberByCar?.get(`${agg.category}|${carKey}`) || memberByCar?.get(carKey);
+      if (member) take(resolveBucket(byMember.get(member.trim())), "member");
     }
     if (!ref) {
-      const r =
-        resolveBucket(byCar.get(`${agg.division}|${carKey}`)) ??
-        resolveBucket(byCarAnyDivision.get(carKey));
-      if (r) {
-        ref = r;
-        matchedBy = "car";
-      }
-    }
-    if (!ref || ref === "ambiguous") {
-      const r =
+      take(
         resolveBucket(byName.get(`${agg.division}|${nameKey}`)) ??
-        resolveBucket(byNameAnyDivision.get(nameKey));
-      if (r && r !== "ambiguous") {
-        ref = r;
-        matchedBy = "name";
-      } else if (r === "ambiguous" && !ref) {
-        ref = "ambiguous";
-      }
+          resolveBucket(byNameAnyDivision.get(nameKey)),
+        "name",
+      );
+    }
+    if (!ref) {
+      take(
+        resolveBucket(byCar.get(`${agg.division}|${carKey}`)) ??
+          resolveBucket(byCarAnyDivision.get(carKey)),
+        "car",
+      );
     }
 
-    if (!ref || ref === "ambiguous") {
+    if (!ref) {
       unmatched.push({
+        identity: `${agg.category}|${agg.identity}`,
         name: agg.name,
         car_number: agg.car_number,
         category: agg.category,
         division: agg.division,
         roundsWon,
-        reason: ref === "ambiguous" ? "ambiguous" : "no_roster_entry",
+        reason: sawAmbiguous ? "ambiguous" : "no_roster_entry",
       });
       continue;
     }
@@ -540,8 +597,7 @@ export function computeEtFinalsStandings(
   const teams = new Map<string, EtTeamStanding>();
   const racerByKey = new Map<string, EtRacerPoints>();
 
-  const entryKey = (roster: EtFinalsRoster, entry: EtRosterEntry) =>
-    `${roster.track_code}|${entry.division}|${entry.slot}|${normalizeCarKey(entry.car_number)}`;
+  const entryKey = (_roster: EtFinalsRoster, entry: EtRosterEntry) => entryKeys.get(entry) || "";
 
   for (const roster of rosters) {
     const team: EtTeamStanding = {
@@ -670,10 +726,26 @@ export function computeEtFinalsStandings(
     (a, b) => b.roundsWon - a.roundsWon || a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
   );
 
+  const rosterOptions = rosters.flatMap((roster) =>
+    roster.entries.map((entry) => ({
+      key: entryKeys.get(entry) || "",
+      label: `${entry.name}${entry.car_number ? ` (${entry.car_number})` : ""} — ${entry.category || "?"}`,
+      team: roster.team_name || roster.track_name || roster.track_code,
+      trackCode: roster.track_code,
+      division: entry.division,
+      rosterCarNumber: entry.car_number,
+      eligible: entry.points_eligible,
+    })),
+  );
+  rosterOptions.sort(
+    (a, b) => a.team.localeCompare(b.team) || a.division.localeCompare(b.division) || a.label.localeCompare(b.label),
+  );
+
   return {
     teams: standings,
     unmatched,
     categories,
+    rosterOptions,
     totals: {
       bigPoints: standings.reduce((s, t) => s + t.bigPoints, 0),
       jrPoints: standings.reduce((s, t) => s + t.jrPoints, 0),
