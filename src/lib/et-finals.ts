@@ -69,6 +69,10 @@ export interface EtFinalsRoster {
   entries: EtRosterEntry[];
   source_file: string;
   uploaded_at: string;
+  /** Sheets the parser read, and which board each was taken as. Diagnostic. */
+  sheets_used?: string[];
+  /** Every sheet in the uploaded workbook, for when none looked like a roster. */
+  sheets_seen?: string[];
 }
 
 export interface EtFinalsConfig {
