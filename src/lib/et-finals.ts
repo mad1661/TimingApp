@@ -69,6 +69,10 @@ export interface EtFinalsRoster {
   entries: EtRosterEntry[];
   source_file: string;
   uploaded_at: string;
+  /** Sheets the parser read, and which board each was taken as. Diagnostic. */
+  sheets_used?: string[];
+  /** Every sheet in the uploaded workbook, for when none looked like a roster. */
+  sheets_seen?: string[];
 }
 
 export interface EtFinalsConfig {
@@ -153,6 +157,11 @@ export interface EtRacerPoints {
    */
   racedAfterElimination: boolean;
   matchedBy: "car" | "name" | "member" | "manual" | null;
+  /**
+   * "roster" = claimed by a submitted roster entry. "tech_card" = no roster
+   * claimed them, so they were placed on the team their tech card names.
+   */
+  source: "roster" | "tech_card";
   rounds: EtRoundResult[];
 }
 
@@ -177,6 +186,10 @@ export interface EtTeamStanding {
   jrPointsEntries: number;
   racersScoring: number;
   racersStillAlive: number;
+  /** Racers on this team from their tech card rather than a roster entry. */
+  racersFromTechCards: number;
+  /** False when no roster has been uploaded for this team at all. */
+  hasRoster: boolean;
   byCategory: EtCategoryPoints[];
   racers: EtRacerPoints[];
 }
@@ -446,6 +459,9 @@ export function computeEtFinalsStandings(
   /** Tech cards, when any have been loaded. Optional — matching degrades to
    *  name and car number without them. */
   techCards: EtTechCardRef[] = [],
+  /** Track directory, for naming a team the tech cards bring in with no
+   *  roster of its own. */
+  trackNames: Record<string, { track_name: string; team_name: string }> = {},
 ): EtFinalsStandings {
   const pointsPerWin = config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1;
 
@@ -594,8 +610,20 @@ export function computeEtFinalsStandings(
   }
 
   // ── Score each racer ──────────────────────────────────────────────────────
+  /** A racer placed by their tech card's team code, with no roster entry. */
+  interface TechPlacement {
+    trackCode: string;
+    division: EtDivision;
+    key: string;
+    name: string;
+    carNumber: string;
+    category: string;
+    eligible: boolean;
+  }
+
   interface Scored {
-    ref: RosterIndexEntry;
+    ref: RosterIndexEntry | null;
+    tech: TechPlacement | null;
     matchedBy: "car" | "name" | "member";
     agg: RunnerAggregate;
     points: number;
@@ -733,7 +761,29 @@ export function computeEtFinalsStandings(
       );
     }
 
-    if (!ref) {
+    // No roster claims them, but their tech card names a team — that is where
+    // they entered, so put them on it rather than leaving their round wins
+    // scoring for nobody. The roster still wins wherever it has an entry.
+    let techPlacement: TechPlacement | null = null;
+    if (!ref && teamHint) {
+      techPlacement = {
+        trackCode: teamHint,
+        division: agg.division,
+        key: `TECH|${teamHint}|${agg.division}|${agg.identity}`,
+        name: agg.name,
+        carNumber: agg.car_number,
+        category: agg.category,
+        // Every big-car entry earns. Juniors can't be assumed: only roster rows
+        // 1-10 score, and without that roster there is no way to tell which
+        // ten, so a junior placed this way starts as a non-earner and can be
+        // switched on per racer.
+        eligible:
+          config.eligibilityOverrides?.[`TECH|${teamHint}|${agg.division}|${agg.identity}`] ??
+          agg.division === "big",
+      };
+    }
+
+    if (!ref && !techPlacement) {
       unmatched.push({
         identity: `${agg.category}|${agg.identity}`,
         name: agg.name,
@@ -749,8 +799,9 @@ export function computeEtFinalsStandings(
     }
 
     scored.push({
-      ref,
-      matchedBy,
+      ref: ref as RosterIndexEntry | null,
+      tech: techPlacement,
+      matchedBy: techPlacement ? "member" : matchedBy,
       agg,
       points,
       roundsWon,
@@ -782,6 +833,8 @@ export function computeEtFinalsStandings(
       jrPointsEntries: roster.entries.filter((e) => e.division === "jr" && isEligible(e)).length,
       racersScoring: 0,
       racersStillAlive: 0,
+      racersFromTechCards: 0,
+      hasRoster: true,
       byCategory: [],
       racers: [],
     };
@@ -805,6 +858,7 @@ export function computeEtFinalsStandings(
         eliminatedIn: null,
         racedAfterElimination: false,
         matchedBy: null,
+        source: "roster",
         rounds: [],
       };
       racerByKey.set(racer.key, racer);
@@ -814,16 +868,78 @@ export function computeEtFinalsStandings(
 
   const catTotals = new Map<string, Map<string, EtCategoryPoints>>();
 
+  // A team the tech cards name but no roster covers still belongs on the board.
+  const ensureTeam = (trackCode: string): EtTeamStanding => {
+    let team = teams.get(trackCode);
+    if (team) return team;
+    const named = trackNames?.[trackCode];
+    team = {
+      track_code: trackCode,
+      track_name: named?.track_name || trackCode,
+      team_name: named?.team_name || named?.track_name || trackCode,
+      captain: "",
+      bigPoints: 0,
+      jrPoints: 0,
+      totalPoints: 0,
+      rank: 0,
+      bigEntries: 0,
+      jrEntries: 0,
+      jrPointsEntries: 0,
+      racersScoring: 0,
+      racersStillAlive: 0,
+      racersFromTechCards: 0,
+      hasRoster: false,
+      byCategory: [],
+      racers: [],
+    };
+    teams.set(trackCode, team);
+    return team;
+  };
+
   for (const s of scored) {
-    const team = teams.get(s.ref.roster.track_code);
+    const trackCode = s.ref ? s.ref.roster.track_code : s.tech!.trackCode;
+    const team = s.ref ? teams.get(trackCode) : ensureTeam(trackCode);
     if (!team) continue;
-    const key = entryKey(s.ref.roster, s.ref.entry);
-    const racer = racerByKey.get(key);
+
+    const key = s.ref ? entryKey(s.ref.roster, s.ref.entry) : s.tech!.key;
+    let racer = racerByKey.get(key);
+    if (!racer && s.tech) {
+      // First run seen for a tech-card-placed racer: give them a row.
+      racer = {
+        key,
+        name: s.tech.name,
+        roster_car_number: "",
+        run_car_number: s.tech.carNumber,
+        track_code: trackCode,
+        team_name: team.team_name,
+        division: s.tech.division,
+        roster_category: s.tech.category,
+        categories: [],
+        points_eligible: s.tech.eligible,
+        points: 0,
+        roundsWon: 0,
+        status: "not_entered",
+        eliminatedIn: null,
+        racedAfterElimination: false,
+        matchedBy: null,
+        source: "tech_card",
+        rounds: [],
+      };
+      racerByKey.set(key, racer);
+      team.racers.push(racer);
+      team.racersFromTechCards++;
+      if (s.tech.division === "jr") {
+        team.jrEntries++;
+        if (s.tech.eligible) team.jrPointsEntries++;
+      } else {
+        team.bigEntries++;
+      }
+    }
     if (!racer) continue;
 
-    // Only eligible racers put points on the board; ineligible junior entries
-    // still get their rounds recorded so the team page shows they raced.
-    const award = s.ref.eligible ? s.points : 0;
+    // Only eligible racers put points on the board; ineligible entries still
+    // get their rounds recorded so the team page shows they raced.
+    const award = racer.points_eligible ? s.points : 0;
 
     racer.run_car_number = racer.run_car_number || s.agg.car_number;
     racer.matchedBy = racer.matchedBy || s.matchedBy;

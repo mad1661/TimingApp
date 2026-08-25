@@ -49,6 +49,120 @@ function findHeader(grid: Grid, required: string[]): { row: number; cols: Map<st
   return null;
 }
 
+// Column aliases. The 2026 combined template is only one of the layouts these
+// rosters arrive in — 2025 filed the E.T. team as its own workbook with the
+// juniors kept separately — so columns are found by meaning rather than by the
+// exact wording one template happened to use.
+const NAME_COLS = ["driver name", "driver", "racer name", "racer", "name"];
+const FIRST_NAME_COLS = ["first name", "firstname", "first"];
+const LAST_NAME_COLS = ["last name", "lastname", "last"];
+const VEHICLE_COLS = ["vehicle number", "vehicle", "car number", "car", "veh", "number"];
+const MEMBER_COLS = ["member number", "member", "membership", "nhra member"];
+const CATEGORY_COLS = ["class age group", "age group", "category", "class", "bracket", "eliminator"];
+const SLOT_COLS = ["slot", "roster row", "row", "position", "pos"];
+const STATUS_COLS = ["points status", "roster role", "status", "role"];
+const TRACK_COLS = ["track code", "track", "code"];
+// Columns that only ever appear on a junior roster.
+const JR_SIGNAL_COLS = ["dob", "date of birth", "age group", "jr license", "js license", "parent", "guardian", "age"];
+// Sheets that are prose, not data.
+const NON_ROSTER_SHEET_RE = /instruction|note|readme|help|compliance|summary|cover|rules|about/i;
+// Distinct column meanings; a header row must hit several to count as a table.
+const ROSTER_COL_GROUPS: string[][] = [
+  NAME_COLS,
+  FIRST_NAME_COLS,
+  LAST_NAME_COLS,
+  VEHICLE_COLS,
+  MEMBER_COLS,
+  CATEGORY_COLS,
+  SLOT_COLS,
+  STATUS_COLS,
+  TRACK_COLS,
+  ["city"],
+  ["state"],
+  ["phone"],
+  ["email"],
+  ["license"],
+];
+
+function headerHas(cols: Map<string, number>, names: string[]): boolean {
+  return names.some((n) => {
+    const t = norm(n);
+    for (const header of cols.keys()) if (header === t || header.includes(t)) return true;
+    return false;
+  });
+}
+
+interface SheetPlan {
+  sheetName: string;
+  grid: Grid;
+  headerRow: number;
+  cols: Map<string, number>;
+  division: EtDivision;
+}
+
+/**
+ * Find every sheet in the workbook that looks like a roster, and decide whether
+ * each holds big cars or juniors. A sheet qualifies when it has a name column
+ * plus at least one of a vehicle number, a member number or a class — enough to
+ * be a roster and not, say, the instructions tab. Juniors are recognised from
+ * the sheet's own name or from columns that only a junior roster carries (date
+ * of birth, age group, a JR/JS licence, a parent or guardian).
+ */
+function findRosterSheets(workbook: XLSX.WorkBook): SheetPlan[] {
+  const plans: SheetPlan[] = [];
+  for (const sheetName of workbook.SheetNames) {
+    // Prose sheets carry roster-sounding words in their rules text; reading one
+    // as data turns instructions into racers.
+    if (NON_ROSTER_SHEET_RE.test(sheetName)) continue;
+    const grid = readGrid(workbook, sheetName);
+    if (grid.length === 0) continue;
+
+    let found: { row: number; cols: Map<string, number> } | null = null;
+    for (let i = 0; i < Math.min(grid.length, 60); i++) {
+      const row = grid[i] || [];
+      const normed = row.map(norm);
+      const cols = new Map<string, number>();
+      normed.forEach((c, idx) => {
+        if (c && !cols.has(c)) cols.set(c, idx);
+      });
+      const hasName =
+        headerHas(cols, NAME_COLS) ||
+        (headerHas(cols, FIRST_NAME_COLS) && headerHas(cols, LAST_NAME_COLS));
+      if (!hasName) continue;
+      if (
+        !headerHas(cols, VEHICLE_COLS) &&
+        !headerHas(cols, MEMBER_COLS) &&
+        !headerHas(cols, CATEGORY_COLS)
+      ) {
+        continue;
+      }
+      // A real header row names many columns at once. A label/value sheet can
+      // stumble into one or two roster words in a sentence, so require enough
+      // of them together to be a table rather than prose.
+      const matched = ROSTER_COL_GROUPS.filter((g) => headerHas(cols, g)).length;
+      if (matched < 4) continue;
+      found = { row: i, cols };
+      break;
+    }
+    if (!found) continue;
+
+    const nameSaysJr = /\b(jdrl|jr|junior)\b/i.test(sheetName.replace(/[^a-z0-9]+/gi, " "));
+    const colsSayJr = headerHas(found.cols, JR_SIGNAL_COLS);
+    plans.push({
+      sheetName,
+      grid,
+      headerRow: found.row,
+      cols: found.cols,
+      division: nameSaysJr || colsSayJr ? "jr" : "big",
+    });
+  }
+  return plans;
+}
+
+// A junior class is written as an age bracket or as Jr Street, which is how a
+// junior row is recognised on a sheet that mixes both.
+const JR_CATEGORY_RE = /^(\d{1,2}\s*-\s*\d{1,2}|jr\s*street|junior)/i;
+
 function colGetter(row: string[], cols: Map<string, number>) {
   return (...names: string[]): string => {
     for (const name of names) {
@@ -141,73 +255,77 @@ export function parseEtFinalsRosterWorkbook(buffer: Buffer, opts: ParseOptions =
   const workbook = XLSX.read(buffer, { type: "buffer" });
 
   const infoGrid = readGrid(workbook, findSheet(workbook, "team") || workbook.SheetNames[0]);
-  const etGrid = readGrid(workbook, findSheet(workbook, "summit", "roster") || findSheet(workbook, "et roster"));
-  const jrGrid = readGrid(workbook, findSheet(workbook, "jdrl") || findSheet(workbook, "jr"));
 
   const entries: EtRosterEntry[] = [];
-
-  // ── Summit E.T. roster: every filled row earns team points ───────────────
   let etTrackCode = "";
-  const etHeader = findHeader(etGrid, ["slot", "driver name"]);
-  if (etHeader) {
-    for (let i = etHeader.row + 1; i < etGrid.length; i++) {
-      const row = etGrid[i] || [];
-      const get = colGetter(row, etHeader.cols);
-      const name = get("driver name");
-      if (!name) continue;
-      const trackCode = get("track code").toUpperCase();
-      if (trackCode && !etTrackCode) etTrackCode = trackCode;
-      const vehicle = get("vehicle");
-      entries.push({
-        division: "big",
-        slot: parseInt(get("slot"), 10) || i - etHeader.row,
-        roster_role: get("roster role"),
-        points_eligible: true,
-        category: get("category"),
-        vehicle_number: vehicle,
-        track_code: trackCode,
-        car_number: combineCarNumber(vehicle, trackCode),
-        name,
-        city: get("city"),
-        state: get("state"),
-        member_number: get("member "),
-        license_number: get("nhra et license", "license "),
-        phone: get("phone"),
-        email: get("email"),
-      });
-    }
-  }
 
-  // ── JDRL / Jr Street: rows 1-10 earn, rows 11+ enter but never score ─────
-  const jrHeader = findHeader(jrGrid, ["roster row", "driver name"]);
-  if (jrHeader) {
-    for (let i = jrHeader.row + 1; i < jrGrid.length; i++) {
-      const row = jrGrid[i] || [];
-      const get = colGetter(row, jrHeader.cols);
-      const name = get("driver name");
+  // Walk every roster-shaped sheet. The 2026 combined template gives one big-car
+  // sheet and one junior sheet; earlier years filed the E.T. team on its own,
+  // and a sheet can mix both — all three fall out of the same walk.
+  const plans = findRosterSheets(workbook);
+  const sheetsUsed: string[] = [];
+
+  for (const plan of plans) {
+    sheetsUsed.push(`${plan.sheetName} (${plan.division === "jr" ? "juniors" : "big cars"})`);
+    // Juniors are numbered by their position on the sheet, not by a slot column
+    // that older layouts may not have.
+    let jrSeen = 0;
+
+    for (let i = plan.headerRow + 1; i < plan.grid.length; i++) {
+      const row = plan.grid[i] || [];
+      const get = colGetter(row, plan.cols);
+
+      let name = get(...NAME_COLS);
+      if (!name) {
+        const first = get(...FIRST_NAME_COLS);
+        const last = get(...LAST_NAME_COLS);
+        name = [last, first].filter(Boolean).join(", ");
+      }
       if (!name) continue;
-      const slot = parseInt(get("roster row"), 10) || i - jrHeader.row;
-      const status = norm(get("points status"));
-      // The sheet's own "Points Status" column is authoritative; a roster that
-      // left it blank falls back to the rule it encodes — rows 1-10 only.
-      const pointsEligible = status ? status.startsWith("team points") : slot <= 10;
-      const trackCode = get("track code").toUpperCase();
+
+      const rawCategory = get(...CATEGORY_COLS);
+      const category = repairAgeGroup(rawCategory);
+      // A junior row on a mixed sheet gives itself away by its class.
+      const division: EtDivision =
+        plan.division === "jr" || JR_CATEGORY_RE.test(category) ? "jr" : "big";
+
+      const trackCode = get(...TRACK_COLS).toUpperCase();
       if (trackCode && !etTrackCode) etTrackCode = trackCode;
-      const vehicle = get("vehicle");
+      const vehicle = get(...VEHICLE_COLS);
+      const status = norm(get(...STATUS_COLS));
+      const slotRaw = parseInt(get(...SLOT_COLS), 10);
+
+      let slot: number;
+      let pointsEligible: boolean;
+      if (division === "jr") {
+        jrSeen++;
+        slot = Number.isFinite(slotRaw) && slotRaw > 0 ? slotRaw : jrSeen;
+        // The sheet's own points-status column is authoritative where it exists;
+        // otherwise the rule it encodes applies — only the first ten score.
+        pointsEligible = status
+          ? !status.startsWith("non") && !status.includes("non points")
+          : slot <= 10;
+      } else {
+        slot = Number.isFinite(slotRaw) && slotRaw > 0 ? slotRaw : i - plan.headerRow;
+        // Every big-car entry earns, floaters included.
+        pointsEligible = true;
+      }
+
       entries.push({
-        division: "jr",
+        division,
         slot,
-        roster_role: get("points status") || (pointsEligible ? "Team Points" : "Non-Points"),
+        roster_role:
+          get(...STATUS_COLS) || (division === "jr" ? (pointsEligible ? "Team Points" : "Non-Points") : ""),
         points_eligible: pointsEligible,
-        category: repairAgeGroup(get("class age group", "class")),
+        category,
         vehicle_number: vehicle,
         track_code: trackCode,
         car_number: combineCarNumber(vehicle, trackCode),
         name,
         city: get("city"),
         state: get("state"),
-        member_number: get("member "),
-        license_number: get("jr license", "js license", "license "),
+        member_number: get(...MEMBER_COLS),
+        license_number: get("nhra et license", "jr license", "js license", "license"),
         phone: get("phone"),
         email: get("email"),
       });
@@ -250,5 +368,7 @@ export function parseEtFinalsRosterWorkbook(buffer: Buffer, opts: ParseOptions =
     entries,
     source_file: opts.fileName || "",
     uploaded_at: new Date().toISOString(),
+    sheets_used: sheetsUsed,
+    sheets_seen: workbook.SheetNames,
   };
 }

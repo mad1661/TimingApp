@@ -106,6 +106,7 @@ export default function EtFinalsPage() {
   const eventCode = live.config?.eventCode || "";
   const season = live.config?.season || "";
   const eventName = live.config?.eventName || "";
+  const dataSource = live.config?.dataSource ?? "scraper";
 
   const [data, setData] = useState<StandingsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -122,6 +123,17 @@ export default function EtFinalsPage() {
   const [draftConfig, setDraftConfig] = useState<EtFinalsConfig | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [assigning, setAssigning] = useState<string | null>(null);
+
+  const [showTechCards, setShowTechCards] = useState(false);
+  const [techUploading, setTechUploading] = useState(false);
+  const [techMsg, setTechMsg] = useState("");
+  const techRef = useRef<HTMLInputElement>(null);
+
+  const [showEdata, setShowEdata] = useState(false);
+  const [edataUploading, setEdataUploading] = useState(false);
+  const [edataMsg, setEdataMsg] = useState("");
+  const [edataDate, setEdataDate] = useState("");
+  const edataRef = useRef<HTMLInputElement>(null);
 
   const [rosters, setRosters] = useState<RosterSummary[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -164,6 +176,11 @@ export default function EtFinalsPage() {
     loadStandings();
     loadRosters();
   }, [loadStandings, loadRosters, live.dataVersion]);
+
+  useEffect(() => {
+    const start = live.config?.startDate;
+    if (start) setEdataDate((prev) => prev || start.slice(0, 10));
+  }, [live.config?.startDate]);
 
   // The saved config only records classes the user has actually ruled on;
   // everything else shows its auto-guess until they do.
@@ -251,6 +268,79 @@ export default function EtFinalsPage() {
     } finally {
       setAssigning(null);
     }
+  }
+
+  async function handleTechCardUpload(files: File[]) {
+    const valid = files.filter((f) => ["xlsx", "xls", "csv"].includes(f.name.split(".").pop()?.toLowerCase() || ""));
+    if (valid.length === 0) {
+      setTechMsg("Tech card exports are .xlsx / .xls / .csv.");
+      return;
+    }
+    setTechUploading(true);
+    setTechMsg("");
+    const lines: string[] = [];
+    for (const file of valid) {
+      const form = new FormData();
+      form.append("file", file);
+      if (eventName) form.append("event_name", eventName);
+      try {
+        const res = await fetch("/api/tech-cards", { method: "POST", body: form });
+        const body = await res.json();
+        if (!res.ok) lines.push(`${file.name}: ${body.error || "failed"}`);
+        else lines.push(`${file.name}: ${body.saved} saved, ${body.skipped} skipped of ${body.total}`);
+      } catch {
+        lines.push(`${file.name}: network error`);
+      }
+    }
+    setTechMsg(lines.join("\n"));
+    setTechUploading(false);
+    if (techRef.current) techRef.current.value = "";
+    // Tech cards change who matches to which team, so recompute.
+    await loadStandings();
+  }
+
+  async function handleEdataUpload(files: File[]) {
+    const valid = files.filter((f) => /\.(txt|dat)$/i.test(f.name));
+    if (valid.length === 0) {
+      setEdataMsg("EData files are .TXT (C11EDAT.TXT, C12EDAT.TXT, …).");
+      return;
+    }
+    if (!eventCode || !season) {
+      setEdataMsg("Load an event first.");
+      return;
+    }
+    setEdataUploading(true);
+    setEdataMsg("");
+    try {
+      const form = new FormData();
+      for (const f of valid) form.append("files", f);
+      form.append("event_code", eventCode);
+      form.append("season", season);
+      if (edataDate) form.append("race_date", edataDate);
+      if (eventName) form.append("event_name", eventName);
+      if (live.config?.eventType) form.append("event_type", live.config.eventType);
+      const res = await fetch("/api/edata", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Upload failed");
+      setEdataMsg(
+        [
+          `${body.totalInserted} run${body.totalInserted === 1 ? "" : "s"} imported from ${body.files} file${body.files === 1 ? "" : "s"}.`,
+          ...(body.perFile || []).map(
+            (f: { name: string; category: string; rounds: string[]; parsed: number; inserted: number; error?: string }) =>
+              f.error
+                ? `  ${f.name}: ${f.error}`
+                : `  ${f.name} — ${f.category || "?"} · ${f.rounds.join(" ") || "no rounds"} · ${f.inserted} new of ${f.parsed}`,
+          ),
+          ...(body.perFile || []).flatMap((f: { warnings: string[] }) => (f.warnings || []).map((w) => `  ! ${w}`)),
+        ].join("\n"),
+      );
+    } catch (err) {
+      setEdataMsg(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setEdataUploading(false);
+      if (edataRef.current) edataRef.current.value = "";
+    }
+    await loadStandings();
   }
 
   function setTrackField(code: string, field: keyof TrackName, value: string) {
@@ -376,6 +466,20 @@ export default function EtFinalsPage() {
     return [...data.teams].sort((a, b) => pointsOf(b) - pointsOf(a) || a.team_name.localeCompare(b.team_name));
   }, [data, view]);
 
+  const techPlaced = useMemo(
+    () => (data?.teams || []).reduce((n, t) => n + t.racersFromTechCards, 0),
+    [data],
+  );
+  const jrTechPlaced = useMemo(
+    () =>
+      (data?.teams || []).reduce(
+        (n, t) =>
+          n + t.racers.filter((r) => r.source === "tech_card" && r.division === "jr").length,
+        0,
+      ),
+    [data],
+  );
+
   const mainCategories = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
@@ -405,7 +509,7 @@ export default function EtFinalsPage() {
     if (!data) return;
     downloadCsv(
       `et-finals-points-d1-racers-${eventCode}-${season}.csv`,
-      ["Team", "Track Code", "Division", "Roster Class", "Car #", "Driver", "Points", "Rounds Won", "Status", "Out In", "Eligible"],
+      ["Team", "Track Code", "Division", "Roster Class", "Car #", "Driver", "Points", "Rounds Won", "Status", "Out In", "Eligible", "Source"],
       data.teams.flatMap((t) =>
         t.racers.map((r) => [
           t.team_name,
@@ -419,6 +523,7 @@ export default function EtFinalsPage() {
           r.status,
           r.eliminatedIn || "",
           r.points_eligible ? "Yes" : "No",
+          r.source === "tech_card" ? "Tech card" : "Roster",
         ]),
       ),
     );
@@ -483,7 +588,11 @@ export default function EtFinalsPage() {
             { label: "Big Cars", value: data.totals.bigPoints, accent: "text-white" },
             { label: "Jrs", value: data.totals.jrPoints, accent: "text-white" },
             { label: "Combined", value: data.totals.totalPoints, accent: "text-nhra-red" },
-            { label: "Teams", value: data.teams.length, accent: "text-white" },
+            {
+              label: "Teams",
+              value: data.teams.length,
+              accent: "text-white",
+            },
           ].map((s) => (
             <div key={s.label} className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
               <div className="text-xs uppercase tracking-wider text-gray-500 mb-1">{s.label}</div>
@@ -494,6 +603,26 @@ export default function EtFinalsPage() {
       )}
 
       {/* ── Setup warnings ─────────────────────────────────────────────── */}
+      {data && techPlaced > 0 && (
+        <div className="mb-6 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 text-sm">
+          <span className="text-white font-semibold">{techPlaced}</span>
+          <span className="text-gray-400">
+            {" "}
+            racer{techPlaced === 1 ? "" : "s"} placed on a team by their tech card&apos;s team code,
+            with no roster entry claiming them.
+          </span>
+          {jrTechPlaced > 0 && (
+            <span className="text-gray-400">
+              {" "}
+              <span className="text-yellow-500 font-semibold">{jrTechPlaced}</span> of them{" "}
+              {jrTechPlaced === 1 ? "is a junior and earns" : "are juniors and earn"} nothing yet —
+              only roster rows 1-10 score and there&apos;s no roster here saying which ten, so switch
+              them on individually with the <span className="text-gray-300">Earns</span> toggle in
+              the team drill-down.
+            </span>
+          )}
+        </div>
+      )}
       {data && data.rosterCount === 0 && (
         <div className="mb-6 bg-yellow-500/10 border border-yellow-500/40 text-yellow-500 rounded-xl px-4 py-3 text-sm">
           No team rosters uploaded yet. Nothing can score until at least one roster is loaded — open{" "}
@@ -890,6 +1019,154 @@ export default function EtFinalsPage() {
         )}
       </div>
 
+      {/* ── Tech cards ─────────────────────────────────────────────────── */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+        <button
+          onClick={() => setShowTechCards((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        >
+          <div>
+            <h2 className="text-white font-bold">Tech Cards</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {techPlaced > 0
+                ? `${techPlaced} racer${techPlaced === 1 ? "" : "s"} placed on a team from their tech card`
+                : "Member numbers and team codes — how racers in the timing system are identified"}
+            </p>
+          </div>
+          <span className="text-gray-400 text-sm">{showTechCards ? "Hide" : "Upload"}</span>
+        </button>
+
+        {showTechCards && (
+          <div className="border-t border-nhra-border p-6 space-y-4">
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Upload the divisional E.T. export (<code className="text-gray-300">TCET_*.xlsx</code>) or a racefiles
+              Compulink file. The member number is what ties a racer to their roster entry however their car is numbered
+              in the timing system, and the <code className="text-gray-300">trackteam</code> column places anyone no
+              roster claims onto a team.
+            </p>
+            <div
+              onClick={() => techRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                handleTechCardUpload(Array.from(e.dataTransfer.files));
+              }}
+              className="border-2 border-dashed border-nhra-border rounded-xl px-6 py-8 text-center cursor-pointer hover:border-gray-600"
+            >
+              <input
+                ref={techRef}
+                type="file"
+                multiple
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={(e) => handleTechCardUpload(Array.from(e.target.files || []))}
+              />
+              <p className="text-white font-medium mb-1">
+                {techUploading ? "Uploading…" : "Drop tech card exports here"}
+              </p>
+              <p className="text-xs text-gray-500">Re-uploading updates the racers already on file.</p>
+            </div>
+            {techMsg && (
+              <pre className="text-xs text-gray-300 bg-nhra-darker border border-nhra-border rounded-lg p-3 whitespace-pre-wrap">
+                {techMsg}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── EData ──────────────────────────────────────────────────────── */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+        <button
+          onClick={() => setShowEdata((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        >
+          <div>
+            <h2 className="text-white font-bold">EData Import</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {dataSource === "edata"
+                ? "EData is the active source — getresults polling is off"
+                : "Load rounds from the timing system's own files when getresults is down"}
+            </p>
+          </div>
+          <span className="text-gray-400 text-sm">{showEdata ? "Hide" : "Open"}</span>
+        </button>
+
+        {showEdata && (
+          <div className="border-t border-nhra-border p-6 space-y-4">
+            <div
+              className={`rounded-lg px-4 py-3 border flex items-start justify-between gap-4 flex-wrap ${
+                dataSource === "edata"
+                  ? "bg-green-500/10 border-green-500/40"
+                  : "bg-yellow-500/10 border-yellow-500/40"
+              }`}
+            >
+              <p className={`text-xs ${dataSource === "edata" ? "text-green-400" : "text-yellow-500"}`}>
+                {dataSource === "edata"
+                  ? "Nothing is fetched from getresults or the API — the rounds you import here can't be overwritten."
+                  : "Polling is on, so a later fetch can overwrite imported rounds. Switch to EData to stop that."}
+              </p>
+              <button
+                onClick={() => live.setDataSource(dataSource === "edata" ? "scraper" : "edata")}
+                disabled={!live.config}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40 ${
+                  dataSource === "edata"
+                    ? "bg-nhra-darker border border-nhra-border text-gray-300 hover:text-white"
+                    : "bg-nhra-red text-white hover:bg-red-600"
+                }`}
+              >
+                {dataSource === "edata" ? "Back to getresults" : "Use EData only"}
+              </button>
+            </div>
+
+            <label className="text-xs text-gray-400 block">
+              Race date (orders the imported rounds)
+              <input
+                type="date"
+                value={edataDate}
+                onChange={(e) => setEdataDate(e.target.value)}
+                className="ml-2 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              />
+            </label>
+
+            <div
+              onClick={() => edataRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                handleEdataUpload(Array.from(e.dataTransfer.files));
+              }}
+              className="border-2 border-dashed border-nhra-border rounded-xl px-6 py-8 text-center cursor-pointer hover:border-gray-600"
+            >
+              <input
+                ref={edataRef}
+                type="file"
+                multiple
+                accept=".txt,.TXT,.dat,.DAT"
+                className="hidden"
+                onChange={(e) => handleEdataUpload(Array.from(e.target.files || []))}
+              />
+              <p className="text-white font-medium mb-1">
+                {edataUploading ? "Importing…" : "Drop EData files here"}
+              </p>
+              <p className="text-xs text-gray-500">
+                C11EDAT.TXT, C12EDAT.TXT, … — all classes at once. Re-importing updates rather than duplicates.
+              </p>
+            </div>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              EData records finish order but no clock times, so each pass gets a synthetic timestamp from its round and
+              position in the file. Runs order and pair correctly; the times on time-of-day views are sequence markers,
+              not when the cars ran.
+            </p>
+            {edataMsg && (
+              <pre className="text-xs text-gray-300 bg-nhra-darker border border-nhra-border rounded-lg p-3 whitespace-pre-wrap">
+                {edataMsg}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ── Standings ──────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
         <h2 className="text-xl font-bold text-white">Standings</h2>
@@ -959,6 +1236,14 @@ export default function EtFinalsPage() {
                           <div className="text-[11px] text-gray-500">
                             {team.track_code}
                             {team.captain ? ` · ${team.captain}` : ""}
+                            {!team.hasRoster && (
+                              <span
+                                className="ml-2 text-yellow-600"
+                                title="No roster uploaded for this team — its racers are placed from their tech cards"
+                              >
+                                · tech cards only
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td
@@ -1034,15 +1319,24 @@ export default function EtFinalsPage() {
                                     <td className="py-1.5 text-right text-gray-300">{r.roundsWon}</td>
                                     <td className="py-1.5 text-right font-bold text-white">{r.points}</td>
                                     <td className="py-1.5 text-right text-gray-500">
-                                      {r.matchedBy === "manual"
-                                        ? "pinned"
-                                        : r.matchedBy === "member"
-                                          ? "member #"
-                                          : r.matchedBy === "car"
-                                            ? "car #"
-                                            : r.matchedBy === "name"
-                                              ? "name"
-                                              : "—"}
+                                      {r.source === "tech_card" ? (
+                                        <span
+                                          className="text-yellow-600"
+                                          title="Not on any roster — placed on this team by their tech card's team code"
+                                        >
+                                          tech card
+                                        </span>
+                                      ) : r.matchedBy === "manual" ? (
+                                        "pinned"
+                                      ) : r.matchedBy === "member" ? (
+                                        "member #"
+                                      ) : r.matchedBy === "car" ? (
+                                        "car #"
+                                      ) : r.matchedBy === "name" ? (
+                                        "name"
+                                      ) : (
+                                        "—"
+                                      )}
                                     </td>
                                     <td className="py-1.5 text-right">
                                       <StatusBadge racer={r} />
