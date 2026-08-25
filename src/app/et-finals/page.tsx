@@ -11,7 +11,18 @@ import type {
   EtTeamStanding,
 } from "@/lib/et-finals";
 
-type StandingsResponse = EtFinalsStandings & { config: EtFinalsConfig; rosterCount: number };
+interface TrackName {
+  track_name: string;
+  team_name: string;
+}
+
+type StandingsResponse = EtFinalsStandings & {
+  config: EtFinalsConfig;
+  rosterCount: number;
+  trackNames: Record<string, TrackName>;
+  trackCodes: { code: string; hasRoster: boolean; techCardCount: number }[];
+  classesFromDefaults: string[];
+};
 
 interface RosterSummary {
   id: string;
@@ -104,6 +115,9 @@ export default function EtFinalsPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [showSetup, setShowSetup] = useState(false);
+  const [showTracks, setShowTracks] = useState(false);
+  const [draftTracks, setDraftTracks] = useState<Record<string, TrackName> | null>(null);
+  const [savingTracks, setSavingTracks] = useState(false);
   const [showRosters, setShowRosters] = useState(false);
   const [draftConfig, setDraftConfig] = useState<EtFinalsConfig | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -128,6 +142,7 @@ export default function EtFinalsPage() {
       if (!res.ok) throw new Error(body.error || "Failed to load standings");
       setData(body as StandingsResponse);
       setDraftConfig(null);
+      setDraftTracks(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load standings");
     } finally {
@@ -235,6 +250,55 @@ export default function EtFinalsPage() {
       setError(err instanceof Error ? err.message : "Failed to change eligibility");
     } finally {
       setAssigning(null);
+    }
+  }
+
+  function setTrackField(code: string, field: keyof TrackName, value: string) {
+    const base = draftTracks ?? data?.trackNames ?? {};
+    const existing = base[code] || { track_name: "", team_name: "" };
+    setDraftTracks({ ...base, [code]: { ...existing, [field]: value } });
+  }
+
+  async function saveTrackNames() {
+    if (!draftTracks || !season) return;
+    setSavingTracks(true);
+    try {
+      const res = await fetch("/api/et-finals/tracks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ season, tracks: draftTracks }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to save");
+      }
+      await loadStandings();
+      await loadRosters();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save track names");
+    } finally {
+      setSavingTracks(false);
+    }
+  }
+
+  async function recodeRoster(id: string, current: string) {
+    const next = prompt(
+      `Track code for this roster.\n\nIts racers' car numbers move with it, so use the code the tech cards and the timing system show (e.g. "ND" for Numidia).`,
+      current,
+    );
+    if (!next || next.trim().toUpperCase() === current.toUpperCase()) return;
+    try {
+      const res = await fetch("/api/et-finals/rosters", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, track_code: next.trim() }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Failed to change the track code");
+      await loadRosters();
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change the track code");
     }
   }
 
@@ -449,6 +513,110 @@ export default function EtFinalsPage() {
         </div>
       )}
 
+      {/* ── Track names ────────────────────────────────────────────────── */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+        <button
+          onClick={() => setShowTracks((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        >
+          <div>
+            <h2 className="text-white font-bold">Track Names</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {(data?.trackCodes || []).length} team code
+              {(data?.trackCodes || []).length === 1 ? "" : "s"} in play ·{" "}
+              {Object.keys(data?.trackNames || {}).length} named
+            </p>
+          </div>
+          <span className="text-gray-400 text-sm">{showTracks ? "Hide" : "Edit"}</span>
+        </button>
+
+        {showTracks && (
+          <div className="border-t border-nhra-border">
+            <div className="px-6 py-3 bg-nhra-darker/50 text-xs text-gray-400 leading-relaxed">
+              Name the track behind each team code. Roster templates often arrive with the track
+              name blank and a tech card only ever gives the bare code, so what a team shows up as
+              on the board is set here — it flows through the standings, the drill-downs and the
+              exports. Leave both boxes empty to fall back to whatever the roster said.
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
+                  <tr>
+                    <th className="text-left px-6 py-2 font-medium w-20">Code</th>
+                    <th className="text-left px-3 py-2 font-medium">Track Name</th>
+                    <th className="text-left px-3 py-2 font-medium">Team Name (optional)</th>
+                    <th className="text-right px-6 py-2 font-medium">Seen In</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data?.trackCodes || []).map((tc) => {
+                    const v = (draftTracks ?? data?.trackNames ?? {})[tc.code] || {
+                      track_name: "",
+                      team_name: "",
+                    };
+                    return (
+                      <tr key={tc.code} className="border-t border-nhra-border/60">
+                        <td className="px-6 py-2 font-bold text-white">{tc.code}</td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={v.track_name}
+                            onChange={(e) => setTrackField(tc.code, "track_name", e.target.value)}
+                            placeholder="e.g. Numidia Dragway"
+                            className="w-full px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={v.team_name}
+                            onChange={(e) => setTrackField(tc.code, "team_name", e.target.value)}
+                            placeholder="defaults to the track name"
+                            className="w-full px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600"
+                          />
+                        </td>
+                        <td className="px-6 py-2 text-right text-[11px] text-gray-500">
+                          {tc.hasRoster ? "roster" : ""}
+                          {tc.hasRoster && tc.techCardCount ? " · " : ""}
+                          {tc.techCardCount ? `${tc.techCardCount} tech cards` : ""}
+                          {!tc.hasRoster && !tc.techCardCount ? "—" : ""}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(data?.trackCodes || []).length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                        No team codes yet — upload a roster or some tech cards.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-6 py-3 border-t border-nhra-border flex items-center justify-between gap-3">
+              <p className="text-xs text-gray-500">
+                {draftTracks ? "Unsaved changes" : "A code with no name shows whatever its roster said."}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setDraftTracks(null)}
+                  disabled={!draftTracks || savingTracks}
+                  className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white disabled:opacity-30"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={saveTrackNames}
+                  disabled={!draftTracks || savingTracks}
+                  className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-600 disabled:opacity-30"
+                >
+                  {savingTracks ? "Saving…" : "Save Track Names"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ── Class setup ────────────────────────────────────────────────── */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
         <button
@@ -473,6 +641,10 @@ export default function EtFinalsPage() {
               can win their way back onto the track but not back onto the points board. If a class isn&apos;t part of the
               team chase at all, mark it <strong className="text-gray-300">Not Scored</strong>. Buy-back classes are
               optional; leave them out when the event doesn&apos;t run one.
+              <br />
+              Saved against this event and remembered by class name for the rest of the season, so the next race opens
+              already set — anything carried over is marked <em>(remembered)</em> and can still be changed here without
+              affecting the race it came from.
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -496,9 +668,16 @@ export default function EtFinalsPage() {
                           <div className="text-white font-medium">{c.category}</div>
                           <div className="text-[11px] text-gray-500">
                             {c.rounds.join(" · ") || "no rounds yet"}
-                            {!effectiveConfig?.categoryRoles[c.category] && (
+                            {!effectiveConfig?.categoryRoles[c.category] ? (
                               <span className="ml-2 text-gray-600">(auto)</span>
-                            )}
+                            ) : (data?.classesFromDefaults || []).includes(c.category) ? (
+                              <span
+                                className="ml-2 text-gray-500"
+                                title="Carried over from how this class was set at an earlier race this season"
+                              >
+                                (remembered)
+                              </span>
+                            ) : null}
                           </div>
                         </td>
                         <td className="px-3 py-2">
@@ -560,7 +739,9 @@ export default function EtFinalsPage() {
             </div>
             <div className="px-6 py-3 border-t border-nhra-border flex items-center justify-between gap-3">
               <p className="text-xs text-gray-500">
-                {draftConfig ? "Unsaved changes" : "Classes without a saved choice use the auto-guess shown above."}
+                {draftConfig
+                  ? "Unsaved changes"
+                  : "Saved per event, and remembered by class name for the rest of the season — the next race starts already set."}
               </p>
               <div className="flex gap-2">
                 <button
@@ -675,7 +856,15 @@ export default function EtFinalsPage() {
                     {rosters.map((r) => (
                       <tr key={r.id} className="border-t border-nhra-border/60">
                         <td className="py-2 text-white">{r.team_name || r.track_name}</td>
-                        <td className="py-2 text-gray-400">{r.track_code}</td>
+                        <td className="py-2">
+                          <button
+                            onClick={() => recodeRoster(r.id, r.track_code)}
+                            title="Change this roster's track code"
+                            className="text-gray-400 hover:text-white underline decoration-dotted underline-offset-2"
+                          >
+                            {r.track_code}
+                          </button>
+                        </td>
                         <td className="py-2 text-gray-400">{r.captain || "—"}</td>
                         <td className="py-2 text-right text-gray-300">{r.bigEntries}</td>
                         <td className="py-2 text-right text-gray-300">
