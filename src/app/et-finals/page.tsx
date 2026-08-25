@@ -107,6 +107,7 @@ export default function EtFinalsPage() {
   const [showRosters, setShowRosters] = useState(false);
   const [draftConfig, setDraftConfig] = useState<EtFinalsConfig | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [assigning, setAssigning] = useState<string | null>(null);
 
   const [rosters, setRosters] = useState<RosterSummary[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -177,6 +178,36 @@ export default function EtFinalsPage() {
     else delete next[category];
     setDraftConfig({ ...base, buybackRounds: next });
   };
+
+  // Hand-pin a timing-system racer onto a roster entry. Saved straight away
+  // rather than batched with the class setup — it's a one-off correction and
+  // waiting on a Save button would strand the fix.
+  async function assignRacer(identity: string, entryKey: string) {
+    const base = draftConfig ?? data?.config;
+    if (!base || !eventCode || !season) return;
+    const manualMatches = { ...(base.manualMatches || {}) };
+    if (entryKey) manualMatches[identity] = entryKey;
+    else delete manualMatches[identity];
+    const next = { ...base, manualMatches };
+    setDraftConfig(next);
+    setAssigning(identity);
+    try {
+      const res = await fetch("/api/et-finals/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, config: next }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to save");
+      }
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to assign racer");
+    } finally {
+      setAssigning(null);
+    }
+  }
 
   async function saveConfig() {
     if (!draftConfig || !eventCode || !season) return;
@@ -750,6 +781,7 @@ export default function EtFinalsPage() {
                                   <th className="text-left py-1.5 font-medium">Class</th>
                                   <th className="text-right py-1.5 font-medium">Rounds Won</th>
                                   <th className="text-right py-1.5 font-medium">Points</th>
+                                  <th className="text-right py-1.5 font-medium">Matched</th>
                                   <th className="text-right py-1.5 font-medium">Status</th>
                                 </tr>
                               </thead>
@@ -758,6 +790,17 @@ export default function EtFinalsPage() {
                                   <tr key={r.key} className="border-t border-nhra-border/40">
                                     <td className="py-1.5 text-gray-400">
                                       {r.run_car_number || r.roster_car_number || "—"}
+                                      {r.run_car_number &&
+                                        r.roster_car_number &&
+                                        r.run_car_number.replace(/[^0-9A-Za-z]/g, "").toUpperCase() !==
+                                          r.roster_car_number.replace(/[^0-9A-Za-z]/g, "").toUpperCase() && (
+                                          <span
+                                            className="ml-1 text-yellow-600"
+                                            title={`Roster says ${r.roster_car_number} — scoring follows the timing system`}
+                                          >
+                                            ({r.roster_car_number})
+                                          </span>
+                                        )}
                                     </td>
                                     <td className="py-1.5 text-white">{r.name}</td>
                                     <td className="py-1.5 text-gray-400">{r.division === "jr" ? "Jrs" : "Big Cars"}</td>
@@ -766,6 +809,17 @@ export default function EtFinalsPage() {
                                     </td>
                                     <td className="py-1.5 text-right text-gray-300">{r.roundsWon}</td>
                                     <td className="py-1.5 text-right font-bold text-white">{r.points}</td>
+                                    <td className="py-1.5 text-right text-gray-500">
+                                      {r.matchedBy === "manual"
+                                        ? "pinned"
+                                        : r.matchedBy === "member"
+                                          ? "member #"
+                                          : r.matchedBy === "car"
+                                            ? "car #"
+                                            : r.matchedBy === "name"
+                                              ? "name"
+                                              : "—"}
+                                    </td>
                                     <td className="py-1.5 text-right">
                                       <StatusBadge racer={r} />
                                     </td>
@@ -794,7 +848,8 @@ export default function EtFinalsPage() {
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
               These ran in a main-race class but no roster claims them, so their round wins aren&apos;t scoring for
-              anyone. Check the car number or the spelling on that track&apos;s roster.
+              anyone. Pick their roster entry below and the points land retroactively — the pick sticks for the rest of
+              the event.
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -805,16 +860,37 @@ export default function EtFinalsPage() {
                   <th className="text-left px-3 py-2 font-medium">Driver</th>
                   <th className="text-left px-3 py-2 font-medium">Class</th>
                   <th className="text-right px-3 py-2 font-medium">Rounds Won</th>
+                  <th className="text-left px-3 py-2 font-medium">Assign To</th>
                   <th className="text-right px-6 py-2 font-medium">Reason</th>
                 </tr>
               </thead>
               <tbody>
                 {data.unmatched.map((u, i) => (
-                  <tr key={`${u.category}|${u.car_number}|${i}`} className="border-t border-nhra-border/60">
+                  <tr key={`${u.identity}|${i}`} className="border-t border-nhra-border/60">
                     <td className="px-6 py-2 text-gray-300">{u.car_number || "—"}</td>
                     <td className="px-3 py-2 text-white">{u.name || "—"}</td>
                     <td className="px-3 py-2 text-gray-400">{u.category}</td>
                     <td className="px-3 py-2 text-right text-gray-300">{u.roundsWon}</td>
+                    <td className="px-3 py-2">
+                      <select
+                        value=""
+                        disabled={assigning === u.identity}
+                        onChange={(e) => assignRacer(u.identity, e.target.value)}
+                        className="max-w-[22rem] px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white disabled:opacity-40"
+                      >
+                        <option value="">
+                          {assigning === u.identity ? "Assigning…" : "Pick a roster entry…"}
+                        </option>
+                        {(data.rosterOptions || [])
+                          .filter((o) => o.division === u.division)
+                          .map((o) => (
+                            <option key={o.key} value={o.key}>
+                              {o.team} · {o.label}
+                              {o.eligible ? "" : " (no points)"}
+                            </option>
+                          ))}
+                      </select>
+                    </td>
                     <td className="px-6 py-2 text-right text-gray-500 text-xs">
                       {u.reason === "ambiguous" ? "Matches more than one team" : "No roster entry"}
                     </td>
