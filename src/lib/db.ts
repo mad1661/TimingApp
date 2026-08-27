@@ -1,4 +1,5 @@
 import { getDb } from "./firebase-admin";
+import { normalizeRacerSearch } from "./run-finish";
 import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
 import {
   categoryKindFor,
@@ -880,40 +881,34 @@ export async function getEvents(): Promise<EventRow[]> {
 }
 
 export async function searchRacers(search: string, eventCode: string, season: string): Promise<{ name: string; car_number: string; category: string }[]> {
-  const s = search.toLowerCase();
-  const seen = new Map<string, string>();
-  for (const r of await getEventRuns(eventCode, season)) {
-    if (!r.name) continue;
-    if (r.name.toLowerCase().includes(s) || (r.car_number && r.car_number.toLowerCase().includes(s))) {
-      const key = `${r.name}|||${r.car_number || ""}`;
-      if (!seen.has(key)) {
-        seen.set(key, r.category || "");
-      }
-    }
-  }
-  return Array.from(seen.entries())
-    .map(([key, category]) => {
-      const [name, car_number] = key.split("|||");
-      return { name, car_number, category };
-    })
-    .sort((a, b) => a.car_number.localeCompare(b.car_number) || a.name.localeCompare(b.name))
-    .slice(0, 50);
+  return collectRacerMatches(search, await getEventRuns(eventCode, season));
 }
 
 export async function searchRacersAllEvents(search: string): Promise<{ name: string; car_number: string; category: string }[]> {
-  const s = search.toLowerCase();
-  const seen = new Map<string, string>();
   const events = await getEvents();
+  const runs: RunRow[] = [];
   for (const ev of events) {
-    for (const r of await getEventRuns(ev.event_code, ev.season)) {
-      if (!r.name) continue;
-      if (r.name.toLowerCase().includes(s) || (r.car_number && r.car_number.toLowerCase().includes(s))) {
-        const key = `${r.name}|||${r.car_number || ""}`;
-        if (!seen.has(key)) {
-          seen.set(key, r.category || "");
-        }
-      }
-    }
+    runs.push(...await getEventRuns(ev.event_code, ev.season));
+  }
+  return collectRacerMatches(search, runs);
+}
+
+function collectRacerMatches(
+  search: string,
+  runs: RunRow[],
+): { name: string; car_number: string; category: string }[] {
+  const s = normalizeRacerSearch(search);
+  if (!s) return [];
+  const seen = new Map<string, string>();
+  for (const r of runs) {
+    const name = (r.name || "").trim();
+    const car = (r.car_number || "").trim();
+    if (!name && !car) continue;
+    const nameHit = name.toLowerCase().includes(s);
+    const carHit = car.toLowerCase().includes(s);
+    if (!nameHit && !carHit) continue;
+    const key = `${name}|||${car}`;
+    if (!seen.has(key)) seen.set(key, r.category || "");
   }
   return Array.from(seen.entries())
     .map(([key, category]) => {
@@ -925,10 +920,12 @@ export async function searchRacersAllEvents(search: string): Promise<{ name: str
 }
 
 export async function getRacerRuns(name: string, eventCode: string, season: string): Promise<RunRow[]> {
+  const wanted = (name || "").trim();
+  if (!wanted) return [];
   const runs = await getEventRuns(eventCode, season);
   tagRunTimestamps(runs);
   return runs
-    .filter((r) => r.name === name)
+    .filter((r) => (r.name || "").trim() === wanted)
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
