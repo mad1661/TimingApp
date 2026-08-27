@@ -1,5 +1,7 @@
 "use client";
 
+import { isEighthMileGroup } from "@/lib/run-finish";
+
 export interface TimeslipRun {
   timestamp: string | null;
   round: string | null;
@@ -107,6 +109,7 @@ function TimingRow2Wide({
 function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventTitle?: string }) {
   const left = runners[0];
   const right = runners[1] ?? null;
+  const eighth = isEighthMileGroup(runners);
   const date = left.timestamp?.split(" ")[0] ?? "";
   const time = left.timestamp?.split(" ")[1] ?? "";
   const leftBadge = resultBadge(left);
@@ -121,6 +124,7 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         </div>
         <div className="text-[10px] text-gray-400 mt-0.5">
           {date} &bull; {left.season} &bull; Round {left.round || "-"} &bull; {left.category || "-"}
+          {eighth ? " • 1/8 MILE" : ""}
         </div>
       </div>
 
@@ -173,9 +177,19 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         <TimingRow2Wide label="R/T" vals={[fmt(left.rt), fmt(right?.rt)]} bold />
         <TimingRow2Wide label="60'" vals={[fmt(left.ft60), fmt(right?.ft60)]} />
         <TimingRow2Wide label="330'" vals={[fmt(left.ft330), fmt(right?.ft330)]} />
-        <TimingRow2Wide label="660' (⅛ mi)" vals={[fmt(left.ft660), fmt(right?.ft660)]} subs={[`${fmtMph(left.mph_660)} mph`, `${fmtMph(right?.mph_660)} mph`]} />
-        <TimingRow2Wide label="1000'" vals={[fmt(left.ft1000), fmt(right?.ft1000)]} subs={[`${fmtMph(left.mph_1000)} mph`, `${fmtMph(right?.mph_1000)} mph`]} />
-        <TimingRow2Wide label="ET (¼ mi)" vals={[fmt(left.ft1320), fmt(right?.ft1320)]} bold highlight subs={[`${fmtMph(left.mph_1320)} mph`, `${fmtMph(right?.mph_1320)} mph`]} />
+        <TimingRow2Wide
+          label={eighth ? "ET (⅛ mi)" : "660' (⅛ mi)"}
+          vals={[fmt(left.ft660), fmt(right?.ft660)]}
+          bold={eighth}
+          highlight={eighth}
+          subs={[`${fmtMph(left.mph_660)} mph`, `${fmtMph(right?.mph_660)} mph`]}
+        />
+        {!eighth && (
+          <TimingRow2Wide label="1000'" vals={[fmt(left.ft1000), fmt(right?.ft1000)]} subs={[`${fmtMph(left.mph_1000)} mph`, `${fmtMph(right?.mph_1000)} mph`]} />
+        )}
+        {!eighth && (
+          <TimingRow2Wide label="ET (¼ mi)" vals={[fmt(left.ft1320), fmt(right?.ft1320)]} bold highlight subs={[`${fmtMph(left.mph_1320)} mph`, `${fmtMph(right?.mph_1320)} mph`]} />
+        )}
       </div>
 
       {/* MOV */}
@@ -244,6 +258,7 @@ function TimingRow4Wide({
 
 function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventTitle?: string }) {
   const first = runners[0];
+  const eighth = isEighthMileGroup(runners);
   const date = first.timestamp?.split(" ")[0] ?? "";
   const time = first.timestamp?.split(" ")[1] ?? "";
 
@@ -256,6 +271,7 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         </div>
         <div className="text-[10px] text-gray-400 mt-0.5">
           {date} &bull; {first.season} &bull; Round {first.round || "-"} &bull; {first.category || "-"} &bull; 4-WIDE
+          {eighth ? " • 1/8 MILE" : ""}
         </div>
       </div>
 
@@ -318,9 +334,19 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         <TimingRow4Wide label="R/T" runners={runners.map((r) => ({ val: fmt(r.rt) }))} bold />
         <TimingRow4Wide label="60'" runners={runners.map((r) => ({ val: fmt(r.ft60) }))} />
         <TimingRow4Wide label="330'" runners={runners.map((r) => ({ val: fmt(r.ft330) }))} />
-        <TimingRow4Wide label="660'" runners={runners.map((r) => ({ val: fmt(r.ft660), sub: `${fmtMph(r.mph_660)} mph` }))} subs />
-        <TimingRow4Wide label="1000'" runners={runners.map((r) => ({ val: fmt(r.ft1000), sub: `${fmtMph(r.mph_1000)} mph` }))} subs />
-        <TimingRow4Wide label="ET (¼ mi)" runners={runners.map((r) => ({ val: fmt(r.ft1320), sub: `${fmtMph(r.mph_1320)} mph` }))} bold highlight subs />
+        <TimingRow4Wide
+          label={eighth ? "ET (⅛ mi)" : "660'"}
+          runners={runners.map((r) => ({ val: fmt(r.ft660), sub: `${fmtMph(r.mph_660)} mph` }))}
+          bold={eighth}
+          highlight={eighth}
+          subs
+        />
+        {!eighth && (
+          <TimingRow4Wide label="1000'" runners={runners.map((r) => ({ val: fmt(r.ft1000), sub: `${fmtMph(r.mph_1000)} mph` }))} subs />
+        )}
+        {!eighth && (
+          <TimingRow4Wide label="ET (¼ mi)" runners={runners.map((r) => ({ val: fmt(r.ft1320), sub: `${fmtMph(r.mph_1320)} mph` }))} bold highlight subs />
+        )}
       </div>
 
       {/* MOV */}

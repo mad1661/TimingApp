@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults, getClassElimBreakdown, saveClassElimConfig } from "@/lib/db";
+import { isSameRacer } from "@/lib/run-finish";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest) {
           const paired = opponentMap.get(canonical) || [];
           const opponents = paired.filter(
             (p) =>
-              !(p.car_number === run.car_number && p.name === run.name) &&
+              !isSameRacer(p, run) &&
               p.category === run.category &&
               p.round === run.round,
           );
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
         const results = eventCode && season
           ? await searchRacers(search, eventCode, season)
           : await searchRacersAllEvents(search);
-        return jsonResponse({ racers: results.map((r) => r.name), racerDetails: results });
+        return jsonResponse({ racers: results.map((r) => r.name).filter(Boolean), racerDetails: results });
       }
       return jsonResponse({ racers: [] });
     }
@@ -114,7 +115,7 @@ export async function GET(request: NextRequest) {
         const canonical = run.timestamp ? (tsGroupMap.get(run.timestamp) || run.timestamp) : "";
         const paired = opponentMap.get(canonical) || [];
         const opponents = paired.filter(
-          (p) => p.name !== run.name && p.category === run.category && p.round === run.round
+          (p) => !isSameRacer(p, run) && p.category === run.category && p.round === run.round
         );
         return { ...run, opponents: opponents.map((o) => ({ name: o.name, car_number: o.car_number, rt: o.rt, ft60: o.ft60, ft330: o.ft330, ft660: o.ft660, mph_660: o.mph_660, ft1000: o.ft1000, mph_1000: o.mph_1000, ft1320: o.ft1320, mph_1320: o.mph_1320, mov: o.mov, is_winner: o.is_winner, is_dq: o.is_dq, result: o.result, lane: o.lane, dial_in: o.dial_in })) };
       });

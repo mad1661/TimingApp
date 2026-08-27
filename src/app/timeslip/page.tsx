@@ -5,6 +5,7 @@ import Link from "next/link";
 import TimeslipCard from "@/components/TimeslipCard";
 import type { TimeslipRun } from "@/components/TimeslipCard";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { finishEt, finishMph } from "@/lib/run-finish";
 
 interface OpponentData {
   name: string | null;
@@ -38,11 +39,19 @@ interface RacerSuggestion {
   category: string;
 }
 
+function racerLabel(r: { name?: string | null; car_number?: string | null }): string {
+  const name = (r.name || "").trim();
+  const car = (r.car_number || "").trim();
+  if (name) return name;
+  if (car) return `#${car}`;
+  return "Unknown";
+}
+
 export default function TimeslipPage() {
   const live = useLiveData();
   const [search, setSearch] = useState("");
   const [suggestions, setSuggestions] = useState<RacerSuggestion[]>([]);
-  const [selectedRacer, setSelectedRacer] = useState<string | null>(null);
+  const [selectedRacer, setSelectedRacer] = useState<RacerSuggestion | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [selectedRun, setSelectedRun] = useState<RunRow | null>(null);
   const [loading, setLoading] = useState(false);
@@ -85,15 +94,21 @@ export default function TimeslipPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  async function loadRacerRuns(name: string) {
+  async function loadRacerRuns(sel: RacerSuggestion) {
+    const name = (sel.name || "").trim();
+    const car = (sel.car_number || "").trim();
+    if (!name && !car) return;
     justSelectedRef.current = true;
-    setSelectedRacer(name);
-    setSearch(name);
+    setSelectedRacer({ name, car_number: car, category: sel.category || "" });
+    setSearch(name || (car ? `#${car}` : ""));
     setShowSuggestions(false);
     setLoading(true);
     setSelectedRun(null);
     try {
-      const res = await fetch(`/api/stats?type=racer&name=${encodeURIComponent(name)}${eventQS}`);
+      const url = name
+        ? `/api/stats?type=racer&name=${encodeURIComponent(name)}${eventQS}`
+        : `/api/stats?type=car_runs&car_number=${encodeURIComponent(car)}${eventQS}`;
+      const res = await fetch(url);
       const data = await res.json();
       setRuns(data.runs || []);
     } catch { setRuns([]); }
@@ -104,10 +119,16 @@ export default function TimeslipPage() {
   // data, so the timeslip list refreshes without requiring a page reload.
   useEffect(() => {
     if (!selectedRacer) return;
+    const name = (selectedRacer.name || "").trim();
+    const car = (selectedRacer.car_number || "").trim();
+    if (!name && !car) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/stats?type=racer&name=${encodeURIComponent(selectedRacer)}${eventQS}`);
+        const url = name
+          ? `/api/stats?type=racer&name=${encodeURIComponent(name)}${eventQS}`
+          : `/api/stats?type=car_runs&car_number=${encodeURIComponent(car)}${eventQS}`;
+        const res = await fetch(url);
         const data = await res.json();
         if (!cancelled) {
           const newRuns: RunRow[] = data.runs || [];
@@ -251,9 +272,13 @@ export default function TimeslipPage() {
               onChange={(e) => setSearch(e.target.value)}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && search.trim() && suggestions.length > 0) {
-                  loadRacerRuns(suggestions[0].name);
+                if (e.key !== "Enter" || !search.trim()) return;
+                if (suggestions.length > 0) {
+                  loadRacerRuns(suggestions[0]);
+                  return;
                 }
+                const q = search.trim().replace(/^#/, "").trim();
+                if (q) loadRacerRuns({ name: "", car_number: q, category: "" });
               }}
               placeholder="Search by Name / Car #..."
               className="w-full px-4 py-3 bg-nhra-darker border border-nhra-border rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-nhra-accent text-lg"
@@ -262,11 +287,13 @@ export default function TimeslipPage() {
               <div className="absolute top-full left-0 right-0 mt-1 bg-nhra-card border border-nhra-border rounded-lg shadow-xl z-20 max-h-64 overflow-y-auto">
                 {suggestions.map((s) => (
                   <button
-                    key={`${s.name}-${s.car_number}`}
-                    onClick={() => loadRacerRuns(s.name)}
+                    key={`${s.name}-${s.car_number}-${s.category}`}
+                    onClick={() => loadRacerRuns(s)}
                     className="w-full text-left px-4 py-3 text-white hover:bg-nhra-border/30 transition-colors text-sm border-b border-nhra-border/30 last:border-0 flex items-center gap-4"
                   >
-                    <span className="font-medium flex-1 truncate">{s.name}</span>
+                    <span className={`font-medium flex-1 truncate ${s.name ? "" : "text-gray-500 italic"}`}>
+                      {s.name || "No name"}
+                    </span>
                     {s.car_number && <span className="text-nhra-accent font-bold text-xs shrink-0">#{s.car_number}</span>}
                     {s.category && <span className="text-gray-500 text-xs shrink-0">{s.category}</span>}
                   </button>
@@ -281,14 +308,16 @@ export default function TimeslipPage() {
           <div className="bg-nhra-card border border-nhra-border rounded-xl p-5 mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-white">
-                {selectedRacer} &mdash; {runs.length} runs
+                {racerLabel(selectedRacer)} &mdash; {runs.length} runs
               </h2>
-              <Link
-                href={`/racer/${encodeURIComponent(selectedRacer)}`}
-                className="text-xs text-nhra-accent hover:underline"
-              >
-                View full profile
-              </Link>
+              {selectedRacer.name && (
+                <Link
+                  href={`/racer/${encodeURIComponent(selectedRacer.name)}`}
+                  className="text-xs text-nhra-accent hover:underline"
+                >
+                  View full profile
+                </Link>
+              )}
             </div>
 
             {loading ? (
@@ -332,8 +361,8 @@ export default function TimeslipPage() {
                         <td className="p-2 text-gray-300 text-xs">{run.category}</td>
                         <td className="p-2 text-gray-300">{run.round}</td>
                         <td className="p-2 text-right font-mono text-gray-300">{run.rt?.toFixed(3) ?? "-"}</td>
-                        <td className="p-2 text-right font-mono text-white font-medium">{run.ft1320?.toFixed(3) ?? "-"}</td>
-                        <td className="p-2 text-right font-mono text-gray-300">{run.mph_1320?.toFixed(2) ?? "-"}</td>
+                        <td className="p-2 text-right font-mono text-white font-medium">{finishEt(run)?.toFixed(3) ?? "-"}</td>
+                        <td className="p-2 text-right font-mono text-gray-300">{finishMph(run)?.toFixed(2) ?? "-"}</td>
                         <td className="p-2 text-center">
                           {(() => {
                             const r = run.result?.trim().toUpperCase();
@@ -381,7 +410,7 @@ export default function TimeslipPage() {
               Print Timeslip
             </button>
             <span className="text-sm text-gray-500">
-              {selectedRun.name} vs {selectedRun.opponents?.map((o) => o.name).filter(Boolean).join(", ") || "Bye"} &mdash; {selectedRun.round} &mdash; {selectedRun.timestamp?.split(" ")[0]}
+              {racerLabel(selectedRun)} vs {selectedRun.opponents?.map((o) => racerLabel(o)).filter((n) => n !== "Unknown").join(", ") || "Bye"} &mdash; {selectedRun.round} &mdash; {selectedRun.timestamp?.split(" ")[0]}
             </span>
           </div>
         )}
