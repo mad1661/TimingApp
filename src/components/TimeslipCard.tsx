@@ -178,7 +178,7 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         <TimingRow2Wide label="60'" vals={[fmt(left.ft60), fmt(right?.ft60)]} />
         <TimingRow2Wide label="330'" vals={[fmt(left.ft330), fmt(right?.ft330)]} />
         <TimingRow2Wide
-          label={eighth ? "ET (⅛ mi)" : "660' (⅛ mi)"}
+          label={eighth ? "ET (1/8 mi)" : "660' (1/8)"}
           vals={[fmt(left.ft660), fmt(right?.ft660)]}
           bold={eighth}
           highlight={eighth}
@@ -335,7 +335,7 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         <TimingRow4Wide label="60'" runners={runners.map((r) => ({ val: fmt(r.ft60) }))} />
         <TimingRow4Wide label="330'" runners={runners.map((r) => ({ val: fmt(r.ft330) }))} />
         <TimingRow4Wide
-          label={eighth ? "ET (⅛ mi)" : "660'"}
+          label={eighth ? "ET (1/8 mi)" : "660'"}
           runners={runners.map((r) => ({ val: fmt(r.ft660), sub: `${fmtMph(r.mph_660)} mph` }))}
           bold={eighth}
           highlight={eighth}
