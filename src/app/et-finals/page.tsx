@@ -972,8 +972,9 @@ export default function EtFinalsPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || "Failed to load standings");
       setData(body as StandingsResponse);
-      setDraftConfig(null);
-      setDraftTracks(null);
+      // Drafts survive reloads on purpose: live polling refreshes the data
+      // every interval, and clearing here would throw away half-made day
+      // picks or class changes mid-click. Save paths clear their own drafts.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load standings");
     } finally {
@@ -1063,6 +1064,7 @@ export default function EtFinalsPage() {
         const body = await res.json();
         throw new Error(body.error || "Failed to save");
       }
+      setDraftConfig(null);
       await loadStandings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to assign racer");
@@ -1118,6 +1120,7 @@ export default function EtFinalsPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || "Failed to load settings");
       setSetupMsg(`Loaded "${s.name}" onto ${eventName || eventCode}.`);
+      setDraftConfig(null);
       await loadStandings();
     } catch (err) {
       setSetupMsg(err instanceof Error ? err.message : "Failed to load settings");
@@ -1195,24 +1198,37 @@ export default function EtFinalsPage() {
     await savePointsRule({ buybackEarnsPoints: earns }, "buyback-policy");
   }
 
-  // Choose whether a day's passes count for points. Exclusions are stored by
-  // date, so a day nobody has ruled on (race morning) counts by default.
-  // Toggling also clears the older from-date rule so the checkboxes are the
-  // single source of truth.
-  async function setDayCounts(date: string, counts: boolean) {
+  // Choose whether a day's passes count for points. Toggles are local and
+  // instant — nothing saves until "Save Days" — so the boxes can't flicker
+  // against in-flight reloads. Exclusions are stored by date, so a day nobody
+  // has ruled on (race morning) counts by default. Toggling folds the older
+  // from-date rule into explicit exclusions, making the boxes the single
+  // source of truth.
+  function setDayCounts(date: string, counts: boolean) {
     const base = draftConfig ?? data?.config;
     if (!base) return;
     const excluded = new Set(base.excludedDates || []);
-    // Fold a previously set from-date into explicit exclusions first.
     const from = (base.scoreFromDate || "").trim();
     if (from) for (const d of data?.runDates || []) if (d < from) excluded.add(d);
     if (counts) excluded.delete(date);
     else excluded.add(date);
-    await savePointsRule(
-      { excludedDates: Array.from(excluded).sort(), scoreFromDate: null },
-      `day-${date}`,
-    );
+    setDraftConfig({
+      ...base,
+      excludedDates: Array.from(excluded).sort(),
+      scoreFromDate: null,
+    });
   }
+
+  // Do the day choices on screen differ from what's saved?
+  const daysDirty = useMemo(() => {
+    if (!draftConfig || !data) return false;
+    const saved = data.config;
+    return (
+      JSON.stringify([...(draftConfig.excludedDates || [])].sort()) !==
+        JSON.stringify([...(saved.excludedDates || [])].sort()) ||
+      (draftConfig.scoreFromDate || null) !== (saved.scoreFromDate || null)
+    );
+  }, [draftConfig, data]);
 
   async function savePointsRule(patch: Partial<EtFinalsConfig>, busyKey: string) {
     const base = draftConfig ?? data?.config;
@@ -1230,6 +1246,7 @@ export default function EtFinalsPage() {
         const body = await res.json();
         throw new Error(body.error || "Failed to save");
       }
+      setDraftConfig(null);
       await loadStandings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save the points rule");
@@ -1259,6 +1276,7 @@ export default function EtFinalsPage() {
         const body = await res.json();
         throw new Error(body.error || "Failed to save");
       }
+      setDraftConfig(null);
       await loadStandings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to change eligibility");
@@ -1359,6 +1377,7 @@ export default function EtFinalsPage() {
         const body = await res.json();
         throw new Error(body.error || "Failed to save");
       }
+      setDraftTracks(null);
       await loadStandings();
       await loadRosters();
     } catch (err) {
@@ -1402,6 +1421,7 @@ export default function EtFinalsPage() {
         const body = await res.json();
         throw new Error(body.error || "Failed to save");
       }
+      setDraftConfig(null);
       await loadStandings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save class setup");
@@ -2438,11 +2458,11 @@ export default function EtFinalsPage() {
           <div className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
             <span className="text-white text-sm font-semibold">Days that count for points</span>
             <span className="block text-xs text-gray-500 mt-0.5 mb-2 leading-relaxed">
-              Practice days run through the timing system labelled E1, exactly like the real race — uncheck them and
-              nothing from those days earns: time runs, practice eliminations, all of it. A new day (race morning)
-              counts automatically.
+              Practice days run through the timing system labelled E1, exactly like the real race — turn them off and
+              nothing from those days earns. Pick the days, then hit Save. A new day (race morning) counts
+              automatically.
             </span>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {(data.runDates || []).map((d) => {
                 const from = (effectiveConfig?.scoreFromDate || "").trim();
                 const counts =
@@ -2454,28 +2474,43 @@ export default function EtFinalsPage() {
                   parseInt(day, 10),
                 ).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
                 return (
-                  <label
+                  <button
                     key={d}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer select-none text-xs font-semibold transition-colors ${
+                    type="button"
+                    disabled={savingConfig}
+                    onClick={() => setDayCounts(d, !counts)}
+                    title={counts ? "Counting — click to exclude this day" : "Excluded — click to count this day"}
+                    className={`px-3 py-1.5 rounded-lg border select-none text-xs font-semibold transition-colors disabled:opacity-40 ${
                       counts
                         ? "bg-green-500/10 border-green-500/40 text-green-400"
                         : "bg-nhra-darker border-nhra-border text-gray-500 line-through"
                     }`}
                   >
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 accent-red-600"
-                      checked={counts}
-                      disabled={assigning === `day-${d}`}
-                      onChange={(e) => setDayCounts(d, e.target.checked)}
-                    />
+                    {counts ? "✓ " : "✕ "}
                     {label}
-                    {assigning === `day-${d}` && <span className="text-gray-500">…</span>}
-                  </label>
+                  </button>
                 );
               })}
               {(data.runDates || []).length === 0 && (
                 <span className="text-xs text-gray-600">No runs on file yet.</span>
+              )}
+              {daysDirty && (
+                <span className="inline-flex items-center gap-2 ml-1">
+                  <button
+                    onClick={saveConfig}
+                    disabled={savingConfig}
+                    className="px-3 py-1.5 bg-nhra-red text-white rounded-lg text-xs font-semibold hover:bg-red-600 disabled:opacity-40"
+                  >
+                    {savingConfig ? "Saving…" : "Save Days"}
+                  </button>
+                  <button
+                    onClick={() => setDraftConfig(null)}
+                    disabled={savingConfig}
+                    className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-xs hover:text-white disabled:opacity-40"
+                  >
+                    Discard
+                  </button>
+                </span>
               )}
             </div>
           </div>
