@@ -3352,6 +3352,8 @@ async function getEtFinalsConfigWithMeta(
         buybackEarnsPoints: data.buybackEarnsPoints === true,
         scoreFromDate: typeof data.scoreFromDate === "string" && data.scoreFromDate ? data.scoreFromDate : null,
         excludedDates: Array.isArray(data.excludedDates) ? (data.excludedDates as string[]) : [],
+        pointsAdjustments:
+          (data.pointsAdjustments as EtFinalsConfig["pointsAdjustments"]) || {},
       },
       hasBuybackRule: typeof data.buybackEarnsPoints === "boolean",
     };
@@ -3443,6 +3445,7 @@ export async function saveEtFinalsSetup(
       buybackEarnsPoints: config.buybackEarnsPoints === true,
       scoreFromDate: (config.scoreFromDate || "").trim() || null,
       excludedDates: config.excludedDates || [],
+      pointsAdjustments: config.pointsAdjustments || {},
     },
     saved_at: new Date().toISOString(),
   });
@@ -3541,6 +3544,7 @@ export async function saveEtFinalsConfig(
       buybackEarnsPoints: config.buybackEarnsPoints === true,
       scoreFromDate: (config.scoreFromDate || "").trim() || null,
       excludedDates: config.excludedDates || [],
+      pointsAdjustments: config.pointsAdjustments || {},
       updated_at: new Date().toISOString(),
     },
     { merge: true },
