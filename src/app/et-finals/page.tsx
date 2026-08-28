@@ -121,10 +121,12 @@ function RoundsDetail({
   rounds,
   assigning,
   onFixCarNumber,
+  onToggleIgnored,
 }: {
   rounds: EtRoundResult[];
   assigning: string | null;
   onFixCarNumber: (dedupKey: string, carNumber: string) => void;
+  onToggleIgnored: (dedupKey: string, ignore: boolean) => void;
 }) {
   const [editKey, setEditKey] = useState<string | null>(null);
   const [carValue, setCarValue] = useState("");
@@ -149,7 +151,7 @@ function RoundsDetail({
           <th className="text-right px-2 py-1 font-medium">Running Total</th>
           <th className="text-left px-2 py-1 font-medium">Car # on this pass</th>
           <th className="text-left px-2 py-1 font-medium">Time</th>
-          <th className="text-right px-4 py-1 font-medium">Wrong car #?</th>
+          <th className="text-right px-4 py-1 font-medium">Corrections</th>
         </tr>
       </thead>
       <tbody>
@@ -157,12 +159,17 @@ function RoundsDetail({
           running += rd.points;
           const editing = editKey !== null && editKey === rd.dedup_key;
           const busy = assigning !== null && assigning === rd.dedup_key;
+          const dim = rd.ignored ? "opacity-50 line-through" : "";
           return (
             <tr key={rd.dedup_key || i} className="border-t border-nhra-border/30">
-              <td className="pl-10 pr-2 py-1 text-gray-300 font-semibold">{rd.round}</td>
-              <td className="px-2 py-1 text-gray-500">{rd.category}</td>
+              <td className={`pl-10 pr-2 py-1 text-gray-300 font-semibold ${dim}`}>{rd.round}</td>
+              <td className={`px-2 py-1 text-gray-500 ${dim}`}>{rd.category}</td>
               <td className="px-2 py-1">
-                {rd.outcome === "win" ? (
+                {rd.ignored ? (
+                  <span className="text-gray-500 font-semibold no-underline">
+                    thrown out{rd.outcome !== "pending" ? ` (was ${rd.outcome === "win" ? "W" : "L"})` : ""}
+                  </span>
+                ) : rd.outcome === "win" ? (
                   <span className={rd.scored ? "text-green-400 font-bold" : "text-yellow-500 font-bold"}>
                     W{rd.scored ? "" : " (no pts)"}
                   </span>
@@ -172,10 +179,10 @@ function RoundsDetail({
                   <span className="text-gray-500">—</span>
                 )}
               </td>
-              <td className="px-2 py-1 text-right text-gray-300">{rd.points || ""}</td>
+              <td className={`px-2 py-1 text-right text-gray-300 ${dim}`}>{rd.points || ""}</td>
               <td className="px-2 py-1 text-right font-bold text-white">{running}</td>
-              <td className="px-2 py-1 text-gray-400 font-mono">{rd.car_number || "—"}</td>
-              <td className="px-2 py-1 text-gray-600 whitespace-nowrap">
+              <td className={`px-2 py-1 text-gray-400 font-mono ${dim}`}>{rd.car_number || "—"}</td>
+              <td className={`px-2 py-1 text-gray-600 whitespace-nowrap ${dim}`}>
                 {rd.timestamp ? rd.timestamp.split(" ").slice(1).join(" ") : "—"}
               </td>
               <td className="px-4 py-1 text-right whitespace-nowrap">
@@ -210,17 +217,31 @@ function RoundsDetail({
                     </button>
                   </span>
                 ) : (
-                  <button
-                    disabled={!rd.dedup_key || busy}
-                    onClick={() => {
-                      setEditKey(rd.dedup_key);
-                      setCarValue(rd.car_number);
-                    }}
-                    title="Correct the car number recorded on this pass — the pass moves to whoever really made it"
-                    className="text-nhra-accent hover:underline disabled:opacity-40"
-                  >
-                    {busy ? "Fixing…" : "Fix car #"}
-                  </button>
+                  <span className="inline-flex items-center gap-3">
+                    <button
+                      disabled={!rd.dedup_key || busy}
+                      onClick={() => {
+                        setEditKey(rd.dedup_key);
+                        setCarValue(rd.car_number);
+                      }}
+                      title="Correct the car number recorded on this pass — the pass moves to whoever really made it"
+                      className="text-nhra-accent hover:underline disabled:opacity-40"
+                    >
+                      {busy ? "Working…" : "Fix car #"}
+                    </button>
+                    <button
+                      disabled={!rd.dedup_key || busy}
+                      onClick={() => rd.dedup_key && onToggleIgnored(rd.dedup_key, !rd.ignored)}
+                      title={
+                        rd.ignored
+                          ? "Make this pass count again"
+                          : "Throw this pass out (rerun) — it scores nothing and a loss here doesn't end anyone's points"
+                      }
+                      className={`hover:underline disabled:opacity-40 ${rd.ignored ? "text-green-400" : "text-gray-500 hover:text-red-400"}`}
+                    >
+                      {rd.ignored ? "Count again" : "Throw out"}
+                    </button>
+                  </span>
                 )}
               </td>
             </tr>
@@ -231,6 +252,61 @@ function RoundsDetail({
   );
 }
 
+/** The timing-system cars combined onto one roster row, each movable. */
+function MatchedFromList({
+  racer,
+  rosterOptions,
+  teamOptions,
+  assigning,
+  onAssign,
+}: {
+  racer: EtRacerPoints;
+  rosterOptions: StandingsResponse["rosterOptions"];
+  teamOptions: { code: string; label: string }[];
+  assigning: string | null;
+  onAssign: (identity: string, target: string) => void;
+}) {
+  if (racer.matched_from.length === 0) return null;
+  return (
+    <div className="pl-10 pr-4 pb-2 space-y-1">
+      {racer.matched_from.map((m) => (
+        <div key={m.identity} className="flex items-center gap-2 flex-wrap text-[11px] text-gray-400">
+          <span>
+            {racer.matched_from.length > 1 ? "Combined: " : "Matched: "}
+            <span className="text-gray-300 font-mono">{m.car_number || "—"}</span>
+            {m.name ? <span className="text-gray-300"> {m.name}</span> : null}
+            {m.member_number ? <span className="text-gray-600"> · member #{m.member_number}</span> : null}
+            <span className="text-gray-600"> · {m.category} · via {m.matchedBy === "manual" ? "pin" : m.matchedBy}</span>
+          </span>
+          <select
+            value=""
+            disabled={assigning === m.identity}
+            onChange={(e) => e.target.value && onAssign(m.identity, e.target.value)}
+            className="px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-[11px] text-gray-300 disabled:opacity-40"
+          >
+            <option value="">{assigning === m.identity ? "Moving…" : "Move to…"}</option>
+            <optgroup label="Teams (no roster row needed)">
+              {teamOptions.map((t) => (
+                <option key={`team-${t.code}`} value={`${TEAM_MATCH_PREFIX}${t.code}`}>
+                  {t.label} ({t.code})
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Roster entries">
+              {rosterOptions.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.team} · {o.label}
+                  {o.eligible ? "" : " (no points)"}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RacerTable({
   racers,
   emptyText,
@@ -238,6 +314,10 @@ function RacerTable({
   overrideFor,
   onToggleEligibility,
   onFixCarNumber,
+  onToggleIgnored,
+  rosterOptions,
+  teamOptions,
+  onAssign,
 }: {
   racers: EtRacerPoints[];
   emptyText: string;
@@ -245,11 +325,17 @@ function RacerTable({
   overrideFor: (key: string) => boolean | undefined;
   onToggleEligibility: (key: string, next: boolean) => void;
   onFixCarNumber: (dedupKey: string, carNumber: string) => void;
+  onToggleIgnored: (dedupKey: string, ignore: boolean) => void;
+  rosterOptions: StandingsResponse["rosterOptions"];
+  teamOptions: { code: string; label: string }[];
+  onAssign: (identity: string, target: string) => void;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   if (racers.length === 0) {
     return <p className="px-4 py-4 text-xs text-gray-600">{emptyText}</p>;
   }
+  // One roster entry can hold a row per class, so rows key on entry + class.
+  const rowKey = (r: EtRacerPoints) => `${r.key}|${r.categories[0] || ""}`;
   const toggle = (key: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -276,13 +362,13 @@ function RacerTable({
         </thead>
         <tbody>
           {racers.map((r) => (
-            <Fragment key={r.key}>
+            <Fragment key={rowKey(r)}>
               <tr
                 className="border-t border-nhra-border/40 cursor-pointer hover:bg-nhra-darker/40"
-                onClick={() => toggle(r.key)}
+                onClick={() => toggle(rowKey(r))}
               >
                 <td className="pl-4 py-1.5 text-gray-600 text-[10px]">
-                  {r.rounds.length > 0 ? (open.has(r.key) ? "▾" : "▸") : ""}
+                  {r.rounds.length > 0 ? (open.has(rowKey(r)) ? "▾" : "▸") : ""}
                 </td>
                 <td className="px-2 py-1.5 text-gray-400">
                   {r.run_car_number || r.roster_car_number || "—"}
@@ -298,7 +384,17 @@ function RacerTable({
                       </span>
                     )}
                 </td>
-                <td className="px-2 py-1.5 text-white">{r.name}</td>
+                <td className="px-2 py-1.5 text-white">
+                  {r.name}
+                  {r.matched_from.length > 1 && (
+                    <span
+                      className="ml-1.5 text-[10px] text-yellow-600"
+                      title="Runs from more than one car number were combined onto this entry — expand to see and move them"
+                    >
+                      ({r.matched_from.length} combined)
+                    </span>
+                  )}
+                </td>
                 <td className="px-2 py-1.5 text-gray-400">{r.division === "jr" ? "Jrs" : "Big Cars"}</td>
                 <td className="px-2 py-1.5 text-gray-400">{r.categories.join(", ") || r.roster_category || "—"}</td>
                 <td className="px-2 py-1.5 text-right text-gray-300">{r.roundsWon}</td>
@@ -346,10 +442,22 @@ function RacerTable({
                   </button>
                 </td>
               </tr>
-              {open.has(r.key) && r.rounds.length > 0 && (
+              {open.has(rowKey(r)) && r.rounds.length > 0 && (
                 <tr className="bg-nhra-darker/40">
                   <td colSpan={10} className="py-1">
-                    <RoundsDetail rounds={r.rounds} assigning={assigning} onFixCarNumber={onFixCarNumber} />
+                    <MatchedFromList
+                      racer={r}
+                      rosterOptions={rosterOptions}
+                      teamOptions={teamOptions}
+                      assigning={assigning}
+                      onAssign={onAssign}
+                    />
+                    <RoundsDetail
+                      rounds={r.rounds}
+                      assigning={assigning}
+                      onFixCarNumber={onFixCarNumber}
+                      onToggleIgnored={onToggleIgnored}
+                    />
                   </td>
                 </tr>
               )}
@@ -366,23 +474,27 @@ function RacerTable({
  * gaining points right now, who isn't (out, bought back, or a non-points
  * entry), and who hasn't made a pass yet.
  */
-function TeamPanel({
-  team,
-  rank,
-  view,
-  assigning,
-  overrideFor,
-  onToggleEligibility,
-  onFixCarNumber,
-}: {
-  team: EtTeamStanding;
-  rank: number;
-  view: ViewMode;
+interface RacerTableHandlers {
   assigning: string | null;
   overrideFor: (key: string) => boolean | undefined;
   onToggleEligibility: (key: string, next: boolean) => void;
   onFixCarNumber: (dedupKey: string, carNumber: string) => void;
-}) {
+  onToggleIgnored: (dedupKey: string, ignore: boolean) => void;
+  rosterOptions: StandingsResponse["rosterOptions"];
+  teamOptions: { code: string; label: string }[];
+  onAssign: (identity: string, target: string) => void;
+}
+
+function TeamPanel({
+  team,
+  rank,
+  view,
+  ...handlers
+}: {
+  team: EtTeamStanding;
+  rank: number;
+  view: ViewMode;
+} & RacerTableHandlers) {
   const racers = team.racers.filter((r) => (view === "combined" ? true : r.division === view));
   const earning = racers.filter((r) => r.points_eligible && (r.status === "racing" || r.status === "winner"));
   const notEarning = racers.filter(
@@ -442,14 +554,7 @@ function TeamPanel({
             {earning.length} racer{earning.length === 1 ? "" : "s"} — still in, every round win adds to the board
           </span>
         </div>
-        <RacerTable
-          racers={earning}
-          emptyText="Nobody on this team is gaining points right now."
-          assigning={assigning}
-          overrideFor={overrideFor}
-          onToggleEligibility={onToggleEligibility}
-          onFixCarNumber={onFixCarNumber}
-        />
+        <RacerTable racers={earning} emptyText="Nobody on this team is gaining points right now." {...handlers} />
       </div>
 
       <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
@@ -460,14 +565,7 @@ function TeamPanel({
             (points already earned still count)
           </span>
         </div>
-        <RacerTable
-          racers={notEarning}
-          emptyText="Nobody here yet."
-          assigning={assigning}
-          overrideFor={overrideFor}
-          onToggleEligibility={onToggleEligibility}
-          onFixCarNumber={onFixCarNumber}
-        />
+        <RacerTable racers={notEarning} emptyText="Nobody here yet." {...handlers} />
       </div>
 
       {notEntered.length > 0 && (
@@ -478,14 +576,7 @@ function TeamPanel({
               {notEntered.length} roster entr{notEntered.length === 1 ? "y" : "ies"} without a run in a scoring class
             </span>
           </div>
-          <RacerTable
-            racers={notEntered}
-            emptyText=""
-            assigning={assigning}
-            overrideFor={overrideFor}
-            onToggleEligibility={onToggleEligibility}
-            onFixCarNumber={onFixCarNumber}
-          />
+          <RacerTable racers={notEntered} emptyText="" {...handlers} />
         </div>
       )}
     </div>
@@ -736,6 +827,33 @@ export default function EtFinalsPage() {
       await loadStandings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fix the car number");
+    } finally {
+      setAssigning(null);
+    }
+  }
+
+  // Throw a pass out (rerun — it doesn't count) or make it count again.
+  async function toggleRunIgnored(dedupKey: string, ignore: boolean) {
+    if (!eventCode || !season) return;
+    setAssigning(dedupKey);
+    try {
+      const res = await fetch("/api/ignore-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_code: eventCode,
+          season,
+          dedup_key: dedupKey,
+          ...(ignore ? {} : { action: "restore" }),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to update the pass");
+      }
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update the pass");
     } finally {
       setAssigning(null);
     }
@@ -2008,6 +2126,10 @@ export default function EtFinalsPage() {
           overrideFor={overrideFor}
           onToggleEligibility={(key, next) => setEligibility(key, next)}
           onFixCarNumber={fixCarNumber}
+          onToggleIgnored={toggleRunIgnored}
+          rosterOptions={data?.rosterOptions || []}
+          teamOptions={teamOptions}
+          onAssign={assignRacer}
         />
       ) : (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
@@ -2123,7 +2245,12 @@ export default function EtFinalsPage() {
                         {u.rounds.length > 0 ? (unmatchedOpen.has(u.identity) ? "▾" : "▸") : ""}
                       </td>
                       <td className="px-2 py-2 text-gray-300">{u.car_number || "—"}</td>
-                      <td className="px-3 py-2 text-white">{u.name || "—"}</td>
+                      <td className="px-3 py-2 text-white">
+                        {u.name || "—"}
+                        {u.memberNumber && (
+                          <span className="block text-[10px] text-gray-500">member #{u.memberNumber}</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-gray-400">{u.category}</td>
                       <td className="px-3 py-2 text-gray-400">
                         {u.techTeam ? (
@@ -2201,7 +2328,12 @@ export default function EtFinalsPage() {
                     {unmatchedOpen.has(u.identity) && u.rounds.length > 0 && (
                       <tr className="bg-nhra-darker/40">
                         <td colSpan={8} className="py-1">
-                          <RoundsDetail rounds={u.rounds} assigning={assigning} onFixCarNumber={fixCarNumber} />
+                          <RoundsDetail
+                            rounds={u.rounds}
+                            assigning={assigning}
+                            onFixCarNumber={fixCarNumber}
+                            onToggleIgnored={toggleRunIgnored}
+                          />
                         </td>
                       </tr>
                     )}

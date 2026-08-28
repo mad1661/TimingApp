@@ -142,6 +142,26 @@ export interface EtRoundResult {
   timestamp: string | null;
   /** Handle for correcting this pass via /api/edit-run (fix a wrong car #). */
   dedup_key: string | null;
+  /**
+   * Thrown out by hand (a rerun is coming, or the pass just doesn't count).
+   * Shown in the log but affects nothing: no points, and a thrown-out loss
+   * doesn't end anyone's points run.
+   */
+  ignored: boolean;
+}
+
+/** One timing-system identity that landed on a roster row — the handle for
+ *  seeing what was combined and for moving it somewhere else. */
+export interface EtMatchedIdentity {
+  /** `${category}|${carKey || nameKey}` — pass to manualMatches to move it. */
+  identity: string;
+  category: string;
+  car_number: string;
+  name: string;
+  member_number: string;
+  matchedBy: "car" | "name" | "member" | "manual";
+  points: number;
+  roundsWon: number;
 }
 
 export interface EtRacerPoints {
@@ -176,6 +196,12 @@ export interface EtRacerPoints {
    */
   source: "roster" | "tech_card";
   rounds: EtRoundResult[];
+  /**
+   * Every timing-system identity combined onto this row. More than one means
+   * runs from two car numbers / spellings were folded together here — each can
+   * be moved to a different roster spot or team if the combination is wrong.
+   */
+  matched_from: EtMatchedIdentity[];
 }
 
 export interface EtCategoryPoints {
@@ -508,9 +534,14 @@ export function computeEtFinalsStandings(
   /** Track directory, for naming a team the tech cards bring in with no
    *  roster of its own. */
   trackNames: Record<string, { track_name: string; team_name: string }> = {},
+  /** Dedup keys of passes thrown out by hand (reruns). Kept in the pass log
+   *  but excluded from points, eliminations and winner inference. */
+  ignoredKeys: Set<string> = new Set(),
 ): EtFinalsStandings {
   const pointsPerWin = config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1;
   const buybackEarns = config.buybackEarnsPoints === true;
+  const isIgnored = (run: RunRow): boolean =>
+    !!run._dedup_key && ignoredKeys.has(run._dedup_key);
 
   // ── Category roles ────────────────────────────────────────────────────────
   const catStats = new Map<string, { runCount: number; rounds: Set<string> }>();
@@ -652,7 +683,7 @@ export function computeEtFinalsStandings(
   const roundHasWinner = new Set<string>();
   const pairHasWinner = new Set<string>();
   for (const run of runs) {
-    if (!isWin(run)) continue;
+    if (!isWin(run) || isIgnored(run)) continue;
     const cat = (run.category || "").trim();
     if (!cat || !isScoringRound(run.round)) continue;
     roundHasWinner.add(`${cat}|${run.round}`);
@@ -723,6 +754,23 @@ export function computeEtFinalsStandings(
         outcome = "loss";
       else outcome = "pending";
 
+      // A thrown-out pass (rerun coming) stays in the log but changes nothing:
+      // its win scores nothing and its loss doesn't end the points run.
+      if (isIgnored(run)) {
+        roundResults.push({
+          round: run.round || "",
+          category: agg.category,
+          outcome,
+          scored: false,
+          points: 0,
+          car_number: (run.car_number || "").trim(),
+          timestamp: run.timestamp,
+          dedup_key: run._dedup_key || null,
+          ignored: true,
+        });
+        continue;
+      }
+
       const scoresHere = !isBuyback && outcome === "win" && (!stopped || buybackEarns);
       if (scoresHere) {
         points += pointsPerWin;
@@ -740,6 +788,7 @@ export function computeEtFinalsStandings(
         car_number: (run.car_number || "").trim(),
         timestamp: run.timestamp,
         dedup_key: run._dedup_key || null,
+        ignored: false,
       });
 
       if (!isBuyback && outcome !== "pending") {
@@ -813,6 +862,23 @@ export function computeEtFinalsStandings(
       undefined;
     const teamHint = card?.trackTeam || "";
 
+    // Two different people can share a name — the member number is what tells
+    // them apart. When this racer's member number is known, a name or car
+    // route may not land on a roster entry whose member number contradicts it;
+    // an entry with no member number on file stays fair game. This also
+    // resolves a same-name pair cleanly: the filter leaves only the entry that
+    // really is this racer.
+    const runMember = agg.member_number || card?.memberNumber || "";
+    const memberConsistent = (b: Bucket | undefined): Bucket | undefined => {
+      if (!b || !runMember) return b;
+      const ok = b.matches.filter((m) => {
+        const em = (m.entry.member_number || "").trim();
+        return !em || em === runMember;
+      });
+      if (ok.length === b.matches.length) return b;
+      return ok.length > 0 ? { matches: ok } : undefined;
+    };
+
     // Member number straight off the timing data is the strongest automatic
     // route — it survives renumbered cars and re-spelled names alike.
     if (!ref && agg.member_number) {
@@ -823,15 +889,15 @@ export function computeEtFinalsStandings(
     }
     if (!ref) {
       take(
-        resolveBucket(byName.get(`${agg.division}|${nameKey}`), teamHint) ??
-          resolveBucket(byNameAnyDivision.get(nameKey), teamHint),
+        resolveBucket(memberConsistent(byName.get(`${agg.division}|${nameKey}`)), teamHint) ??
+          resolveBucket(memberConsistent(byNameAnyDivision.get(nameKey)), teamHint),
         "name",
       );
     }
     if (!ref) {
       take(
-        resolveBucket(byCar.get(`${agg.division}|${carKey}`), teamHint) ??
-          resolveBucket(byCarAnyDivision.get(carKey), teamHint),
+        resolveBucket(memberConsistent(byCar.get(`${agg.division}|${carKey}`)), teamHint) ??
+          resolveBucket(memberConsistent(byCarAnyDivision.get(carKey)), teamHint),
         "car",
       );
     }
@@ -839,8 +905,8 @@ export function computeEtFinalsStandings(
     // under a shortened or differently-spelled first name.
     if (!ref && looseKey) {
       take(
-        resolveBucket(byLoose.get(`${agg.division}|${looseKey}`), teamHint) ??
-          resolveBucket(byLooseAnyDivision.get(looseKey), teamHint),
+        resolveBucket(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`)), teamHint) ??
+          resolveBucket(memberConsistent(byLooseAnyDivision.get(looseKey)), teamHint),
         "name",
       );
     }
@@ -959,6 +1025,7 @@ export function computeEtFinalsStandings(
         matchedBy: null,
         source: "roster",
         rounds: [],
+        matched_from: [],
       };
       racerByKey.set(racer.key, racer);
       team.racers.push(racer);
@@ -995,46 +1062,70 @@ export function computeEtFinalsStandings(
     return team;
   };
 
+  // One row per roster entry per CLASS: a racer doubled up in two classes gets
+  // two separate entries, each with its own points, status and pass log. The
+  // roster placeholder row is taken over by the first class seen; later
+  // classes clone it. Two identities in the SAME class (a car renumbered
+  // mid-event) still fold onto one row, with both visible in matched_from.
+  const rowByEntryAndClass = new Map<string, EtRacerPoints>();
+
   for (const s of scored) {
     const trackCode = s.ref ? s.ref.roster.track_code : s.tech!.trackCode;
     const team = s.ref ? teams.get(trackCode) : ensureTeam(trackCode);
     if (!team) continue;
 
     const key = s.ref ? entryKey(s.ref.roster, s.ref.entry) : s.tech!.key;
-    let racer = racerByKey.get(key);
-    if (!racer && s.tech) {
-      // First run seen for a tech-card-placed racer: give them a row.
-      racer = {
-        key,
-        name: s.tech.name,
-        roster_car_number: "",
-        run_car_number: s.tech.carNumber,
-        track_code: trackCode,
-        team_name: team.team_name,
-        division: s.tech.division,
-        roster_category: s.tech.category,
-        categories: [],
-        points_eligible: s.tech.eligible,
-        points: 0,
-        roundsWon: 0,
-        status: "not_entered",
-        eliminatedIn: null,
-        racedAfterElimination: false,
-        matchedBy: null,
-        source: "tech_card",
-        rounds: [],
-      };
-      racerByKey.set(key, racer);
-      team.racers.push(racer);
-      team.racersFromTechCards++;
-      if (s.tech.division === "jr") {
-        team.jrEntries++;
-        if (s.tech.eligible) team.jrPointsEntries++;
-      } else {
-        team.bigEntries++;
+    const classKey = `${key}|${s.agg.category}`;
+    let racer = rowByEntryAndClass.get(classKey);
+
+    if (!racer) {
+      const placeholder = racerByKey.get(key);
+      if (placeholder && placeholder.status === "not_entered" && placeholder.categories.length === 0) {
+        // First class seen for this roster entry: take over its placeholder row.
+        racer = placeholder;
+      } else if (placeholder) {
+        // Another class for the same racer: a separate entry, sharing the
+        // eligibility key so the Earns toggle governs every class alike.
+        racer = { ...placeholder, categories: [], points: 0, roundsWon: 0, status: "not_entered",
+          eliminatedIn: null, racedAfterElimination: false, matchedBy: null,
+          run_car_number: "", rounds: [], matched_from: [] };
+        team.racers.push(racer);
+      } else if (s.tech) {
+        // First run seen for a tech-card- or hand-placed racer: give them a row.
+        racer = {
+          key,
+          name: s.tech.name,
+          roster_car_number: "",
+          run_car_number: s.tech.carNumber,
+          track_code: trackCode,
+          team_name: team.team_name,
+          division: s.tech.division,
+          roster_category: s.tech.category,
+          categories: [],
+          points_eligible: s.tech.eligible,
+          points: 0,
+          roundsWon: 0,
+          status: "not_entered",
+          eliminatedIn: null,
+          racedAfterElimination: false,
+          matchedBy: null,
+          source: "tech_card",
+          rounds: [],
+          matched_from: [],
+        };
+        racerByKey.set(key, racer);
+        team.racers.push(racer);
+        team.racersFromTechCards++;
+        if (s.tech.division === "jr") {
+          team.jrEntries++;
+          if (s.tech.eligible) team.jrPointsEntries++;
+        } else {
+          team.bigEntries++;
+        }
       }
+      if (!racer) continue;
+      rowByEntryAndClass.set(classKey, racer);
     }
-    if (!racer) continue;
 
     // Only eligible racers put points on the board; ineligible entries still
     // get their rounds recorded so the team page shows they raced.
@@ -1046,9 +1137,18 @@ export function computeEtFinalsStandings(
     racer.points += award;
     racer.roundsWon += s.roundsWon;
     racer.rounds.push(...s.rounds);
-    // A racer doubled up in two main classes gets one row, so fold the two
-    // outcomes together rather than letting whichever landed last win: a final
-    // win outranks being alive, which outranks being out.
+    racer.matched_from.push({
+      identity: `${s.agg.category}|${s.agg.identity}`,
+      category: s.agg.category,
+      car_number: s.agg.car_number,
+      name: s.agg.name,
+      member_number: s.agg.member_number,
+      matchedBy: s.matchedBy,
+      points: award,
+      roundsWon: s.roundsWon,
+    });
+    // Two identities in one class fold together; a final win outranks being
+    // alive, which outranks being out.
     if (s.eliminatedIn && !racer.eliminatedIn) racer.eliminatedIn = s.eliminatedIn;
     if (s.racedAfterElimination) racer.racedAfterElimination = true;
     const rank = (st: EtRacerStatus) =>

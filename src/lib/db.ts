@@ -3700,14 +3700,7 @@ export async function getEtFinalsStandings(
     getIgnoredKeys(eventCode, season),
   ]);
   const savedConfig = savedMeta.config;
-
-  // Respect run edits: when a pass's car number was corrected, the original
-  // row's key is ignored — scoring it too would double the pass and leave the
-  // win on the mistyped car.
-  const runs =
-    ignoredKeys.size > 0
-      ? allRuns.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key))
-      : allRuns;
+  const runs = allRuns;
 
   // Season defaults fill in whatever this event hasn't been told about — the
   // class mapping and the buy-back rule alike — so a reloaded or re-created
@@ -3749,7 +3742,10 @@ export async function getEtFinalsStandings(
     buildEtTechCardRefs(),
     getEtFinalsTrackCodes(season),
   ]);
-  const standings = computeEtFinalsStandings(runs, rosters, config, techCards, trackNames);
+  // Ignored keys ride along rather than pre-filtering: thrown-out passes
+  // (reruns, superseded car-number fixes) stay visible in the pass log but
+  // score nothing and end nobody's points run.
+  const standings = computeEtFinalsStandings(runs, rosters, config, techCards, trackNames, ignoredKeys);
   return {
     ...standings,
     config,
