@@ -123,6 +123,18 @@ export interface EtFinalsConfig {
    * (race morning) counts by default.
    */
   excludedDates: string[];
+  /**
+   * Hand adjustments to a team's totals (track code -> points added, may be
+   * negative), for when the board is known to be off. Applied on top of the
+   * computed points and always shown as an adjustment, never silently.
+   */
+  pointsAdjustments: Record<string, EtPointsAdjustment>;
+}
+
+export interface EtPointsAdjustment {
+  big: number;
+  jr: number;
+  note: string;
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
@@ -136,6 +148,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     buybackEarnsPoints: false,
     scoreFromDate: null,
     excludedDates: [],
+    pointsAdjustments: {},
   };
 }
 
@@ -244,6 +257,11 @@ export interface EtTeamStanding {
   racersFromTechCards: number;
   /** False when no roster has been uploaded for this team at all. */
   hasRoster: boolean;
+  /** Hand adjustment included in bigPoints (0 when none). */
+  bigAdjustment: number;
+  /** Hand adjustment included in jrPoints (0 when none). */
+  jrAdjustment: number;
+  adjustmentNote: string;
   byCategory: EtCategoryPoints[];
   racers: EtRacerPoints[];
 }
@@ -1040,6 +1058,9 @@ export function computeEtFinalsStandings(
       racersStillAlive: 0,
       racersFromTechCards: 0,
       hasRoster: true,
+      bigAdjustment: 0,
+      jrAdjustment: 0,
+      adjustmentNote: "",
       byCategory: [],
       racers: [],
     };
@@ -1095,6 +1116,9 @@ export function computeEtFinalsStandings(
       racersStillAlive: 0,
       racersFromTechCards: 0,
       hasRoster: false,
+      bigAdjustment: 0,
+      jrAdjustment: 0,
+      adjustmentNote: "",
       byCategory: [],
       racers: [],
     };
@@ -1207,6 +1231,20 @@ export function computeEtFinalsStandings(
       if (existing) existing.points += award;
       else catMap.set(s.agg.category, { category: s.agg.category, division: div, points: award });
     }
+  }
+
+  // Hand adjustments land on top of the computed points — and a team that has
+  // an adjustment but no roster and no runs yet still belongs on the board.
+  for (const [code, adj] of Object.entries(config.pointsAdjustments || {})) {
+    const big = Number(adj?.big) || 0;
+    const jr = Number(adj?.jr) || 0;
+    if (big === 0 && jr === 0 && !(adj?.note || "").trim()) continue;
+    const team = ensureTeam((code || "").trim().toUpperCase());
+    team.bigAdjustment = big;
+    team.jrAdjustment = jr;
+    team.adjustmentNote = (adj?.note || "").trim();
+    team.bigPoints += big;
+    team.jrPoints += jr;
   }
 
   for (const team of teams.values()) {

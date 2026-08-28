@@ -819,12 +819,20 @@ function TeamPanel({
   team,
   rank,
   view,
+  onAdjustPoints,
   ...handlers
 }: {
   team: EtTeamStanding;
   rank: number;
   view: ViewMode;
+  onAdjustPoints: (trackCode: string, big: number, jr: number, note: string) => void;
 } & RacerTableHandlers) {
+  const hasAdjustment = team.bigAdjustment !== 0 || team.jrAdjustment !== 0 || !!team.adjustmentNote;
+  const [showAdjust, setShowAdjust] = useState(hasAdjustment);
+  const [adjBig, setAdjBig] = useState(String(team.bigAdjustment || 0));
+  const [adjJr, setAdjJr] = useState(String(team.jrAdjustment || 0));
+  const [adjNote, setAdjNote] = useState(team.adjustmentNote || "");
+  const adjBusy = handlers.assigning === `adjust-${team.track_code}`;
   const racers = team.racers.filter((r) => (view === "combined" ? true : r.division === view));
   const earning = racers.filter((r) => r.points_eligible && (r.status === "racing" || r.status === "winner"));
   const notEarning = racers.filter(
@@ -851,17 +859,92 @@ function TeamPanel({
             <div>
               <div className="text-[11px] uppercase tracking-wider text-gray-500">Big Cars</div>
               <div className="text-xl font-bold text-white">{team.bigPoints}</div>
+              {team.bigAdjustment !== 0 && (
+                <div className="text-[10px] text-yellow-500">
+                  incl. {team.bigAdjustment > 0 ? "+" : ""}
+                  {team.bigAdjustment} adj
+                </div>
+              )}
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wider text-gray-500">Jrs</div>
               <div className="text-xl font-bold text-white">{team.jrPoints}</div>
+              {team.jrAdjustment !== 0 && (
+                <div className="text-[10px] text-yellow-500">
+                  incl. {team.jrAdjustment > 0 ? "+" : ""}
+                  {team.jrAdjustment} adj
+                </div>
+              )}
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wider text-gray-500">Total</div>
               <div className="text-xl font-bold text-nhra-red">{team.totalPoints}</div>
             </div>
+            <button
+              onClick={() => setShowAdjust((v) => !v)}
+              className="self-start text-[11px] text-gray-500 hover:text-white underline decoration-dotted underline-offset-2"
+            >
+              {showAdjust ? "hide" : "Adjust points"}
+            </button>
           </div>
         </div>
+        {showAdjust && (
+          <div className="mt-3 pt-3 border-t border-nhra-border/60 flex items-end gap-3 flex-wrap">
+            <label className="text-[11px] text-gray-400">
+              Big Cars +/−
+              <input
+                type="number"
+                value={adjBig}
+                onChange={(e) => setAdjBig(e.target.value)}
+                className="block mt-1 w-20 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              />
+            </label>
+            <label className="text-[11px] text-gray-400">
+              Jrs +/−
+              <input
+                type="number"
+                value={adjJr}
+                onChange={(e) => setAdjJr(e.target.value)}
+                className="block mt-1 w-20 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              />
+            </label>
+            <label className="text-[11px] text-gray-400 flex-1 min-w-[12rem]">
+              Why (shows on the board and the print)
+              <input
+                value={adjNote}
+                onChange={(e) => setAdjNote(e.target.value)}
+                placeholder="e.g. round win missed by the timing system"
+                className="block mt-1 w-full px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600"
+              />
+            </label>
+            <button
+              disabled={adjBusy}
+              onClick={() =>
+                onAdjustPoints(
+                  team.track_code,
+                  parseInt(adjBig, 10) || 0,
+                  parseInt(adjJr, 10) || 0,
+                  adjNote,
+                )
+              }
+              className="px-3 py-1.5 bg-nhra-red text-white rounded-lg text-xs font-semibold hover:bg-red-600 disabled:opacity-40"
+            >
+              {adjBusy ? "Saving…" : "Apply Adjustment"}
+            </button>
+            {hasAdjustment && (
+              <button
+                disabled={adjBusy}
+                onClick={() => onAdjustPoints(team.track_code, 0, 0, "")}
+                className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-xs hover:text-white disabled:opacity-40"
+              >
+                Clear
+              </button>
+            )}
+            {team.adjustmentNote && (
+              <span className="w-full text-[11px] text-yellow-500">Note: {team.adjustmentNote}</span>
+            )}
+          </div>
+        )}
         {team.byCategory.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3">
             {team.byCategory.map((c) => (
@@ -1163,6 +1246,16 @@ export default function EtFinalsPage() {
     } finally {
       setAssigning(null);
     }
+  }
+
+  // Hand-adjust a team's totals for when the board is known to be off.
+  async function adjustTeamPoints(trackCode: string, big: number, jr: number, note: string) {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const next = { ...(base.pointsAdjustments || {}) };
+    if (!big && !jr && !note.trim()) delete next[trackCode];
+    else next[trackCode] = { big, jr, note: note.trim() };
+    await savePointsRule({ pointsAdjustments: next }, `adjust-${trackCode}`);
   }
 
   // Throw a pass out (rerun — it doesn't count) or make it count again.
@@ -1558,6 +1651,21 @@ export default function EtFinalsPage() {
       )
       .join("");
 
+    const adjustedTeams = teams.filter((t) => t.bigAdjustment !== 0 || t.jrAdjustment !== 0);
+    const adjustmentsNote = adjustedTeams.length
+      ? `<p class="sub">Hand adjustments included: ${adjustedTeams
+          .map(
+            (t) =>
+              `${esc(t.team_name)} ${[
+                t.bigAdjustment ? `big ${t.bigAdjustment > 0 ? "+" : ""}${t.bigAdjustment}` : "",
+                t.jrAdjustment ? `jrs ${t.jrAdjustment > 0 ? "+" : ""}${t.jrAdjustment}` : "",
+              ]
+                .filter(Boolean)
+                .join(", ")}${t.adjustmentNote ? ` (${esc(t.adjustmentNote)})` : ""}`,
+          )
+          .join("; ")}</p>`
+      : "";
+
     const teamBlocks = teams
       .map((t) => {
         const earners = t.racers.filter((r) => r.points > 0);
@@ -1616,6 +1724,7 @@ export default function EtFinalsPage() {
         <thead><tr><th class="c">Place</th><th>Team</th><th class="r">Big Cars</th><th class="r">Jrs</th><th class="r">Total</th></tr></thead>
         <tbody>${standingsRows}</tbody>
       </table>
+      ${adjustmentsNote}
       <h2>Point Earners by Team</h2>
       ${teamBlocks || '<p class="sub">No points scored yet.</p>'}
       <script>window.onload = () => window.print();</script>
@@ -2559,6 +2668,7 @@ export default function EtFinalsPage() {
         </div>
       ) : activeTeam ? (
         <TeamPanel
+          key={activeTeam.track_code}
           team={activeTeam}
           rank={sortedTeams.indexOf(activeTeam) + 1}
           view={view}
@@ -2570,6 +2680,7 @@ export default function EtFinalsPage() {
           rosterOptions={data?.rosterOptions || []}
           teamOptions={teamOptions}
           onAssign={assignRacer}
+          onAdjustPoints={adjustTeamPoints}
         />
       ) : (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
@@ -2623,7 +2734,22 @@ export default function EtFinalsPage() {
                     >
                       {team.jrPoints}
                     </td>
-                    <td className="px-4 py-3 text-right text-lg font-bold text-nhra-red">{team.totalPoints}</td>
+                    <td className="px-4 py-3 text-right text-lg font-bold text-nhra-red">
+                      {team.totalPoints}
+                      {(team.bigAdjustment !== 0 || team.jrAdjustment !== 0) && (
+                        <span
+                          className="ml-1 text-[10px] text-yellow-500 font-semibold align-top"
+                          title={`Includes a hand adjustment (${[
+                            team.bigAdjustment ? `big ${team.bigAdjustment > 0 ? "+" : ""}${team.bigAdjustment}` : "",
+                            team.jrAdjustment ? `jrs ${team.jrAdjustment > 0 ? "+" : ""}${team.jrAdjustment}` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(", ")})${team.adjustmentNote ? ` — ${team.adjustmentNote}` : ""}`}
+                        >
+                          adj
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right text-green-400">
                       {team.racers.filter((r) => r.points_eligible && (r.status === "racing" || r.status === "winner")).length}
                     </td>
