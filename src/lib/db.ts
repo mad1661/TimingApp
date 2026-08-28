@@ -3351,6 +3351,7 @@ async function getEtFinalsConfigWithMeta(
         eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
         buybackEarnsPoints: data.buybackEarnsPoints === true,
         scoreFromDate: typeof data.scoreFromDate === "string" && data.scoreFromDate ? data.scoreFromDate : null,
+        excludedDates: Array.isArray(data.excludedDates) ? (data.excludedDates as string[]) : [],
       },
       hasBuybackRule: typeof data.buybackEarnsPoints === "boolean",
     };
@@ -3441,6 +3442,7 @@ export async function saveEtFinalsSetup(
       eligibilityOverrides: config.eligibilityOverrides || {},
       buybackEarnsPoints: config.buybackEarnsPoints === true,
       scoreFromDate: (config.scoreFromDate || "").trim() || null,
+      excludedDates: config.excludedDates || [],
     },
     saved_at: new Date().toISOString(),
   });
@@ -3538,6 +3540,7 @@ export async function saveEtFinalsConfig(
       eligibilityOverrides: config.eligibilityOverrides || {},
       buybackEarnsPoints: config.buybackEarnsPoints === true,
       scoreFromDate: (config.scoreFromDate || "").trim() || null,
+      excludedDates: config.excludedDates || [],
       updated_at: new Date().toISOString(),
     },
     { merge: true },
