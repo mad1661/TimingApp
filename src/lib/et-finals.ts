@@ -262,6 +262,25 @@ export interface EtTeamStanding {
   /** Hand adjustment included in jrPoints (0 when none). */
   jrAdjustment: number;
   adjustmentNote: string;
+  /**
+   * Most points this team can still add: every eligible racer still alive
+   * winning every remaining round of their class, where the rounds left are
+   * estimated from how many cars are still standing (each round halves the
+   * field). An estimate, deliberately generous — a team is only ever called
+   * mathematically out against the ceiling, never against a guess that could
+   * undershoot.
+   */
+  maxRemainingPoints: number;
+  /** totalPoints + maxRemainingPoints. */
+  maxPossibleTotal: number;
+  /** Points of the nearest team ranked strictly better; null for the leader. */
+  nextSpotPoints: number | null;
+  /** Whether this team can still reach the next spot up; null for the leader. */
+  canCatchNextSpot: boolean | null;
+  /** Teams ranked below that can still reach or pass this team's total. */
+  atRiskFrom: string[];
+  /** True when no team below can reach this total any more. */
+  spotLocked: boolean;
   byCategory: EtCategoryPoints[];
   racers: EtRacerPoints[];
 }
@@ -776,6 +795,12 @@ export function computeEtFinalsStandings(
   const scored: Scored[] = [];
   const unmatched: EtUnmatchedRacer[] = [];
 
+  // For the outlook: how many cars are still physically in each class (they
+  // set the bracket depth left to run), and which classes have crowned a
+  // winner. Counted across every aggregate, matched or not.
+  const aliveByCat = new Map<string, number>();
+  const finalDoneCats = new Set<string>();
+
   for (const agg of runners.values()) {
     const buybackRounds = new Set(
       (config.buybackRounds[agg.category] || []).map((r) => r.trim().toUpperCase()),
@@ -865,6 +890,12 @@ export function computeEtFinalsStandings(
     if (buybackEarns) {
       eliminatedIn = lastDecided === "loss" ? lastLossRound : null;
       racedAfterElimination = false;
+    }
+
+    if (wonFinal) finalDoneCats.add(agg.category);
+    // Physically still on track: never lost, or lost and bought back in.
+    if (!wonFinal && (!eliminatedIn || racedAfterElimination)) {
+      aliveByCat.set(agg.category, (aliveByCat.get(agg.category) || 0) + 1);
     }
 
     // Match to a roster entry. What the timing system shows is the truth, and
@@ -1061,6 +1092,12 @@ export function computeEtFinalsStandings(
       bigAdjustment: 0,
       jrAdjustment: 0,
       adjustmentNote: "",
+      maxRemainingPoints: 0,
+      maxPossibleTotal: 0,
+      nextSpotPoints: null,
+      canCatchNextSpot: null,
+      atRiskFrom: [],
+      spotLocked: false,
       byCategory: [],
       racers: [],
     };
@@ -1119,6 +1156,12 @@ export function computeEtFinalsStandings(
       bigAdjustment: 0,
       jrAdjustment: 0,
       adjustmentNote: "",
+      maxRemainingPoints: 0,
+      maxPossibleTotal: 0,
+      nextSpotPoints: null,
+      canCatchNextSpot: null,
+      atRiskFrom: [],
+      spotLocked: false,
       byCategory: [],
       racers: [],
     };
@@ -1274,6 +1317,42 @@ export function computeEtFinalsStandings(
     }
     t.rank = rank;
   });
+
+  // ── Outlook: what each team can still add, and what that means ───────────
+  // Rounds left in a class: eliminations halve the field, so N cars standing
+  // means about ceil(log2(N)) more rounds. One car left with no final recorded
+  // could still have one to run. Deliberately generous — "mathematically out"
+  // is only ever declared against this ceiling.
+  const roundsLeftFor = (cat: string): number => {
+    if (finalDoneCats.has(cat)) return 0;
+    const alive = aliveByCat.get(cat) || 0;
+    if (alive >= 2) return Math.ceil(Math.log2(alive));
+    if (alive === 1) return 1;
+    return 0;
+  };
+
+  for (const team of standings) {
+    let remaining = 0;
+    for (const r of team.racers) {
+      if (!r.points_eligible || r.status !== "racing") continue;
+      const cat = r.categories[0];
+      if (!cat) continue;
+      remaining += roundsLeftFor(cat) * pointsPerWin;
+    }
+    team.maxRemainingPoints = remaining;
+    team.maxPossibleTotal = team.totalPoints + remaining;
+  }
+
+  for (const team of standings) {
+    // The nearest team ranked strictly better — the next spot up.
+    const nextUp = standings.filter((t) => t.rank < team.rank).pop() || null;
+    team.nextSpotPoints = nextUp ? nextUp.totalPoints : null;
+    team.canCatchNextSpot = nextUp ? team.maxPossibleTotal >= nextUp.totalPoints : null;
+    team.atRiskFrom = standings
+      .filter((t) => t.rank > team.rank && t.maxPossibleTotal >= team.totalPoints)
+      .map((t) => t.team_name);
+    team.spotLocked = team.atRiskFrom.length === 0;
+  }
 
   const roundsScored = Array.from(
     new Set(

@@ -2765,6 +2765,75 @@ export default function EtFinalsPage() {
         </div>
       )}
 
+      {/* ── Points outlook ─────────────────────────────────────────────── */}
+      {!activeTeam && sortedTeams.length > 1 && data && (
+        <div className="mt-4 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-nhra-border">
+            <h3 className="text-white font-bold text-sm">Points Outlook</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              What each team can still add if every alive racer wins out — who&apos;s mathematically out of the next
+              spot, and whose spot can still be taken. Rounds left are estimated from cars still standing (each round
+              halves the field), so treat &quot;can still reach&quot; as generous and &quot;out&quot; as certain.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium w-10">#</th>
+                  <th className="text-left px-2 py-2 font-medium">Team</th>
+                  <th className="text-right px-2 py-2 font-medium">Points</th>
+                  <th className="text-right px-2 py-2 font-medium">Max Possible</th>
+                  <th className="text-left px-4 py-2 font-medium">Next Spot Up</th>
+                  <th className="text-left px-4 py-2 font-medium">Current Spot</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...data.teams]
+                  .sort((a, b) => a.rank - b.rank || b.totalPoints - a.totalPoints)
+                  .map((t) => (
+                    <tr key={t.track_code} className="border-t border-nhra-border/50">
+                      <td className="px-4 py-2 text-gray-500 font-semibold">{t.rank}</td>
+                      <td className="px-2 py-2 text-white font-medium">{t.team_name}</td>
+                      <td className="px-2 py-2 text-right font-bold text-white">{t.totalPoints}</td>
+                      <td className="px-2 py-2 text-right text-gray-300">
+                        {t.maxPossibleTotal}
+                        {t.maxRemainingPoints > 0 && (
+                          <span className="text-gray-500"> (+{t.maxRemainingPoints})</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2">
+                        {t.canCatchNextSpot === null ? (
+                          <span className="text-gray-500">— leading</span>
+                        ) : t.canCatchNextSpot ? (
+                          <span className="text-green-400">
+                            can still reach it
+                            {t.nextSpotPoints !== null && (
+                              <span className="text-gray-500"> · {t.nextSpotPoints - t.totalPoints} back</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-red-400 font-semibold">mathematically out</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2">
+                        {t.spotLocked ? (
+                          <span className="text-green-400 font-semibold">locked — nobody below can reach it</span>
+                        ) : (
+                          <span className="text-yellow-500">
+                            can still be taken by {t.atRiskFrom.slice(0, 4).join(", ")}
+                            {t.atRiskFrom.length > 4 ? ` +${t.atRiskFrom.length - 4} more` : ""}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ── Round review ───────────────────────────────────────────────── */}
       <RoundReview
         eventCode={eventCode}
