@@ -137,6 +137,11 @@ export interface EtRoundResult {
   /** False for rounds excluded from scoring (buy-back rounds). */
   scored: boolean;
   points: number;
+  /** Car number exactly as the timing system recorded this pass. */
+  car_number: string;
+  timestamp: string | null;
+  /** Handle for correcting this pass via /api/edit-run (fix a wrong car #). */
+  dedup_key: string | null;
 }
 
 export interface EtRacerPoints {
@@ -217,7 +222,16 @@ export interface EtUnmatchedRacer {
   techTeam: string;
   /** Member number from the tech card, to identify them when pinning. */
   memberNumber: string;
+  /** Their passes so far, for the drill-down and for fixing a wrong car #. */
+  rounds: EtRoundResult[];
 }
+
+/**
+ * Manual-match target that puts a racer straight onto a team with no roster
+ * row — the route for Jr Dragsters whose tech cards carry no team code and
+ * whose personal numbers appear on no roster sheet. Value: `TEAM|{trackCode}`.
+ */
+export const TEAM_MATCH_PREFIX = "TEAM|";
 
 export interface EtFinalsStandings {
   teams: EtTeamStanding[];
@@ -305,11 +319,32 @@ export function looseNameKey(raw: string | null | undefined): string {
   return initials ? `${surname}|${initials}` : "";
 }
 
-const JR_HINT = /\b(JR|JUNIOR|JDRL|JR\.?\s*DRAGSTER|JR\.?\s*STREET)\b/;
+// "JS" is how the Compulink exports abbreviate Jr Street; "JRS" is how the
+// bracket-finals timing classes write it ("10-12 JRS BRACKET FINALS").
+const JR_HINT = /\b(JRS?|JUNIOR|JDRL|JR\.?\s*DRAGSTER|JR\.?\s*STREET|JS)\b/;
+// A junior age group leading the class name ("6-9 …", "10-12 …", "15-17 …").
+const JR_AGE_BRACKET = /^\s*\d{1,2}\s*-\s*\d{1,2}\b/;
 const BUYBACK_HINT = /\b(BUY\s*-?\s*BACK|BUYBACK|B\/?B|SECOND\s*CHANCE|2ND\s*CHANCE)\b/;
 
 export function guessCategoryDivision(category: string): EtDivision {
-  return JR_HINT.test((category || "").toUpperCase()) ? "jr" : "big";
+  const c = (category || "").toUpperCase();
+  return JR_HINT.test(c) || JR_AGE_BRACKET.test(c) ? "jr" : "big";
+}
+
+/**
+ * A "BYE" lane is the timing system's placeholder telling the real car in the
+ * pair it ran alone — it is not a racer and must never match, score, or sit in
+ * the unmatched list waiting to be assigned.
+ */
+export function isByeMarker(run: {
+  car_number?: string | null;
+  name?: string | null;
+}): boolean {
+  const car = (run.car_number || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  if (car === "BYE" || car === "BYERUN") return true;
+  if (car) return false;
+  const name = (run.name || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  return name === "BYE" || name === "BYERUN";
 }
 
 export function guessCategoryRole(category: string): EtCategoryRole {
@@ -586,6 +621,7 @@ export function computeEtFinalsStandings(
     const cat = (run.category || "").trim();
     if (!cat || !mainCats.has(cat)) continue;
     if (!isScoringRound(run.round)) continue;
+    if (isByeMarker(run)) continue;
     const car = normalizeCarKey(run.car_number);
     const nameKey = normalizeNameKey(run.name);
     const ident = car || nameKey;
@@ -638,7 +674,7 @@ export function computeEtFinalsStandings(
   interface Scored {
     ref: RosterIndexEntry | null;
     tech: TechPlacement | null;
-    matchedBy: "car" | "name" | "member";
+    matchedBy: "car" | "name" | "member" | "manual";
     agg: RunnerAggregate;
     points: number;
     roundsWon: number;
@@ -701,6 +737,9 @@ export function computeEtFinalsStandings(
         outcome,
         scored: scoresHere,
         points: scoresHere ? pointsPerWin : 0,
+        car_number: (run.car_number || "").trim(),
+        timestamp: run.timestamp,
+        dedup_key: run._dedup_key || null,
       });
 
       if (!isBuyback && outcome !== "pending") {
@@ -752,7 +791,15 @@ export function computeEtFinalsStandings(
     const manualTarget =
       config.manualMatches?.[`${agg.category}|${agg.identity}`] ??
       config.manualMatches?.[agg.identity];
-    if (manualTarget) take(manualEntries.get(manualTarget) ?? null, "manual");
+    // A hand pick of a whole team (no roster row involved) — the way a Jr
+    // Dragster with a blank tech-card team code and no roster number gets
+    // placed. Beats every automatic route, like any other manual pin.
+    let manualTeam: string | null = null;
+    if (manualTarget?.startsWith(TEAM_MATCH_PREFIX)) {
+      manualTeam = manualTarget.slice(TEAM_MATCH_PREFIX.length).trim().toUpperCase() || null;
+    } else if (manualTarget) {
+      take(manualEntries.get(manualTarget) ?? null, "manual");
+    }
 
     // Find this racer's tech card from whatever the timing system shows. When
     // the timing data itself carries the member number that lookup is exact;
@@ -798,11 +845,25 @@ export function computeEtFinalsStandings(
       );
     }
 
-    // No roster claims them, but their tech card names a team — that is where
-    // they entered, so put them on it rather than leaving their round wins
-    // scoring for nobody. The roster still wins wherever it has an entry.
+    // No roster claims them, but a human picked their team, or their tech card
+    // names one — put them on it rather than leaving their round wins scoring
+    // for nobody. The roster still wins wherever it has an entry; a manual team
+    // pick beats even that being absent.
     let techPlacement: TechPlacement | null = null;
-    if (!ref && teamHint) {
+    if (manualTeam) {
+      ref = null; // a manual team pick overrides any automatic roster match
+      const key = `TEAM|${manualTeam}|${agg.division}|${agg.identity}`;
+      techPlacement = {
+        trackCode: manualTeam,
+        division: agg.division,
+        key,
+        name: agg.name,
+        carNumber: agg.car_number,
+        category: agg.category,
+        // Deliberately placed by hand, so they earn unless switched off.
+        eligible: config.eligibilityOverrides?.[key] ?? true,
+      };
+    } else if (!ref && teamHint) {
       techPlacement = {
         trackCode: teamHint,
         division: agg.division,
@@ -831,6 +892,7 @@ export function computeEtFinalsStandings(
         reason: sawAmbiguous ? "ambiguous" : "no_roster_entry",
         techTeam: teamHint,
         memberNumber: agg.member_number || card?.memberNumber || "",
+        rounds: roundResults,
       });
       continue;
     }
@@ -838,7 +900,7 @@ export function computeEtFinalsStandings(
     scored.push({
       ref: ref as RosterIndexEntry | null,
       tech: techPlacement,
-      matchedBy: techPlacement ? "member" : matchedBy,
+      matchedBy: manualTeam ? "manual" : techPlacement ? "member" : matchedBy,
       agg,
       points,
       roundsWon,

@@ -159,9 +159,9 @@ function findRosterSheets(workbook: XLSX.WorkBook): SheetPlan[] {
   return plans;
 }
 
-// A junior class is written as an age bracket or as Jr Street, which is how a
-// junior row is recognised on a sheet that mixes both.
-const JR_CATEGORY_RE = /^(\d{1,2}\s*-\s*\d{1,2}|jr\s*street|junior)/i;
+// A junior class is written as an age bracket, "Jr. Dragster", "Jr Street" or
+// "Junior ..." — how a junior row is recognised on a sheet that mixes both.
+const JR_CATEGORY_RE = /^(\d{1,2}\s*-\s*\d{1,2}|jr\b\.?|junior)/i;
 
 function colGetter(row: string[], cols: Map<string, number>) {
   return (...names: string[]): string => {
