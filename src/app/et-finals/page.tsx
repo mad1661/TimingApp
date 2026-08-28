@@ -2,7 +2,14 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveData } from "@/components/LiveDataProvider";
-import { elimRoundOrder, TEAM_MATCH_PREFIX } from "@/lib/et-finals";
+import {
+  elimRoundOrder,
+  isByeMarker,
+  normalizeCarKey,
+  normalizeNameKey,
+  TEAM_MATCH_PREFIX,
+} from "@/lib/et-finals";
+import { finishEt } from "@/lib/run-finish";
 import type {
   EtCategoryRole,
   EtDivision,
@@ -474,6 +481,319 @@ function RacerTable({
  * gaining points right now, who isn't (out, bought back, or a non-points
  * entry), and who hasn't made a pass yet.
  */
+interface ReviewRun {
+  timestamp: string | null;
+  round: string | null;
+  car_number: string | null;
+  name: string | null;
+  member_number?: string | null;
+  rt: number | null;
+  ft660: number | null;
+  ft1320: number | null;
+  dial_in: number | null;
+  result: string | null;
+  is_winner: number;
+  is_dq: number;
+  lane: string | null;
+  category: string | null;
+  _dedup_key?: string;
+}
+
+/**
+ * Pull up one class and one round and look at every pass in it, pairs kept
+ * together — with the same correction tools as the racer drill-downs, plus
+ * which team each pass is crediting. The fastest way to spot a wrong car
+ * number in the round that just ran.
+ */
+function RoundReview({
+  eventCode,
+  season,
+  data,
+  assigning,
+  onFixCarNumber,
+  onToggleIgnored,
+}: {
+  eventCode: string;
+  season: string;
+  data: StandingsResponse | null;
+  assigning: string | null;
+  onFixCarNumber: (dedupKey: string, carNumber: string) => void;
+  onToggleIgnored: (dedupKey: string, ignore: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [category, setCategory] = useState("");
+  const [round, setRound] = useState("");
+  const [runs, setRuns] = useState<ReviewRun[]>([]);
+  const [ignoredKeys, setIgnoredKeys] = useState<Set<string>>(new Set());
+  const [loadingRuns, setLoadingRuns] = useState(false);
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [carValue, setCarValue] = useState("");
+
+  // Classes worth reviewing: everything scored, buy-backs included.
+  const reviewCats = useMemo(
+    () => (data?.categories || []).filter((c) => c.role !== "ignore"),
+    [data],
+  );
+  const activeCat = reviewCats.find((c) => c.category === category) || reviewCats[0];
+  const rounds = useMemo(
+    () => (activeCat?.rounds || []).filter((r) => /^(E\d+|F|FINAL)$/i.test(r.trim())),
+    [activeCat],
+  );
+  const activeRound = rounds.includes(round) ? round : rounds[rounds.length - 1] || "";
+
+  // Which team every timing identity is crediting, from the standings.
+  const creditedTo = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of data?.teams || []) {
+      for (const r of t.racers) {
+        for (const m of r.matched_from) map.set(m.identity, t.team_name);
+      }
+    }
+    for (const u of data?.unmatched || []) map.set(u.identity, "");
+    return map;
+  }, [data]);
+
+  useEffect(() => {
+    if (!open || !eventCode || !season || !activeCat || !activeRound) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingRuns(true);
+      try {
+        const [runsRes, ignRes] = await Promise.all([
+          fetch(
+            `/api/runs?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(activeCat.category)}&round=${encodeURIComponent(activeRound)}&limit=500&sort_by=timestamp&sort_dir=ASC`,
+            { cache: "no-store" },
+          ),
+          fetch(
+            `/api/ignore-run?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`,
+            { cache: "no-store" },
+          ),
+        ]);
+        const runsBody = await runsRes.json();
+        const ignBody = await ignRes.json();
+        if (!cancelled) {
+          setRuns(runsBody.runs || []);
+          setIgnoredKeys(new Set(ignBody.keys || []));
+        }
+      } catch {
+        if (!cancelled) setRuns([]);
+      } finally {
+        if (!cancelled) setLoadingRuns(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // `data` is a dependency on purpose: a fix or throw-out reloads the
+    // standings, and this list must follow it.
+  }, [open, eventCode, season, activeCat, activeRound, data]);
+
+  // Alternate the background per timestamp group so pairs read as pairs.
+  let lastTs: string | null = null;
+  let stripe = false;
+
+  return (
+    <div className="mt-8 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+      >
+        <div>
+          <h2 className="text-white font-bold">Round Review</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Pull up a class and a round, pass by pass — fix a wrong car number or throw out a rerun right here
+          </p>
+        </div>
+        <span className="text-gray-400 text-sm">{open ? "Hide" : "Open"}</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-nhra-border">
+          <div className="px-6 py-3 flex items-center gap-3 flex-wrap bg-nhra-darker/40">
+            <label className="text-xs text-gray-400">
+              Class
+              <select
+                value={activeCat?.category || ""}
+                onChange={(e) => {
+                  setCategory(e.target.value);
+                  setRound("");
+                }}
+                className="ml-2 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              >
+                {reviewCats.map((c) => (
+                  <option key={c.category} value={c.category}>
+                    {c.category}
+                    {c.role === "buyback" ? " (buy-back)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-gray-400">
+              Round
+              <select
+                value={activeRound}
+                onChange={(e) => setRound(e.target.value)}
+                className="ml-2 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              >
+                {rounds.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {loadingRuns && <span className="text-xs text-gray-500">Loading…</span>}
+          </div>
+
+          {runs.length === 0 && !loadingRuns ? (
+            <p className="px-6 py-6 text-sm text-gray-500">
+              No elimination passes recorded in this class/round yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-gray-500 uppercase tracking-wider bg-nhra-darker">
+                  <tr>
+                    <th className="text-left px-6 py-2 font-medium">Time</th>
+                    <th className="text-left px-2 py-2 font-medium">Lane</th>
+                    <th className="text-left px-2 py-2 font-medium">Car #</th>
+                    <th className="text-left px-2 py-2 font-medium">Driver</th>
+                    <th className="text-left px-2 py-2 font-medium">Member #</th>
+                    <th className="text-right px-2 py-2 font-medium">RT</th>
+                    <th className="text-right px-2 py-2 font-medium">Dial</th>
+                    <th className="text-right px-2 py-2 font-medium">ET</th>
+                    <th className="text-center px-2 py-2 font-medium">Result</th>
+                    <th className="text-left px-2 py-2 font-medium">Credits</th>
+                    <th className="text-right px-6 py-2 font-medium">Corrections</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r, i) => {
+                    if (r.timestamp !== lastTs) {
+                      stripe = !stripe;
+                      lastTs = r.timestamp;
+                    }
+                    const key = r._dedup_key || "";
+                    const ignored = !!key && ignoredKeys.has(key);
+                    const bye = isByeMarker(r);
+                    const ident = `${(r.category || "").trim()}|${normalizeCarKey(r.car_number) || normalizeNameKey(r.name)}`;
+                    const credited = bye ? null : creditedTo.get(ident);
+                    const res = (r.result || "").trim().toUpperCase();
+                    const win = res === "W" || (!res && r.is_winner === 1);
+                    const dim = ignored ? "opacity-50 line-through" : "";
+                    const editing = editKey !== null && editKey === key;
+                    const busy = assigning !== null && assigning === key;
+                    return (
+                      <tr key={key || i} className={`border-t border-nhra-border/40 ${stripe ? "bg-nhra-darker/30" : ""}`}>
+                        <td className={`px-6 py-1.5 text-gray-500 whitespace-nowrap ${dim}`}>
+                          {r.timestamp ? r.timestamp.split(" ").slice(1).join(" ") : "—"}
+                        </td>
+                        <td className={`px-2 py-1.5 text-gray-500 ${dim}`}>{r.lane || "—"}</td>
+                        <td className={`px-2 py-1.5 font-mono text-white ${dim}`}>{r.car_number || "—"}</td>
+                        <td className={`px-2 py-1.5 ${bye ? "text-gray-600 italic" : "text-gray-300"} ${dim}`}>
+                          {bye ? "bye (placeholder)" : r.name || "—"}
+                        </td>
+                        <td className={`px-2 py-1.5 text-gray-500 ${dim}`}>{r.member_number || "—"}</td>
+                        <td className={`px-2 py-1.5 text-right font-mono text-gray-400 ${dim}`}>
+                          {r.rt?.toFixed(3) ?? "—"}
+                        </td>
+                        <td className={`px-2 py-1.5 text-right font-mono text-gray-500 ${dim}`}>
+                          {r.dial_in?.toFixed(2) ?? "—"}
+                        </td>
+                        <td className={`px-2 py-1.5 text-right font-mono text-gray-300 ${dim}`}>
+                          {finishEt(r)?.toFixed(3) ?? "—"}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          {ignored ? (
+                            <span className="text-gray-500 font-semibold">out</span>
+                          ) : win ? (
+                            <span className="text-green-400 font-bold">W</span>
+                          ) : res ? (
+                            <span className="text-red-400">{res}</span>
+                          ) : (
+                            <span className="text-gray-600">—</span>
+                          )}
+                        </td>
+                        <td className={`px-2 py-1.5 ${dim}`}>
+                          {bye ? (
+                            <span className="text-gray-600">—</span>
+                          ) : credited ? (
+                            <span className="text-gray-300">{credited}</span>
+                          ) : credited === "" ? (
+                            <span className="text-yellow-500">unmatched</span>
+                          ) : (
+                            <span className="text-gray-600">—</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-1.5 text-right whitespace-nowrap">
+                          {bye ? null : editing ? (
+                            <span className="inline-flex items-center gap-1">
+                              <input
+                                value={carValue}
+                                onChange={(e) => setCarValue(e.target.value.toUpperCase())}
+                                autoFocus
+                                placeholder="correct #"
+                                className="w-20 px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-[11px] text-white"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && carValue.trim() && key) {
+                                    onFixCarNumber(key, carValue.trim());
+                                    setEditKey(null);
+                                  }
+                                  if (e.key === "Escape") setEditKey(null);
+                                }}
+                              />
+                              <button
+                                disabled={!carValue.trim() || busy}
+                                onClick={() => {
+                                  if (key) onFixCarNumber(key, carValue.trim());
+                                  setEditKey(null);
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-nhra-red text-white font-semibold disabled:opacity-40"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => setEditKey(null)}
+                                className="px-1 py-0.5 text-gray-500 hover:text-white"
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-3">
+                              <button
+                                disabled={!key || busy}
+                                onClick={() => {
+                                  setEditKey(key);
+                                  setCarValue((r.car_number || "").toUpperCase());
+                                }}
+                                className="text-nhra-accent hover:underline disabled:opacity-40"
+                              >
+                                {busy ? "Working…" : "Fix car #"}
+                              </button>
+                              <button
+                                disabled={!key || busy}
+                                onClick={() => key && onToggleIgnored(key, !ignored)}
+                                className={`hover:underline disabled:opacity-40 ${ignored ? "text-green-400" : "text-gray-500 hover:text-red-400"}`}
+                              >
+                                {ignored ? "Count again" : "Throw out"}
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface RacerTableHandlers {
   assigning: string | null;
   overrideFor: (key: string) => boolean | undefined;
@@ -2198,6 +2518,16 @@ export default function EtFinalsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Round review ───────────────────────────────────────────────── */}
+      <RoundReview
+        eventCode={eventCode}
+        season={season}
+        data={data}
+        assigning={assigning}
+        onFixCarNumber={fixCarNumber}
+        onToggleIgnored={toggleRunIgnored}
+      />
 
       {/* ── Unmatched ──────────────────────────────────────────────────── */}
       {data && data.unmatched.length > 0 && (
