@@ -24,6 +24,15 @@ type StandingsResponse = EtFinalsStandings & {
   classesFromDefaults: string[];
 };
 
+interface SavedSetup {
+  id: string;
+  name: string;
+  season: string;
+  source_event_code: string;
+  saved_at: string;
+  config: EtFinalsConfig;
+}
+
 interface RosterSummary {
   id: string;
   track_code: string;
@@ -366,6 +375,12 @@ export default function EtFinalsPage() {
   const [edataDate, setEdataDate] = useState("");
   const edataRef = useRef<HTMLInputElement>(null);
 
+  const [setups, setSetups] = useState<SavedSetup[]>([]);
+  const [showSetups, setShowSetups] = useState(false);
+  const [setupName, setSetupName] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupMsg, setSetupMsg] = useState("");
+
   const [rosters, setRosters] = useState<RosterSummary[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -403,10 +418,21 @@ export default function EtFinalsPage() {
     }
   }, []);
 
+  const loadSetups = useCallback(async () => {
+    try {
+      const res = await fetch("/api/et-finals/setups");
+      const body = await res.json();
+      if (res.ok) setSetups(body.setups || []);
+    } catch {
+      /* informational — a failure here shouldn't blank the page */
+    }
+  }, []);
+
   useEffect(() => {
     loadStandings();
     loadRosters();
-  }, [loadStandings, loadRosters, live.dataVersion]);
+    loadSetups();
+  }, [loadStandings, loadRosters, loadSetups, live.dataVersion]);
 
   useEffect(() => {
     const start = live.config?.startDate;
@@ -470,6 +496,67 @@ export default function EtFinalsPage() {
     } finally {
       setAssigning(null);
     }
+  }
+
+  // Save the whole team-points setup — class roles and boards, buy-back rule,
+  // pins, eligibility overrides — under a name, so it can be brought back after
+  // a purge, a re-created event or a changed event code.
+  async function saveSetup() {
+    const cfg = draftConfig ?? data?.config;
+    if (!cfg) return;
+    const name = setupName.trim() || `${season} ET Finals`;
+    setSetupBusy(true);
+    setSetupMsg("");
+    try {
+      const res = await fetch("/api/et-finals/setups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, season, event_code: eventCode, config: cfg }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Failed to save settings");
+      setSetupMsg(`Saved as "${name}".`);
+      setSetupName("");
+      await loadSetups();
+    } catch (err) {
+      setSetupMsg(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  // Stamp a saved setup onto the current event.
+  async function applySetup(s: SavedSetup) {
+    if (!eventCode || !season) return;
+    if (
+      !confirm(
+        `Load "${s.name}" onto this event?\n\nThis replaces the current class setup, buy-back rule, manual pins and eligibility overrides.`,
+      )
+    )
+      return;
+    setSetupBusy(true);
+    setSetupMsg("");
+    try {
+      const res = await fetch("/api/et-finals/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, config: s.config }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Failed to load settings");
+      setSetupMsg(`Loaded "${s.name}" onto ${eventName || eventCode}.`);
+      await loadStandings();
+    } catch (err) {
+      setSetupMsg(err instanceof Error ? err.message : "Failed to load settings");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  async function removeSetup(s: SavedSetup) {
+    if (!confirm(`Delete the saved settings "${s.name}"?`)) return;
+    await fetch(`/api/et-finals/setups?id=${encodeURIComponent(s.id)}`, { method: "DELETE" });
+    await loadSetups();
   }
 
   // Whether buy-back winners keep earning points afterwards. Saved immediately
@@ -1155,6 +1242,102 @@ export default function EtFinalsPage() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Saved settings ─────────────────────────────────────────────── */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+        <button
+          onClick={() => setShowSetups((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        >
+          <div>
+            <h2 className="text-white font-bold">Saved Settings</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {setups.length === 0
+                ? "Name and save the whole points setup so a reload can't lose it"
+                : `${setups.length} saved — load one to restore the points setup after a reload`}
+            </p>
+          </div>
+          <span className="text-gray-400 text-sm">{showSetups ? "Hide" : "Open"}</span>
+        </button>
+
+        {showSetups && (
+          <div className="border-t border-nhra-border p-6 space-y-4">
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Saves everything the points chase is configured with — class roles and boards, the buy-back rule, manual
+              pins and per-racer eligibility — under one name. If the event ever has to be reloaded or re-created,
+              load the name back and the setup is exactly as it was. Rosters, tech cards and track names are stored
+              separately and survive on their own.
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                value={setupName}
+                onChange={(e) => setSetupName(e.target.value)}
+                placeholder={`e.g. ${season || "2026"} ET Finals`}
+                className="flex-1 min-w-[14rem] px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+              />
+              <button
+                onClick={saveSetup}
+                disabled={setupBusy || !data}
+                className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-600 disabled:opacity-40"
+              >
+                {setupBusy ? "Working…" : "Save Current Settings"}
+              </button>
+            </div>
+            {setupMsg && (
+              <p className="text-xs text-gray-300 bg-nhra-darker border border-nhra-border rounded-lg px-3 py-2">
+                {setupMsg}
+              </p>
+            )}
+            {setups.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-400 text-xs uppercase tracking-wider">
+                    <tr>
+                      <th className="text-left py-2 font-medium">Name</th>
+                      <th className="text-left py-2 font-medium">Season</th>
+                      <th className="text-left py-2 font-medium">Buy-Backs Earn</th>
+                      <th className="text-right py-2 font-medium">Classes</th>
+                      <th className="text-right py-2 font-medium">Saved</th>
+                      <th className="py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {setups.map((s) => (
+                      <tr key={s.id} className="border-t border-nhra-border/60">
+                        <td className="py-2 text-white font-medium">{s.name}</td>
+                        <td className="py-2 text-gray-400">{s.season || "—"}</td>
+                        <td className="py-2 text-gray-400">{s.config.buybackEarnsPoints ? "Yes" : "No"}</td>
+                        <td className="py-2 text-right text-gray-300">
+                          {Object.keys(s.config.categoryRoles || {}).length}
+                        </td>
+                        <td className="py-2 text-right text-gray-400 text-xs whitespace-nowrap">
+                          {s.saved_at ? new Date(s.saved_at).toLocaleString() : "—"}
+                        </td>
+                        <td className="py-2 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => applySetup(s)}
+                            disabled={setupBusy}
+                            className="text-xs text-nhra-accent hover:underline disabled:opacity-40"
+                          >
+                            Load
+                          </button>
+                          <button
+                            onClick={() => removeSetup(s)}
+                            disabled={setupBusy}
+                            className="ml-3 text-xs text-gray-500 hover:text-red-400 disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

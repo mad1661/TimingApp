@@ -3301,28 +3301,131 @@ export async function deleteEtFinalsRoster(id: string): Promise<void> {
   await db.collection(ET_FINALS_ROSTERS).doc(id).delete();
 }
 
-export async function getEtFinalsConfig(eventCode: string, season: string): Promise<EtFinalsConfig> {
+/**
+ * Load an event's own saved config. `hasBuybackRule` says whether the event has
+ * ever explicitly saved the buy-back rule — needed to tell "switched off" apart
+ * from "never set", so a never-set event can inherit the season's remembered
+ * choice instead of silently reverting to off.
+ */
+async function getEtFinalsConfigWithMeta(
+  eventCode: string,
+  season: string,
+): Promise<{ config: EtFinalsConfig; hasBuybackRule: boolean }> {
   const fallback = emptyEtFinalsConfig();
   try {
     const db = getDb();
     const doc = await db.collection(ET_FINALS_CONFIGS).doc(`${eventCode}_${season}`).get();
-    if (!doc.exists) return fallback;
+    if (!doc.exists) return { config: fallback, hasBuybackRule: false };
     const data = doc.data() || {};
     return {
-      categoryRoles: (data.categoryRoles as EtFinalsConfig["categoryRoles"]) || {},
-      categoryDivision: (data.categoryDivision as EtFinalsConfig["categoryDivision"]) || {},
-      buybackRounds: (data.buybackRounds as Record<string, string[]>) || {},
-      pointsPerRoundWin: typeof data.pointsPerRoundWin === "number" && data.pointsPerRoundWin > 0
-        ? data.pointsPerRoundWin
-        : 1,
-      manualMatches: (data.manualMatches as Record<string, string>) || {},
-      eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
-      buybackEarnsPoints: data.buybackEarnsPoints === true,
+      config: {
+        categoryRoles: (data.categoryRoles as EtFinalsConfig["categoryRoles"]) || {},
+        categoryDivision: (data.categoryDivision as EtFinalsConfig["categoryDivision"]) || {},
+        buybackRounds: (data.buybackRounds as Record<string, string[]>) || {},
+        pointsPerRoundWin: typeof data.pointsPerRoundWin === "number" && data.pointsPerRoundWin > 0
+          ? data.pointsPerRoundWin
+          : 1,
+        manualMatches: (data.manualMatches as Record<string, string>) || {},
+        eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
+        buybackEarnsPoints: data.buybackEarnsPoints === true,
+      },
+      hasBuybackRule: typeof data.buybackEarnsPoints === "boolean",
     };
   } catch (err) {
     console.error("[DB] Failed to load ET Finals config:", err);
-    return fallback;
+    return { config: fallback, hasBuybackRule: false };
   }
+}
+
+export async function getEtFinalsConfig(eventCode: string, season: string): Promise<EtFinalsConfig> {
+  return (await getEtFinalsConfigWithMeta(eventCode, season)).config;
+}
+
+// --------------- ET Finals named settings ---------------
+// A complete team-points setup saved under a name ("2026 ET Finals"): class
+// roles and boards, the buy-back rule, manual pins and eligibility overrides.
+// Loading one stamps it onto the current event, so a purge, a re-created event
+// or a changed event code can't lose the day's configuration.
+
+const ET_FINALS_SETUPS = "et_finals_setups";
+
+export interface EtFinalsSetup {
+  id: string;
+  name: string;
+  season: string;
+  /** Event the settings were saved from, for the list view. */
+  source_event_code: string;
+  config: EtFinalsConfig;
+  saved_at: string;
+}
+
+/** Doc id derived from the name, so re-saving "2026 ET Finals" overwrites it. */
+function etFinalsSetupId(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+}
+
+export async function listEtFinalsSetups(): Promise<EtFinalsSetup[]> {
+  try {
+    const db = getDb();
+    const snap = await db.collection(ET_FINALS_SETUPS).get();
+    const setups: EtFinalsSetup[] = [];
+    snap.forEach((doc) => {
+      const data = doc.data() || {};
+      setups.push({
+        id: doc.id,
+        name: (data.name as string) || doc.id,
+        season: (data.season as string) || "",
+        source_event_code: (data.source_event_code as string) || "",
+        config: {
+          ...emptyEtFinalsConfig(),
+          ...((data.config as Partial<EtFinalsConfig>) || {}),
+          buybackEarnsPoints: (data.config as Partial<EtFinalsConfig>)?.buybackEarnsPoints === true,
+        },
+        saved_at: (data.saved_at as string) || "",
+      });
+    });
+    return setups.sort((a, b) => b.saved_at.localeCompare(a.saved_at));
+  } catch (err) {
+    console.error("[DB] Failed to list ET Finals setups:", err);
+    return [];
+  }
+}
+
+export async function saveEtFinalsSetup(
+  name: string,
+  season: string,
+  sourceEventCode: string,
+  config: EtFinalsConfig,
+): Promise<string> {
+  const id = etFinalsSetupId(name);
+  if (!id) throw new Error("Give the settings a name first.");
+  const db = getDb();
+  await db.collection(ET_FINALS_SETUPS).doc(id).set({
+    name: name.trim(),
+    season,
+    source_event_code: sourceEventCode,
+    config: {
+      categoryRoles: config.categoryRoles || {},
+      categoryDivision: config.categoryDivision || {},
+      buybackRounds: config.buybackRounds || {},
+      pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
+      manualMatches: config.manualMatches || {},
+      eligibilityOverrides: config.eligibilityOverrides || {},
+      buybackEarnsPoints: config.buybackEarnsPoints === true,
+    },
+    saved_at: new Date().toISOString(),
+  });
+  return id;
+}
+
+export async function deleteEtFinalsSetup(id: string): Promise<void> {
+  const db = getDb();
+  await db.collection(ET_FINALS_SETUPS).doc(id).delete();
 }
 
 const ET_FINALS_CLASS_DEFAULTS = "et_finals_class_defaults";
@@ -3337,10 +3440,17 @@ export interface EtFinalsClassDefaults {
   categoryRoles: Record<string, EtCategoryRole>;
   categoryDivision: Record<string, EtDivision>;
   buybackRounds: Record<string, string[]>;
+  /** Season-remembered buy-back rule; null when no event has ever set it. */
+  buybackEarnsPoints: boolean | null;
 }
 
 export async function getEtFinalsClassDefaults(season: string): Promise<EtFinalsClassDefaults> {
-  const empty: EtFinalsClassDefaults = { categoryRoles: {}, categoryDivision: {}, buybackRounds: {} };
+  const empty: EtFinalsClassDefaults = {
+    categoryRoles: {},
+    categoryDivision: {},
+    buybackRounds: {},
+    buybackEarnsPoints: null,
+  };
   try {
     const db = getDb();
     const doc = await db.collection(ET_FINALS_CLASS_DEFAULTS).doc((season || "").trim()).get();
@@ -3350,6 +3460,8 @@ export async function getEtFinalsClassDefaults(season: string): Promise<EtFinals
       categoryRoles: (data.categoryRoles as Record<string, EtCategoryRole>) || {},
       categoryDivision: (data.categoryDivision as Record<string, EtDivision>) || {},
       buybackRounds: (data.buybackRounds as Record<string, string[]>) || {},
+      buybackEarnsPoints:
+        typeof data.buybackEarnsPoints === "boolean" ? data.buybackEarnsPoints : null,
     };
   } catch (err) {
     console.error("[DB] Failed to load ET Finals class defaults:", err);
@@ -3370,6 +3482,7 @@ async function rememberEtFinalsClassDefaults(season: string, config: EtFinalsCon
       categoryRoles: { ...existing.categoryRoles, ...(config.categoryRoles || {}) },
       categoryDivision: { ...existing.categoryDivision, ...(config.categoryDivision || {}) },
       buybackRounds: { ...existing.buybackRounds, ...(config.buybackRounds || {}) },
+      buybackEarnsPoints: config.buybackEarnsPoints === true,
     };
     const db = getDb();
     await db
@@ -3556,21 +3669,26 @@ export async function getEtFinalsStandings(
     classesFromDefaults: string[];
   }
 > {
-  const [runs, rostersAll, savedConfig, trackNames, classDefaults] = await Promise.all([
+  const [runs, rostersAll, savedMeta, trackNames, classDefaults] = await Promise.all([
     getEventRuns(eventCode, season),
     getEtFinalsRosters(),
-    getEtFinalsConfig(eventCode, season),
+    getEtFinalsConfigWithMeta(eventCode, season),
     getEtFinalsTrackNames(season),
     getEtFinalsClassDefaults(season),
   ]);
+  const savedConfig = savedMeta.config;
 
-  // Season defaults fill in classes this event hasn't been told about; the
-  // event's own choices always win.
+  // Season defaults fill in whatever this event hasn't been told about — the
+  // class mapping and the buy-back rule alike — so a reloaded or re-created
+  // event comes back already configured. The event's own choices always win.
   const config: EtFinalsConfig = {
     ...savedConfig,
     categoryRoles: { ...classDefaults.categoryRoles, ...savedConfig.categoryRoles },
     categoryDivision: { ...classDefaults.categoryDivision, ...savedConfig.categoryDivision },
     buybackRounds: { ...classDefaults.buybackRounds, ...savedConfig.buybackRounds },
+    buybackEarnsPoints: savedMeta.hasBuybackRule
+      ? savedConfig.buybackEarnsPoints
+      : classDefaults.buybackEarnsPoints ?? false,
   };
   // Which classes are running on a remembered default rather than a choice made
   // for this event, so the page can say so instead of implying it was set here.
