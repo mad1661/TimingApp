@@ -1626,6 +1626,75 @@ export default function EtFinalsPage() {
     [data],
   );
 
+  // Plain-text copy of the publication for pasting into an email — the same
+  // content as the print, formatted to survive email clients unmangled.
+  const [copiedPub, setCopiedPub] = useState(false);
+  async function copyPublication() {
+    if (!data) return;
+    const teams = [...data.teams].sort(
+      (a, b) => b.totalPoints - a.totalPoints || a.team_name.localeCompare(b.team_name),
+    );
+    const dateStr = new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const lines: string[] = [];
+    lines.push("SUMMIT E.T. FINALS — TEAM POINTS");
+    lines.push(
+      [eventName || eventCode, season, dateStr].filter(Boolean).join(" · ") +
+        (data.roundsScored.length ? ` · Rounds scored: ${data.roundsScored.join(", ")}` : ""),
+    );
+    if (effectiveConfig?.buybackEarnsPoints) lines.push("Buy-back winners keep earning points");
+    if ((effectiveConfig?.excludedDates || []).length)
+      lines.push(`Days not counted: ${(effectiveConfig?.excludedDates || []).join(", ")}`);
+    lines.push("");
+    lines.push("STANDINGS");
+    teams.forEach((t, i) => {
+      lines.push(
+        `${i + 1}. ${t.team_name}${t.track_code ? ` (${t.track_code})` : ""} — Big Cars ${t.bigPoints}, Jrs ${t.jrPoints}, Total ${t.totalPoints}`,
+      );
+    });
+    const adjusted = teams.filter((t) => t.bigAdjustment !== 0 || t.jrAdjustment !== 0);
+    if (adjusted.length) {
+      lines.push("");
+      lines.push(
+        "Hand adjustments included: " +
+          adjusted
+            .map(
+              (t) =>
+                `${t.team_name} ${[
+                  t.bigAdjustment ? `big ${t.bigAdjustment > 0 ? "+" : ""}${t.bigAdjustment}` : "",
+                  t.jrAdjustment ? `jrs ${t.jrAdjustment > 0 ? "+" : ""}${t.jrAdjustment}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(", ")}${t.adjustmentNote ? ` (${t.adjustmentNote})` : ""}`,
+            )
+            .join("; "),
+      );
+    }
+    lines.push("");
+    lines.push("POINT EARNERS BY TEAM");
+    for (const t of teams) {
+      const earners = t.racers.filter((r) => r.points > 0);
+      if (earners.length === 0) continue;
+      lines.push("");
+      lines.push(`${t.team_name}${t.track_code ? ` (${t.track_code})` : ""} — ${t.totalPoints} point${t.totalPoints === 1 ? "" : "s"}`);
+      for (const r of earners) {
+        lines.push(
+          `  ${r.run_car_number || r.roster_car_number || "—"}  ${r.name} — ${r.division === "jr" ? "Jr" : "Big Car"}, ${r.categories.join(", ") || r.roster_category || "?"} — ${r.roundsWon} round${r.roundsWon === 1 ? "" : "s"}, ${r.points} pt${r.points === 1 ? "" : "s"}`,
+        );
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopiedPub(true);
+      setTimeout(() => setCopiedPub(false), 2500);
+    } catch {
+      setError("Couldn't reach the clipboard — use Print for Publication instead.");
+    }
+  }
+
   // Publication print: standings plus each team's point earners, black on
   // white, opened in its own window so the print carries none of the app UI.
   function printPublication() {
@@ -1811,6 +1880,17 @@ export default function EtFinalsPage() {
             className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white disabled:opacity-40"
           >
             Print for Publication
+          </button>
+          <button
+            onClick={copyPublication}
+            disabled={!data}
+            className={`px-4 py-2 rounded-lg text-sm disabled:opacity-40 border ${
+              copiedPub
+                ? "bg-green-500/15 border-green-500/40 text-green-400"
+                : "bg-nhra-darker border-nhra-border text-gray-300 hover:text-white"
+            }`}
+          >
+            {copiedPub ? "Copied — paste into an email" : "Copy for Email"}
           </button>
           <button
             onClick={exportStandings}
