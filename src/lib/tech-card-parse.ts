@@ -80,8 +80,9 @@ export function parseTechCardWorkbook(buffer: Buffer, eventName: string): TechCa
       phone: get(["Phone", "phone", "Phone Number", "Telephone", "Cell"]),
       email: get(["Email", "email", "Email Address", "E-mail"]),
       // Track code the racer entered under, normalized — the export's casing is
-      // inconsistent ("MD", "Md", "md" all appear).
-      track_team: get(["trackteam", "Track Team", "track_team"]).toUpperCase(),
+      // inconsistent ("MD", "Md", "md" all appear). The racefiles Compulink
+      // layout calls the same thing "Team Code".
+      track_team: get(["trackteam", "Track Team", "track_team", "Team Code", "TeamCode", "team_code"]).toUpperCase(),
       team_slot: get(["team1", "Team", "team_slot"]),
     };
   });

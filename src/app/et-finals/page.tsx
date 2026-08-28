@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveData } from "@/components/LiveDataProvider";
 import type {
   EtCategoryRole,
@@ -23,6 +23,15 @@ type StandingsResponse = EtFinalsStandings & {
   trackCodes: { code: string; hasRoster: boolean; techCardCount: number }[];
   classesFromDefaults: string[];
 };
+
+interface SavedSetup {
+  id: string;
+  name: string;
+  season: string;
+  source_event_code: string;
+  saved_at: string;
+  config: EtFinalsConfig;
+}
 
 interface RosterSummary {
   id: string;
@@ -101,6 +110,236 @@ function StatusBadge({ racer }: { racer: EtRacerPoints }) {
   );
 }
 
+function RacerTable({
+  racers,
+  emptyText,
+  assigning,
+  overrideFor,
+  onToggleEligibility,
+}: {
+  racers: EtRacerPoints[];
+  emptyText: string;
+  assigning: string | null;
+  overrideFor: (key: string) => boolean | undefined;
+  onToggleEligibility: (key: string, next: boolean) => void;
+}) {
+  if (racers.length === 0) {
+    return <p className="px-4 py-4 text-xs text-gray-600">{emptyText}</p>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="text-gray-500 uppercase tracking-wider">
+          <tr>
+            <th className="text-left px-4 py-2 font-medium">Car #</th>
+            <th className="text-left px-2 py-2 font-medium">Driver</th>
+            <th className="text-left px-2 py-2 font-medium">Board</th>
+            <th className="text-left px-2 py-2 font-medium">Class</th>
+            <th className="text-right px-2 py-2 font-medium">Rounds Won</th>
+            <th className="text-right px-2 py-2 font-medium">Points</th>
+            <th className="text-right px-2 py-2 font-medium">Matched</th>
+            <th className="text-right px-2 py-2 font-medium">Status</th>
+            <th className="text-right px-4 py-2 font-medium">Earns</th>
+          </tr>
+        </thead>
+        <tbody>
+          {racers.map((r) => (
+            <tr key={r.key} className="border-t border-nhra-border/40">
+              <td className="px-4 py-1.5 text-gray-400">
+                {r.run_car_number || r.roster_car_number || "—"}
+                {r.run_car_number &&
+                  r.roster_car_number &&
+                  r.run_car_number.replace(/[^0-9A-Za-z]/g, "").toUpperCase() !==
+                    r.roster_car_number.replace(/[^0-9A-Za-z]/g, "").toUpperCase() && (
+                    <span
+                      className="ml-1 text-yellow-600"
+                      title={`Roster says ${r.roster_car_number} — scoring follows the timing system`}
+                    >
+                      ({r.roster_car_number})
+                    </span>
+                  )}
+              </td>
+              <td className="px-2 py-1.5 text-white">{r.name}</td>
+              <td className="px-2 py-1.5 text-gray-400">{r.division === "jr" ? "Jrs" : "Big Cars"}</td>
+              <td className="px-2 py-1.5 text-gray-400">{r.categories.join(", ") || r.roster_category || "—"}</td>
+              <td className="px-2 py-1.5 text-right text-gray-300">{r.roundsWon}</td>
+              <td className="px-2 py-1.5 text-right font-bold text-white">{r.points}</td>
+              <td className="px-2 py-1.5 text-right text-gray-500">
+                {r.source === "tech_card" ? (
+                  <span
+                    className="text-yellow-600"
+                    title="Not on any roster — placed on this team by their tech card's team code"
+                  >
+                    tech card
+                  </span>
+                ) : r.matchedBy === "manual" ? (
+                  "pinned"
+                ) : r.matchedBy === "member" ? (
+                  "member #"
+                ) : r.matchedBy === "car" ? (
+                  "car #"
+                ) : r.matchedBy === "name" ? (
+                  "name"
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="px-2 py-1.5 text-right">
+                <StatusBadge racer={r} />
+              </td>
+              <td className="px-4 py-1.5 text-right">
+                <button
+                  disabled={assigning === r.key}
+                  onClick={() => onToggleEligibility(r.key, !r.points_eligible)}
+                  title={
+                    r.points_eligible
+                      ? "Mark this racer a non-points earner"
+                      : "Let this racer earn points again"
+                  }
+                  className={`px-2 py-0.5 rounded border text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                    r.points_eligible
+                      ? "bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40"
+                      : "bg-gray-600/20 text-gray-400 border-gray-600/40 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/40"
+                  }`}
+                >
+                  {overrideFor(r.key) !== undefined ? "★ " : ""}
+                  {r.points_eligible ? "Yes" : "No"}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * One team's tab: points summary up top, then the roster split into who is
+ * gaining points right now, who isn't (out, bought back, or a non-points
+ * entry), and who hasn't made a pass yet.
+ */
+function TeamPanel({
+  team,
+  rank,
+  view,
+  assigning,
+  overrideFor,
+  onToggleEligibility,
+}: {
+  team: EtTeamStanding;
+  rank: number;
+  view: ViewMode;
+  assigning: string | null;
+  overrideFor: (key: string) => boolean | undefined;
+  onToggleEligibility: (key: string, next: boolean) => void;
+}) {
+  const racers = team.racers.filter((r) => (view === "combined" ? true : r.division === view));
+  const earning = racers.filter((r) => r.points_eligible && (r.status === "racing" || r.status === "winner"));
+  const notEarning = racers.filter(
+    (r) => r.status !== "not_entered" && !(r.points_eligible && (r.status === "racing" || r.status === "winner")),
+  );
+  const notEntered = racers.filter((r) => r.status === "not_entered");
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl px-5 py-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-white font-bold text-lg">
+              <span className="text-gray-500 mr-2">#{rank}</span>
+              {team.team_name}
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              {team.track_code}
+              {team.captain ? ` · Captain ${team.captain}` : ""}
+              {!team.hasRoster && <span className="ml-2 text-yellow-600">· no roster — tech cards only</span>}
+            </div>
+          </div>
+          <div className="flex gap-6 text-right">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-gray-500">Big Cars</div>
+              <div className="text-xl font-bold text-white">{team.bigPoints}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-gray-500">Jrs</div>
+              <div className="text-xl font-bold text-white">{team.jrPoints}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-gray-500">Total</div>
+              <div className="text-xl font-bold text-nhra-red">{team.totalPoints}</div>
+            </div>
+          </div>
+        </div>
+        {team.byCategory.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {team.byCategory.map((c) => (
+              <span
+                key={c.category}
+                className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-nhra-darker border border-nhra-border text-gray-300"
+              >
+                {c.category}
+                <span className="ml-1.5 text-nhra-red font-bold">{c.points}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-nhra-card border border-green-500/30 rounded-xl overflow-hidden">
+        <div className="px-4 py-2.5 bg-green-500/10 border-b border-green-500/30">
+          <span className="text-green-400 font-bold text-sm">Gaining Points</span>
+          <span className="ml-2 text-xs text-gray-400">
+            {earning.length} racer{earning.length === 1 ? "" : "s"} — still in, every round win adds to the board
+          </span>
+        </div>
+        <RacerTable
+          racers={earning}
+          emptyText="Nobody on this team is gaining points right now."
+          assigning={assigning}
+          overrideFor={overrideFor}
+          onToggleEligibility={onToggleEligibility}
+        />
+      </div>
+
+      <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+        <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border">
+          <span className="text-gray-300 font-bold text-sm">Not Gaining Points</span>
+          <span className="ml-2 text-xs text-gray-500">
+            {notEarning.length} racer{notEarning.length === 1 ? "" : "s"} — out, bought back, or a non-points entry
+            (points already earned still count)
+          </span>
+        </div>
+        <RacerTable
+          racers={notEarning}
+          emptyText="Nobody here yet."
+          assigning={assigning}
+          overrideFor={overrideFor}
+          onToggleEligibility={onToggleEligibility}
+        />
+      </div>
+
+      {notEntered.length > 0 && (
+        <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border">
+            <span className="text-gray-400 font-bold text-sm">No Passes Yet</span>
+            <span className="ml-2 text-xs text-gray-600">
+              {notEntered.length} roster entr{notEntered.length === 1 ? "y" : "ies"} without a run in a scoring class
+            </span>
+          </div>
+          <RacerTable
+            racers={notEntered}
+            emptyText=""
+            assigning={assigning}
+            overrideFor={overrideFor}
+            onToggleEligibility={onToggleEligibility}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EtFinalsPage() {
   const live = useLiveData();
   const eventCode = live.config?.eventCode || "";
@@ -113,7 +352,8 @@ export default function EtFinalsPage() {
   const [error, setError] = useState("");
 
   const [view, setView] = useState<ViewMode>("combined");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // "all" = the standings table; a track code = that team's tab.
+  const [teamTab, setTeamTab] = useState<string>("all");
 
   const [showSetup, setShowSetup] = useState(false);
   const [showTracks, setShowTracks] = useState(false);
@@ -134,6 +374,12 @@ export default function EtFinalsPage() {
   const [edataMsg, setEdataMsg] = useState("");
   const [edataDate, setEdataDate] = useState("");
   const edataRef = useRef<HTMLInputElement>(null);
+
+  const [setups, setSetups] = useState<SavedSetup[]>([]);
+  const [showSetups, setShowSetups] = useState(false);
+  const [setupName, setSetupName] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupMsg, setSetupMsg] = useState("");
 
   const [rosters, setRosters] = useState<RosterSummary[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -172,10 +418,21 @@ export default function EtFinalsPage() {
     }
   }, []);
 
+  const loadSetups = useCallback(async () => {
+    try {
+      const res = await fetch("/api/et-finals/setups");
+      const body = await res.json();
+      if (res.ok) setSetups(body.setups || []);
+    } catch {
+      /* informational — a failure here shouldn't blank the page */
+    }
+  }, []);
+
   useEffect(() => {
     loadStandings();
     loadRosters();
-  }, [loadStandings, loadRosters, live.dataVersion]);
+    loadSetups();
+  }, [loadStandings, loadRosters, loadSetups, live.dataVersion]);
 
   useEffect(() => {
     const start = live.config?.startDate;
@@ -236,6 +493,93 @@ export default function EtFinalsPage() {
       await loadStandings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to assign racer");
+    } finally {
+      setAssigning(null);
+    }
+  }
+
+  // Save the whole team-points setup — class roles and boards, buy-back rule,
+  // pins, eligibility overrides — under a name, so it can be brought back after
+  // a purge, a re-created event or a changed event code.
+  async function saveSetup() {
+    const cfg = draftConfig ?? data?.config;
+    if (!cfg) return;
+    const name = setupName.trim() || `${season} ET Finals`;
+    setSetupBusy(true);
+    setSetupMsg("");
+    try {
+      const res = await fetch("/api/et-finals/setups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, season, event_code: eventCode, config: cfg }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Failed to save settings");
+      setSetupMsg(`Saved as "${name}".`);
+      setSetupName("");
+      await loadSetups();
+    } catch (err) {
+      setSetupMsg(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  // Stamp a saved setup onto the current event.
+  async function applySetup(s: SavedSetup) {
+    if (!eventCode || !season) return;
+    if (
+      !confirm(
+        `Load "${s.name}" onto this event?\n\nThis replaces the current class setup, buy-back rule, manual pins and eligibility overrides.`,
+      )
+    )
+      return;
+    setSetupBusy(true);
+    setSetupMsg("");
+    try {
+      const res = await fetch("/api/et-finals/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, config: s.config }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Failed to load settings");
+      setSetupMsg(`Loaded "${s.name}" onto ${eventName || eventCode}.`);
+      await loadStandings();
+    } catch (err) {
+      setSetupMsg(err instanceof Error ? err.message : "Failed to load settings");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  async function removeSetup(s: SavedSetup) {
+    if (!confirm(`Delete the saved settings "${s.name}"?`)) return;
+    await fetch(`/api/et-finals/setups?id=${encodeURIComponent(s.id)}`, { method: "DELETE" });
+    await loadSetups();
+  }
+
+  // Whether buy-back winners keep earning points afterwards. Saved immediately
+  // — it's a race-day rules call, not part of the class mapping batch.
+  async function setBuybackEarns(earns: boolean) {
+    const base = draftConfig ?? data?.config;
+    if (!base || !eventCode || !season) return;
+    const next = { ...base, buybackEarnsPoints: earns };
+    setDraftConfig(next);
+    setAssigning("buyback-policy");
+    try {
+      const res = await fetch("/api/et-finals/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, config: next }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed to save");
+      }
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change the buy-back rule");
     } finally {
       setAssigning(null);
     }
@@ -414,9 +758,11 @@ export default function EtFinalsPage() {
   }
 
   async function handleUpload(files: File[]) {
-    const valid = files.filter((f) => ["xlsx", "xls"].includes(f.name.split(".").pop()?.toLowerCase() || ""));
+    const valid = files.filter((f) =>
+      ["xlsx", "xls", "numbers"].includes(f.name.split(".").pop()?.toLowerCase() || ""),
+    );
     if (valid.length === 0) {
-      setUploadMsg("Upload the combined roster template as .xlsx (Numbers files must be exported to Excel first).");
+      setUploadMsg("Upload rosters as .xlsx, .xls or Apple .numbers files.");
       return;
     }
     setUploading(true);
@@ -465,6 +811,13 @@ export default function EtFinalsPage() {
       view === "big" ? t.bigPoints : view === "jr" ? t.jrPoints : t.totalPoints;
     return [...data.teams].sort((a, b) => pointsOf(b) - pointsOf(a) || a.team_name.localeCompare(b.team_name));
   }, [data, view]);
+
+  // The selected team tab, or null for the standings table. A stale tab (its
+  // roster was just deleted) falls back to the table rather than a blank page.
+  const activeTeam = useMemo(
+    () => (teamTab === "all" ? null : sortedTeams.find((t) => t.track_code === teamTab) ?? null),
+    [teamTab, sortedTeams],
+  );
 
   const techPlaced = useMemo(
     () => (data?.teams || []).reduce((n, t) => n + t.racersFromTechCards, 0),
@@ -893,6 +1246,102 @@ export default function EtFinalsPage() {
         )}
       </div>
 
+      {/* ── Saved settings ─────────────────────────────────────────────── */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+        <button
+          onClick={() => setShowSetups((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        >
+          <div>
+            <h2 className="text-white font-bold">Saved Settings</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {setups.length === 0
+                ? "Name and save the whole points setup so a reload can't lose it"
+                : `${setups.length} saved — load one to restore the points setup after a reload`}
+            </p>
+          </div>
+          <span className="text-gray-400 text-sm">{showSetups ? "Hide" : "Open"}</span>
+        </button>
+
+        {showSetups && (
+          <div className="border-t border-nhra-border p-6 space-y-4">
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Saves everything the points chase is configured with — class roles and boards, the buy-back rule, manual
+              pins and per-racer eligibility — under one name. If the event ever has to be reloaded or re-created,
+              load the name back and the setup is exactly as it was. Rosters, tech cards and track names are stored
+              separately and survive on their own.
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                value={setupName}
+                onChange={(e) => setSetupName(e.target.value)}
+                placeholder={`e.g. ${season || "2026"} ET Finals`}
+                className="flex-1 min-w-[14rem] px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+              />
+              <button
+                onClick={saveSetup}
+                disabled={setupBusy || !data}
+                className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-600 disabled:opacity-40"
+              >
+                {setupBusy ? "Working…" : "Save Current Settings"}
+              </button>
+            </div>
+            {setupMsg && (
+              <p className="text-xs text-gray-300 bg-nhra-darker border border-nhra-border rounded-lg px-3 py-2">
+                {setupMsg}
+              </p>
+            )}
+            {setups.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-400 text-xs uppercase tracking-wider">
+                    <tr>
+                      <th className="text-left py-2 font-medium">Name</th>
+                      <th className="text-left py-2 font-medium">Season</th>
+                      <th className="text-left py-2 font-medium">Buy-Backs Earn</th>
+                      <th className="text-right py-2 font-medium">Classes</th>
+                      <th className="text-right py-2 font-medium">Saved</th>
+                      <th className="py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {setups.map((s) => (
+                      <tr key={s.id} className="border-t border-nhra-border/60">
+                        <td className="py-2 text-white font-medium">{s.name}</td>
+                        <td className="py-2 text-gray-400">{s.season || "—"}</td>
+                        <td className="py-2 text-gray-400">{s.config.buybackEarnsPoints ? "Yes" : "No"}</td>
+                        <td className="py-2 text-right text-gray-300">
+                          {Object.keys(s.config.categoryRoles || {}).length}
+                        </td>
+                        <td className="py-2 text-right text-gray-400 text-xs whitespace-nowrap">
+                          {s.saved_at ? new Date(s.saved_at).toLocaleString() : "—"}
+                        </td>
+                        <td className="py-2 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => applySetup(s)}
+                            disabled={setupBusy}
+                            className="text-xs text-nhra-accent hover:underline disabled:opacity-40"
+                          >
+                            Load
+                          </button>
+                          <button
+                            onClick={() => removeSetup(s)}
+                            disabled={setupBusy}
+                            className="ml-3 text-xs text-gray-500 hover:text-red-400 disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ── Rosters ────────────────────────────────────────────────────── */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
         <button
@@ -932,16 +1381,16 @@ export default function EtFinalsPage() {
                 ref={fileRef}
                 type="file"
                 multiple
-                accept=".xlsx,.xls"
+                accept=".xlsx,.xls,.numbers"
                 className="hidden"
                 onChange={(e) => handleUpload(Array.from(e.target.files || []))}
               />
               <p className="text-white font-medium mb-1">
-                {uploading ? "Uploading…" : "Drop combined roster workbooks here"}
+                {uploading ? "Uploading…" : "Drop team roster files here"}
               </p>
               <p className="text-xs text-gray-500">
-                One .xlsx per track — the template with the Summit ET Roster and JDRL / Jr Street sheets. Re-uploading a
-                track replaces its roster.
+                One file per track (e.g. LV.xlsx, Numidia.xlsx, NED.numbers) — .xlsx, .xls and Apple .numbers all work,
+                and several files can be dropped at once. Re-uploading a track replaces its roster.
               </p>
             </div>
 
@@ -1167,9 +1616,9 @@ export default function EtFinalsPage() {
         )}
       </div>
 
-      {/* ── Standings ──────────────────────────────────────────────────── */}
+      {/* ── Points ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <h2 className="text-xl font-bold text-white">Standings</h2>
+        <h2 className="text-xl font-bold text-white">Points</h2>
         <div className="flex gap-1">
           {([
             ["combined", "Combined"],
@@ -1191,6 +1640,62 @@ export default function EtFinalsPage() {
         </div>
       </div>
 
+      {/* Buy-back rule — a race-day call, so it lives on the board, not in setup */}
+      {data && (
+        <label className="mb-4 flex items-start gap-3 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 accent-red-600"
+            checked={effectiveConfig?.buybackEarnsPoints === true}
+            disabled={assigning === "buyback-policy"}
+            onChange={(e) => setBuybackEarns(e.target.checked)}
+          />
+          <span>
+            <span className="text-white text-sm font-semibold">
+              Buy-back winners keep earning points
+              {assigning === "buyback-policy" && <span className="ml-2 text-xs text-gray-500">saving…</span>}
+            </span>
+            <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+              The buy-back round itself never scores a point either way. Unchecked, a car that loses and buys back
+              keeps racing but earns nothing more for the rest of this event. Checked, its later main-race round wins
+              count again.
+            </span>
+          </span>
+        </label>
+      )}
+
+      {/* Team tabs */}
+      {sortedTeams.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-3">
+          <button
+            onClick={() => setTeamTab("all")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+              teamTab === "all"
+                ? "bg-white/10 text-white border-gray-400"
+                : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
+            }`}
+          >
+            Standings
+          </button>
+          {sortedTeams.map((team) => (
+            <button
+              key={team.track_code}
+              onClick={() => setTeamTab(team.track_code)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                teamTab === team.track_code
+                  ? "bg-white/10 text-white border-gray-400"
+                  : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
+              }`}
+            >
+              {team.team_name}
+              <span className="ml-1.5 text-nhra-red font-bold">
+                {view === "big" ? team.bigPoints : view === "jr" ? team.jrPoints : team.totalPoints}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading && !data ? (
         <div className="flex justify-center py-12">
           <div className="w-10 h-10 border-4 border-nhra-red border-t-transparent rounded-full animate-spin" />
@@ -1199,6 +1704,15 @@ export default function EtFinalsPage() {
         <div className="bg-nhra-card border border-nhra-border rounded-xl px-6 py-10 text-center text-gray-500">
           No teams to show yet.
         </div>
+      ) : activeTeam ? (
+        <TeamPanel
+          team={activeTeam}
+          rank={sortedTeams.indexOf(activeTeam) + 1}
+          view={view}
+          assigning={assigning}
+          overrideFor={overrideFor}
+          onToggleEligibility={(key, next) => setEligibility(key, next)}
+        />
       ) : (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
@@ -1210,168 +1724,59 @@ export default function EtFinalsPage() {
                   <th className="text-right px-4 py-3 font-medium">Big Cars</th>
                   <th className="text-right px-4 py-3 font-medium">Jrs</th>
                   <th className="text-right px-4 py-3 font-medium">Total</th>
+                  <th className="text-right px-4 py-3 font-medium">Earning</th>
                   <th className="text-right px-4 py-3 font-medium">Alive</th>
-                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {sortedTeams.map((team, i) => {
-                  const open = expanded.has(team.track_code);
-                  return (
-                    <Fragment key={team.track_code}>
-                      <tr
-                        onClick={() =>
-                          setExpanded((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(team.track_code)) next.delete(team.track_code);
-                            else next.add(team.track_code);
-                            return next;
-                          })
-                        }
-                        className="border-t border-nhra-border/60 hover:bg-nhra-darker/40 cursor-pointer"
-                      >
-                        <td className="px-4 py-3 text-gray-500 font-semibold">{i + 1}</td>
-                        <td className="px-4 py-3">
-                          <div className="text-white font-semibold">{team.team_name}</div>
-                          <div className="text-[11px] text-gray-500">
-                            {team.track_code}
-                            {team.captain ? ` · ${team.captain}` : ""}
-                            {!team.hasRoster && (
-                              <span
-                                className="ml-2 text-yellow-600"
-                                title="No roster uploaded for this team — its racers are placed from their tech cards"
-                              >
-                                · tech cards only
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td
-                          className={`px-4 py-3 text-right font-semibold ${
-                            view === "jr" ? "text-gray-600" : "text-white"
-                          }`}
-                        >
-                          {team.bigPoints}
-                        </td>
-                        <td
-                          className={`px-4 py-3 text-right font-semibold ${
-                            view === "big" ? "text-gray-600" : "text-white"
-                          }`}
-                        >
-                          {team.jrPoints}
-                        </td>
-                        <td className="px-4 py-3 text-right text-lg font-bold text-nhra-red">{team.totalPoints}</td>
-                        <td className="px-4 py-3 text-right text-gray-400">{team.racersStillAlive}</td>
-                        <td className="px-4 py-3 text-right text-gray-500 text-xs">{open ? "▲" : "▼"}</td>
-                      </tr>
-                      {open && (
-                        <tr className="bg-nhra-darker/30">
-                          <td colSpan={7} className="px-4 py-4">
-                            {team.byCategory.length > 0 && (
-                              <div className="flex flex-wrap gap-2 mb-3">
-                                {team.byCategory.map((c) => (
-                                  <span
-                                    key={c.category}
-                                    className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-nhra-card border border-nhra-border text-gray-300"
-                                  >
-                                    {c.category}
-                                    <span className="ml-1.5 text-nhra-red font-bold">{c.points}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            <table className="w-full text-xs">
-                              <thead className="text-gray-500 uppercase tracking-wider">
-                                <tr>
-                                  <th className="text-left py-1.5 font-medium">Car #</th>
-                                  <th className="text-left py-1.5 font-medium">Driver</th>
-                                  <th className="text-left py-1.5 font-medium">Board</th>
-                                  <th className="text-left py-1.5 font-medium">Class</th>
-                                  <th className="text-right py-1.5 font-medium">Rounds Won</th>
-                                  <th className="text-right py-1.5 font-medium">Points</th>
-                                  <th className="text-right py-1.5 font-medium">Matched</th>
-                                  <th className="text-right py-1.5 font-medium">Status</th>
-                                  <th className="text-right py-1.5 font-medium">Earns</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {team.racers.map((r) => (
-                                  <tr key={r.key} className="border-t border-nhra-border/40">
-                                    <td className="py-1.5 text-gray-400">
-                                      {r.run_car_number || r.roster_car_number || "—"}
-                                      {r.run_car_number &&
-                                        r.roster_car_number &&
-                                        r.run_car_number.replace(/[^0-9A-Za-z]/g, "").toUpperCase() !==
-                                          r.roster_car_number.replace(/[^0-9A-Za-z]/g, "").toUpperCase() && (
-                                          <span
-                                            className="ml-1 text-yellow-600"
-                                            title={`Roster says ${r.roster_car_number} — scoring follows the timing system`}
-                                          >
-                                            ({r.roster_car_number})
-                                          </span>
-                                        )}
-                                    </td>
-                                    <td className="py-1.5 text-white">{r.name}</td>
-                                    <td className="py-1.5 text-gray-400">{r.division === "jr" ? "Jrs" : "Big Cars"}</td>
-                                    <td className="py-1.5 text-gray-400">
-                                      {r.categories.join(", ") || r.roster_category || "—"}
-                                    </td>
-                                    <td className="py-1.5 text-right text-gray-300">{r.roundsWon}</td>
-                                    <td className="py-1.5 text-right font-bold text-white">{r.points}</td>
-                                    <td className="py-1.5 text-right text-gray-500">
-                                      {r.source === "tech_card" ? (
-                                        <span
-                                          className="text-yellow-600"
-                                          title="Not on any roster — placed on this team by their tech card's team code"
-                                        >
-                                          tech card
-                                        </span>
-                                      ) : r.matchedBy === "manual" ? (
-                                        "pinned"
-                                      ) : r.matchedBy === "member" ? (
-                                        "member #"
-                                      ) : r.matchedBy === "car" ? (
-                                        "car #"
-                                      ) : r.matchedBy === "name" ? (
-                                        "name"
-                                      ) : (
-                                        "—"
-                                      )}
-                                    </td>
-                                    <td className="py-1.5 text-right">
-                                      <StatusBadge racer={r} />
-                                    </td>
-                                    <td className="py-1.5 text-right">
-                                      <button
-                                        disabled={assigning === r.key}
-                                        onClick={() => setEligibility(r.key, !r.points_eligible)}
-                                        title={
-                                          r.points_eligible
-                                            ? "Mark this racer a non-points earner"
-                                            : "Let this racer earn points again"
-                                        }
-                                        className={`px-2 py-0.5 rounded border text-[11px] font-semibold transition-colors disabled:opacity-40 ${
-                                          r.points_eligible
-                                            ? "bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40"
-                                            : "bg-gray-600/20 text-gray-400 border-gray-600/40 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/40"
-                                        }`}
-                                      >
-                                        {overrideFor(r.key) !== undefined ? "★ " : ""}
-                                        {r.points_eligible ? "Yes" : "No"}
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
+                {sortedTeams.map((team, i) => (
+                  <tr
+                    key={team.track_code}
+                    onClick={() => setTeamTab(team.track_code)}
+                    className="border-t border-nhra-border/60 hover:bg-nhra-darker/40 cursor-pointer"
+                  >
+                    <td className="px-4 py-3 text-gray-500 font-semibold">{i + 1}</td>
+                    <td className="px-4 py-3">
+                      <div className="text-white font-semibold">{team.team_name}</div>
+                      <div className="text-[11px] text-gray-500">
+                        {team.track_code}
+                        {team.captain ? ` · ${team.captain}` : ""}
+                        {!team.hasRoster && (
+                          <span
+                            className="ml-2 text-yellow-600"
+                            title="No roster uploaded for this team — its racers are placed from their tech cards"
+                          >
+                            · tech cards only
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right font-semibold ${
+                        view === "jr" ? "text-gray-600" : "text-white"
+                      }`}
+                    >
+                      {team.bigPoints}
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right font-semibold ${
+                        view === "big" ? "text-gray-600" : "text-white"
+                      }`}
+                    >
+                      {team.jrPoints}
+                    </td>
+                    <td className="px-4 py-3 text-right text-lg font-bold text-nhra-red">{team.totalPoints}</td>
+                    <td className="px-4 py-3 text-right text-green-400">
+                      {team.racers.filter((r) => r.points_eligible && (r.status === "racing" || r.status === "winner")).length}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-400">{team.racersStillAlive}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
+          </div>
+          <div className="px-4 py-2.5 border-t border-nhra-border text-[11px] text-gray-500">
+            Click a team — or its tab above — for the full roster split into who&apos;s gaining points and who isn&apos;t.
           </div>
         </div>
       )}
