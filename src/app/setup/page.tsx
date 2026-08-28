@@ -456,6 +456,7 @@ export default function SetupPage() {
                 { value: 60, label: "1 min" },
                 { value: 120, label: "2 min" },
                 { value: 300, label: "5 min" },
+                { value: 900, label: "15 min" },
               ].map((opt) => (
                 <button key={opt.value} onClick={() => setIntervalSeconds(opt.value)}
                   className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors ${intervalSeconds === opt.value ? "bg-nhra-red text-white" : "bg-nhra-darker border border-nhra-border text-gray-400 hover:text-white"}`}>
