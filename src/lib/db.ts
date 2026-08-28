@@ -750,6 +750,24 @@ export async function upsertRun(
     created_at: new Date().toISOString(),
   });
 
+  // A manual write re-creating a key that an earlier edit had ignored means a
+  // human is putting that pass back (e.g. undoing a car-number fix) — take it
+  // off the ignore list or the recreated row would stay invisible.
+  try {
+    const ref = db.collection("ignored_runs").doc(`${eventCode}_${season}`);
+    const doc = await ref.get();
+    if (doc.exists) {
+      const keys: string[] = doc.data()?.keys || [];
+      const norm = normalizeDedupKey(key);
+      const next = keys.filter((k) => normalizeDedupKey(k) !== norm);
+      if (next.length !== keys.length) {
+        await ref.set({ keys: next, updatedAt: new Date().toISOString() }, { merge: true });
+      }
+    }
+  } catch (err) {
+    console.error("[DB] Failed to un-ignore recreated key:", err);
+  }
+
   backfillNames(cache.runs);
   console.log(`[DB] Upserted run ${key}`);
 }
@@ -764,6 +782,10 @@ function backfillNames(runs: RunRow[]): void {
 
   for (const run of runs) {
     if (run.name || !run.car_number || !run.category) continue;
+    // A manually edited row with a blank name is blank on purpose — a
+    // car-number correction sheds the old racer's identity so matching can
+    // follow the number. Refilling it here would put the wrong name back.
+    if (run._edited) continue;
     const key = `${run.car_number.trim()}|||${run.category}`;
     const name = nameMap.get(key);
     if (name) run.name = name;
@@ -3669,14 +3691,23 @@ export async function getEtFinalsStandings(
     classesFromDefaults: string[];
   }
 > {
-  const [runs, rostersAll, savedMeta, trackNames, classDefaults] = await Promise.all([
+  const [allRuns, rostersAll, savedMeta, trackNames, classDefaults, ignoredKeys] = await Promise.all([
     getEventRuns(eventCode, season),
     getEtFinalsRosters(),
     getEtFinalsConfigWithMeta(eventCode, season),
     getEtFinalsTrackNames(season),
     getEtFinalsClassDefaults(season),
+    getIgnoredKeys(eventCode, season),
   ]);
   const savedConfig = savedMeta.config;
+
+  // Respect run edits: when a pass's car number was corrected, the original
+  // row's key is ignored — scoring it too would double the pass and leave the
+  // win on the mistyped car.
+  const runs =
+    ignoredKeys.size > 0
+      ? allRuns.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key))
+      : allRuns;
 
   // Season defaults fill in whatever this event hasn't been told about — the
   // class mapping and the buy-back rule alike — so a reloaded or re-created

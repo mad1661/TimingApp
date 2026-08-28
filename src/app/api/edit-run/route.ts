@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/firebase-admin";
-import { getEventRuns, upsertRun, type RunRow } from "@/lib/db";
+import { getEventRuns, getIgnoredKeys, upsertRun, type RunRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ const NUMERIC_FIELDS = new Set([
 ]);
 
 const STRING_FIELDS = new Set([
-  "timestamp", "round", "car_number", "name", "class_index",
+  "timestamp", "round", "car_number", "name", "member_number", "class_index",
   "result", "place", "category", "lane",
 ]);
 
@@ -61,9 +61,14 @@ export async function POST(req: NextRequest) {
 
     // If car_number / name / class_index change, try to auto-propagate canonical
     // info from other runs in the same event (matching new car_number + category).
+    // Ignored rows are excluded: a superseded copy of an earlier correction
+    // carries exactly the stale identity a new correction is trying to shed.
     if (typeof updates.car_number !== "undefined" && merged.car_number && merged.category) {
+      const ignored = await getIgnoredKeys(event_code, season);
       const match = allRuns.find(
         (r) =>
+          r._dedup_key !== dedup_key &&
+          (!r._dedup_key || !ignored.has(r._dedup_key)) &&
           r.car_number?.trim() === merged.car_number?.trim() &&
           r.category === merged.category &&
           r.name
@@ -71,6 +76,16 @@ export async function POST(req: NextRequest) {
       if (match) {
         if (!("name" in updates)) merged.name = match.name;
         if (!("class_index" in updates)) merged.class_index = match.class_index;
+        // A corrected car number means the pass belongs to a different racer —
+        // carry that racer's member number, not the mistyped car's.
+        if (!("member_number" in updates)) merged.member_number = match.member_number ?? null;
+      } else if (merged.car_number !== original.car_number) {
+        // No other run knows the corrected number, so the old row's name and
+        // member number are all we'd have — and they identify the WRONG racer.
+        // Clear them unless the caller set them: matching then follows the car
+        // number, which is the whole point of the correction.
+        if (!("name" in updates)) merged.name = null;
+        if (!("member_number" in updates)) merged.member_number = null;
       }
     }
 
@@ -98,6 +113,7 @@ export async function POST(req: NextRequest) {
       qual_pos: merged.qual_pos,
       car_number: merged.car_number,
       name: merged.name,
+      member_number: merged.member_number ?? null,
       class_index: merged.class_index,
       rt: merged.rt,
       ft60: merged.ft60,
