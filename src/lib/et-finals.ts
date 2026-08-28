@@ -117,6 +117,12 @@ export interface EtFinalsConfig {
    * is what keeps them off the board. Null/empty: every day counts.
    */
   scoreFromDate: string | null;
+  /**
+   * Days (YYYY-MM-DD) whose passes never earn points — the practice days,
+   * picked by hand. An exclusion list on purpose: a day nobody has ruled on
+   * (race morning) counts by default.
+   */
+  excludedDates: string[];
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
@@ -129,6 +135,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     eligibilityOverrides: {},
     buybackEarnsPoints: false,
     scoreFromDate: null,
+    excludedDates: [],
   };
 }
 
@@ -282,6 +289,8 @@ export interface EtFinalsStandings {
   totals: { bigPoints: number; jrPoints: number; totalPoints: number };
   /** Main-race rounds that have run, in order, for the progress readout. */
   roundsScored: string[];
+  /** Every day (YYYY-MM-DD) with runs on file, for the days-that-count picker. */
+  runDates: string[];
   /** Every roster entry, for the manual-assignment picker on the page. */
   rosterOptions: {
     key: string;
@@ -559,14 +568,18 @@ export function computeEtFinalsStandings(
   const buybackEarns = config.buybackEarnsPoints === true;
   const isIgnored = (run: RunRow): boolean =>
     !!run._dedup_key && ignoredKeys.has(run._dedup_key);
-  // Passes before the points-start date never enter the chase at all — the
-  // practice days run through the timing system under the same E-round labels
-  // as the real race, so the date is the only thing separating them.
+  // Passes on excluded days (or before the points-start date) never enter the
+  // chase at all — the practice days run through the timing system under the
+  // same E-round labels as the real race, so the day is the only thing
+  // separating them.
   const scoreFrom = (config.scoreFromDate || "").trim();
+  const excludedDays = new Set((config.excludedDates || []).map((d) => d.trim()).filter(Boolean));
   const inScoringWindow = (run: RunRow): boolean => {
-    if (!scoreFrom) return true;
+    if (!scoreFrom && excludedDays.size === 0) return true;
     const key = runDateKey(run.timestamp);
-    return key !== "" && key >= scoreFrom;
+    if (excludedDays.size > 0 && key && excludedDays.has(key)) return false;
+    if (scoreFrom && (key === "" || key < scoreFrom)) return false;
+    return true;
   };
 
   // ── Category roles ────────────────────────────────────────────────────────
@@ -1257,6 +1270,10 @@ export function computeEtFinalsStandings(
     (a, b) => a.team.localeCompare(b.team) || a.division.localeCompare(b.division) || a.label.localeCompare(b.label),
   );
 
+  const runDates = Array.from(
+    new Set(runs.map((r) => runDateKey(r.timestamp)).filter(Boolean)),
+  ).sort();
+
   return {
     teams: standings,
     unmatched,
@@ -1268,5 +1285,6 @@ export function computeEtFinalsStandings(
       totalPoints: standings.reduce((s, t) => s + t.totalPoints, 0),
     },
     roundsScored,
+    runDates,
   };
 }

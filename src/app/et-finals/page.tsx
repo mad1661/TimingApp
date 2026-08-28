@@ -678,7 +678,10 @@ function RoundReview({
                     const ignored = !!key && ignoredKeys.has(key);
                     const bye = isByeMarker(r);
                     const scoreFrom = (data?.config.scoreFromDate || "").trim();
-                    const preDate = !!scoreFrom && runDateKey(r.timestamp) < scoreFrom;
+                    const dk = runDateKey(r.timestamp);
+                    const preDate =
+                      (!!scoreFrom && dk < scoreFrom) ||
+                      (data?.config.excludedDates || []).includes(dk);
                     const ident = `${(r.category || "").trim()}|${normalizeCarKey(r.car_number) || normalizeNameKey(r.name)}`;
                     const credited = bye ? null : creditedTo.get(ident);
                     const res = (r.result || "").trim().toUpperCase();
@@ -721,8 +724,8 @@ function RoundReview({
                           {bye ? (
                             <span className="text-gray-600">—</span>
                           ) : preDate ? (
-                            <span className="text-gray-600" title="Before the points-start date — earns nothing">
-                              before points start
+                            <span className="text-gray-600" title="This day is unchecked in “Days that count for points” — earns nothing">
+                              day not counted
                             </span>
                           ) : credited ? (
                             <span className="text-gray-300">{credited}</span>
@@ -1192,11 +1195,23 @@ export default function EtFinalsPage() {
     await savePointsRule({ buybackEarnsPoints: earns }, "buyback-policy");
   }
 
-  // Only passes on/after this date earn points — how the practice days (run
-  // through the timing system under the same E-round labels as the real race)
-  // are kept off the board. Saved immediately.
-  async function setScoreFromDate(date: string) {
-    await savePointsRule({ scoreFromDate: date.trim() || null }, "score-from-date");
+  // Choose whether a day's passes count for points. Exclusions are stored by
+  // date, so a day nobody has ruled on (race morning) counts by default.
+  // Toggling also clears the older from-date rule so the checkboxes are the
+  // single source of truth.
+  async function setDayCounts(date: string, counts: boolean) {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const excluded = new Set(base.excludedDates || []);
+    // Fold a previously set from-date into explicit exclusions first.
+    const from = (base.scoreFromDate || "").trim();
+    if (from) for (const d of data?.runDates || []) if (d < from) excluded.add(d);
+    if (counts) excluded.delete(date);
+    else excluded.add(date);
+    await savePointsRule(
+      { excludedDates: Array.from(excluded).sort(), scoreFromDate: null },
+      `day-${date}`,
+    );
   }
 
   async function savePointsRule(patch: Partial<EtFinalsConfig>, busyKey: string) {
@@ -1571,6 +1586,10 @@ export default function EtFinalsPage() {
         data.roundsScored.length ? ` · Rounds scored: ${esc(data.roundsScored.join(", "))}` : ""
       }${effectiveConfig?.buybackEarnsPoints ? " · Buy-back winners keep earning points" : ""}${
         effectiveConfig?.scoreFromDate ? ` · Points from ${esc(effectiveConfig.scoreFromDate)}` : ""
+      }${
+        (effectiveConfig?.excludedDates || []).length
+          ? ` · Days not counted: ${esc((effectiveConfig?.excludedDates || []).join(", "))}`
+          : ""
       }</div>
       <h2>Standings</h2>
       <table>
@@ -2416,25 +2435,49 @@ export default function EtFinalsPage() {
               </span>
             </span>
           </label>
-          <div className="flex items-start gap-3 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
-            <input
-              type="date"
-              className="mt-0.5 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
-              value={effectiveConfig?.scoreFromDate || ""}
-              disabled={assigning === "score-from-date"}
-              onChange={(e) => setScoreFromDate(e.target.value)}
-            />
-            <span>
-              <span className="text-white text-sm font-semibold">
-                Points count from this date
-                {assigning === "score-from-date" && <span className="ml-2 text-xs text-gray-500">saving…</span>}
-              </span>
-              <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">
-                Practice days often run through the timing system labelled E1, exactly like the real race. Set race
-                day here and everything before it earns nothing — time runs, practice eliminations, all of it. Blank
-                = every day counts.
-              </span>
+          <div className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
+            <span className="text-white text-sm font-semibold">Days that count for points</span>
+            <span className="block text-xs text-gray-500 mt-0.5 mb-2 leading-relaxed">
+              Practice days run through the timing system labelled E1, exactly like the real race — uncheck them and
+              nothing from those days earns: time runs, practice eliminations, all of it. A new day (race morning)
+              counts automatically.
             </span>
+            <div className="flex flex-wrap gap-2">
+              {(data.runDates || []).map((d) => {
+                const from = (effectiveConfig?.scoreFromDate || "").trim();
+                const counts =
+                  !(effectiveConfig?.excludedDates || []).includes(d) && (!from || d >= from);
+                const [y, m, day] = d.split("-");
+                const label = new Date(
+                  parseInt(y, 10),
+                  parseInt(m, 10) - 1,
+                  parseInt(day, 10),
+                ).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+                return (
+                  <label
+                    key={d}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer select-none text-xs font-semibold transition-colors ${
+                      counts
+                        ? "bg-green-500/10 border-green-500/40 text-green-400"
+                        : "bg-nhra-darker border-nhra-border text-gray-500 line-through"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-red-600"
+                      checked={counts}
+                      disabled={assigning === `day-${d}`}
+                      onChange={(e) => setDayCounts(d, e.target.checked)}
+                    />
+                    {label}
+                    {assigning === `day-${d}` && <span className="text-gray-500">…</span>}
+                  </label>
+                );
+              })}
+              {(data.runDates || []).length === 0 && (
+                <span className="text-xs text-gray-600">No runs on file yet.</span>
+              )}
+            </div>
           </div>
         </div>
       )}
