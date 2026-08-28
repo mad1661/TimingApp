@@ -3350,6 +3350,7 @@ async function getEtFinalsConfigWithMeta(
         manualMatches: (data.manualMatches as Record<string, string>) || {},
         eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
         buybackEarnsPoints: data.buybackEarnsPoints === true,
+        scoreFromDate: typeof data.scoreFromDate === "string" && data.scoreFromDate ? data.scoreFromDate : null,
       },
       hasBuybackRule: typeof data.buybackEarnsPoints === "boolean",
     };
@@ -3439,6 +3440,7 @@ export async function saveEtFinalsSetup(
       manualMatches: config.manualMatches || {},
       eligibilityOverrides: config.eligibilityOverrides || {},
       buybackEarnsPoints: config.buybackEarnsPoints === true,
+      scoreFromDate: (config.scoreFromDate || "").trim() || null,
     },
     saved_at: new Date().toISOString(),
   });
@@ -3535,6 +3537,7 @@ export async function saveEtFinalsConfig(
       manualMatches: config.manualMatches || {},
       eligibilityOverrides: config.eligibilityOverrides || {},
       buybackEarnsPoints: config.buybackEarnsPoints === true,
+      scoreFromDate: (config.scoreFromDate || "").trim() || null,
       updated_at: new Date().toISOString(),
     },
     { merge: true },

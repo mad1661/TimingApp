@@ -110,6 +110,13 @@ export interface EtFinalsConfig {
    * car races on but its points stay frozen until the next event.
    */
   buybackEarnsPoints: boolean;
+  /**
+   * Only passes on or after this date (YYYY-MM-DD) earn points. The practice
+   * days before race day often run through the timing system labelled E1 —
+   * indistinguishable from the real eliminations by round name — so the date
+   * is what keeps them off the board. Null/empty: every day counts.
+   */
+  scoreFromDate: string | null;
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
@@ -121,6 +128,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     manualMatches: {},
     eligibilityOverrides: {},
     buybackEarnsPoints: false,
+    scoreFromDate: null,
   };
 }
 
@@ -393,6 +401,15 @@ export function isScoringRound(round: string | null | undefined): boolean {
   return r === "F" || r === "FINAL" || /^E\d+$/.test(r);
 }
 
+/** "8/28/2026 2:17:35 PM" -> "2026-08-28", or "" when unparseable. */
+export function runDateKey(timestamp: string | null | undefined): string {
+  const part = (timestamp || "").trim().split(/\s+/)[0] || "";
+  const m = part.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return "";
+  const p = (n: string) => n.padStart(2, "0");
+  return `${m[3]}-${p(m[1])}-${p(m[2])}`;
+}
+
 function isWin(run: RunRow): boolean {
   if (run.is_dq === 1) return false;
   const r = (run.result || "").trim().toUpperCase();
@@ -542,6 +559,15 @@ export function computeEtFinalsStandings(
   const buybackEarns = config.buybackEarnsPoints === true;
   const isIgnored = (run: RunRow): boolean =>
     !!run._dedup_key && ignoredKeys.has(run._dedup_key);
+  // Passes before the points-start date never enter the chase at all — the
+  // practice days run through the timing system under the same E-round labels
+  // as the real race, so the date is the only thing separating them.
+  const scoreFrom = (config.scoreFromDate || "").trim();
+  const inScoringWindow = (run: RunRow): boolean => {
+    if (!scoreFrom) return true;
+    const key = runDateKey(run.timestamp);
+    return key !== "" && key >= scoreFrom;
+  };
 
   // ── Category roles ────────────────────────────────────────────────────────
   const catStats = new Map<string, { runCount: number; rounds: Set<string> }>();
@@ -652,6 +678,7 @@ export function computeEtFinalsStandings(
     const cat = (run.category || "").trim();
     if (!cat || !mainCats.has(cat)) continue;
     if (!isScoringRound(run.round)) continue;
+    if (!inScoringWindow(run)) continue;
     if (isByeMarker(run)) continue;
     const car = normalizeCarKey(run.car_number);
     const nameKey = normalizeNameKey(run.name);
@@ -683,7 +710,7 @@ export function computeEtFinalsStandings(
   const roundHasWinner = new Set<string>();
   const pairHasWinner = new Set<string>();
   for (const run of runs) {
-    if (!isWin(run) || isIgnored(run)) continue;
+    if (!isWin(run) || isIgnored(run) || !inScoringWindow(run)) continue;
     const cat = (run.category || "").trim();
     if (!cat || !isScoringRound(run.round)) continue;
     roundHasWinner.add(`${cat}|${run.round}`);
@@ -1200,7 +1227,13 @@ export function computeEtFinalsStandings(
   const roundsScored = Array.from(
     new Set(
       runs
-        .filter((r) => r.category && mainCats.has(r.category.trim()) && isScoringRound(r.round))
+        .filter(
+          (r) =>
+            r.category &&
+            mainCats.has(r.category.trim()) &&
+            isScoringRound(r.round) &&
+            inScoringWindow(r),
+        )
         .map((r) => (r.round || "").trim().toUpperCase()),
     ),
   ).sort((a, b) => elimRoundOrder(a) - elimRoundOrder(b));

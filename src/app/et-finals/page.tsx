@@ -7,6 +7,7 @@ import {
   isByeMarker,
   normalizeCarKey,
   normalizeNameKey,
+  runDateKey,
   TEAM_MATCH_PREFIX,
 } from "@/lib/et-finals";
 import { finishEt } from "@/lib/run-finish";
@@ -676,6 +677,8 @@ function RoundReview({
                     const key = r._dedup_key || "";
                     const ignored = !!key && ignoredKeys.has(key);
                     const bye = isByeMarker(r);
+                    const scoreFrom = (data?.config.scoreFromDate || "").trim();
+                    const preDate = !!scoreFrom && runDateKey(r.timestamp) < scoreFrom;
                     const ident = `${(r.category || "").trim()}|${normalizeCarKey(r.car_number) || normalizeNameKey(r.name)}`;
                     const credited = bye ? null : creditedTo.get(ident);
                     const res = (r.result || "").trim().toUpperCase();
@@ -717,6 +720,10 @@ function RoundReview({
                         <td className={`px-2 py-1.5 ${dim}`}>
                           {bye ? (
                             <span className="text-gray-600">—</span>
+                          ) : preDate ? (
+                            <span className="text-gray-600" title="Before the points-start date — earns nothing">
+                              before points start
+                            </span>
                           ) : credited ? (
                             <span className="text-gray-300">{credited}</span>
                           ) : credited === "" ? (
@@ -1182,11 +1189,22 @@ export default function EtFinalsPage() {
   // Whether buy-back winners keep earning points afterwards. Saved immediately
   // — it's a race-day rules call, not part of the class mapping batch.
   async function setBuybackEarns(earns: boolean) {
+    await savePointsRule({ buybackEarnsPoints: earns }, "buyback-policy");
+  }
+
+  // Only passes on/after this date earn points — how the practice days (run
+  // through the timing system under the same E-round labels as the real race)
+  // are kept off the board. Saved immediately.
+  async function setScoreFromDate(date: string) {
+    await savePointsRule({ scoreFromDate: date.trim() || null }, "score-from-date");
+  }
+
+  async function savePointsRule(patch: Partial<EtFinalsConfig>, busyKey: string) {
     const base = draftConfig ?? data?.config;
     if (!base || !eventCode || !season) return;
-    const next = { ...base, buybackEarnsPoints: earns };
+    const next = { ...base, ...patch };
     setDraftConfig(next);
-    setAssigning("buyback-policy");
+    setAssigning(busyKey);
     try {
       const res = await fetch("/api/et-finals/config", {
         method: "POST",
@@ -1199,7 +1217,7 @@ export default function EtFinalsPage() {
       }
       await loadStandings();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change the buy-back rule");
+      setError(err instanceof Error ? err.message : "Failed to save the points rule");
     } finally {
       setAssigning(null);
     }
@@ -1551,7 +1569,9 @@ export default function EtFinalsPage() {
       <h1>Summit E.T. Finals — Team Points</h1>
       <div class="sub">${esc(eventName || eventCode)} · ${esc(season)} · ${esc(dateStr)}${
         data.roundsScored.length ? ` · Rounds scored: ${esc(data.roundsScored.join(", "))}` : ""
-      }${effectiveConfig?.buybackEarnsPoints ? " · Buy-back winners keep earning points" : ""}</div>
+      }${effectiveConfig?.buybackEarnsPoints ? " · Buy-back winners keep earning points" : ""}${
+        effectiveConfig?.scoreFromDate ? ` · Points from ${esc(effectiveConfig.scoreFromDate)}` : ""
+      }</div>
       <h2>Standings</h2>
       <table>
         <thead><tr><th class="c">Place</th><th>Team</th><th class="r">Big Cars</th><th class="r">Jrs</th><th class="r">Total</th></tr></thead>
@@ -2373,28 +2393,50 @@ export default function EtFinalsPage() {
         </div>
       </div>
 
-      {/* Buy-back rule — a race-day call, so it lives on the board, not in setup */}
+      {/* Race-day rules — they live on the board, not in setup */}
       {data && (
-        <label className="mb-4 flex items-start gap-3 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            className="mt-1 h-4 w-4 accent-red-600"
-            checked={effectiveConfig?.buybackEarnsPoints === true}
-            disabled={assigning === "buyback-policy"}
-            onChange={(e) => setBuybackEarns(e.target.checked)}
-          />
-          <span>
-            <span className="text-white text-sm font-semibold">
-              Buy-back winners keep earning points
-              {assigning === "buyback-policy" && <span className="ml-2 text-xs text-gray-500">saving…</span>}
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <label className="flex items-start gap-3 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 accent-red-600"
+              checked={effectiveConfig?.buybackEarnsPoints === true}
+              disabled={assigning === "buyback-policy"}
+              onChange={(e) => setBuybackEarns(e.target.checked)}
+            />
+            <span>
+              <span className="text-white text-sm font-semibold">
+                Buy-back winners keep earning points
+                {assigning === "buyback-policy" && <span className="ml-2 text-xs text-gray-500">saving…</span>}
+              </span>
+              <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+                The buy-back round itself never scores a point either way. Unchecked, a car that loses and buys back
+                keeps racing but earns nothing more for the rest of this event. Checked, its later main-race round wins
+                count again.
+              </span>
             </span>
-            <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">
-              The buy-back round itself never scores a point either way. Unchecked, a car that loses and buys back
-              keeps racing but earns nothing more for the rest of this event. Checked, its later main-race round wins
-              count again.
+          </label>
+          <div className="flex items-start gap-3 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
+            <input
+              type="date"
+              className="mt-0.5 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              value={effectiveConfig?.scoreFromDate || ""}
+              disabled={assigning === "score-from-date"}
+              onChange={(e) => setScoreFromDate(e.target.value)}
+            />
+            <span>
+              <span className="text-white text-sm font-semibold">
+                Points count from this date
+                {assigning === "score-from-date" && <span className="ml-2 text-xs text-gray-500">saving…</span>}
+              </span>
+              <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+                Practice days often run through the timing system labelled E1, exactly like the real race. Set race
+                day here and everything before it earns nothing — time runs, practice eliminations, all of it. Blank
+                = every day counts.
+              </span>
             </span>
-          </span>
-        </label>
+          </div>
+        </div>
       )}
 
       {/* Team tabs */}
