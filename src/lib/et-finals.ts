@@ -103,6 +103,13 @@ export interface EtFinalsConfig {
    * shouldn't be scoring, or the reverse. `false` = earns nothing.
    */
   eligibilityOverrides: Record<string, boolean>;
+  /**
+   * Whether a car that lost and won the buy-back keeps earning points on its
+   * later main-race wins. The buy-back round itself NEVER awards a point either
+   * way — this only decides what happens after it. Default false: a bought-back
+   * car races on but its points stay frozen until the next event.
+   */
+  buybackEarnsPoints: boolean;
 }
 
 export function emptyEtFinalsConfig(): EtFinalsConfig {
@@ -113,6 +120,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     pointsPerRoundWin: 1,
     manualMatches: {},
     eligibilityOverrides: {},
+    buybackEarnsPoints: false,
   };
 }
 
@@ -398,6 +406,9 @@ function resolveBucket(
 interface RunnerAggregate {
   name: string;
   car_number: string;
+  /** NHRA member number when the timing data carries one (EData always, the
+   *  API and some getresults grids). The strongest identity there is. */
+  member_number: string;
   category: string;
   division: EtDivision;
   /** Car number if the timing system gave one, else the normalized name. */
@@ -464,6 +475,7 @@ export function computeEtFinalsStandings(
   trackNames: Record<string, { track_name: string; team_name: string }> = {},
 ): EtFinalsStandings {
   const pointsPerWin = config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1;
+  const buybackEarns = config.buybackEarnsPoints === true;
 
   // ── Category roles ────────────────────────────────────────────────────────
   const catStats = new Map<string, { runCount: number; rounds: Set<string> }>();
@@ -586,6 +598,7 @@ export function computeEtFinalsStandings(
         (agg = {
           name: (run.name || "").trim(),
           car_number: (run.car_number || "").trim(),
+          member_number: (run.member_number || "").trim(),
           category: cat,
           division: divisionFor(cat),
           identity: ident,
@@ -594,6 +607,7 @@ export function computeEtFinalsStandings(
       );
     }
     if (!agg.name && run.name) agg.name = run.name.trim();
+    if (!agg.member_number && run.member_number) agg.member_number = run.member_number.trim();
     agg.runs.push(run);
   }
 
@@ -648,13 +662,17 @@ export function computeEtFinalsStandings(
 
     // Walk the racer's own rounds in order. Wins score until the first decided
     // loss; everything after that — including a run back in the main class
-    // after winning the buy-back — is raced but not scored.
+    // after winning the buy-back — is raced but, unless "buy-backs earn
+    // points" is switched on for the event, not scored. The buy-back round
+    // itself never scores in either mode.
     let stopped = false;
     let points = 0;
     let roundsWon = 0;
     let eliminatedIn: string | null = null;
     let wonFinal = false;
     let racedAfterElimination = false;
+    let lastDecided: "win" | "loss" | null = null;
+    let lastLossRound: string | null = null;
     const roundResults: EtRoundResult[] = [];
 
     for (const run of ordered) {
@@ -669,7 +687,7 @@ export function computeEtFinalsStandings(
         outcome = "loss";
       else outcome = "pending";
 
-      const scoresHere = !isBuyback && !stopped && outcome === "win";
+      const scoresHere = !isBuyback && outcome === "win" && (!stopped || buybackEarns);
       if (scoresHere) {
         points += pointsPerWin;
         roundsWon++;
@@ -685,10 +703,22 @@ export function computeEtFinalsStandings(
         points: scoresHere ? pointsPerWin : 0,
       });
 
+      if (!isBuyback && outcome !== "pending") {
+        lastDecided = outcome;
+        if (outcome === "loss") lastLossRound = run.round || null;
+      }
       if (!isBuyback && !stopped && outcome === "loss") {
         stopped = true;
         eliminatedIn = run.round || null;
       }
+    }
+
+    // With buy-back earning on, a first loss doesn't freeze anything, so a car
+    // that came back and is winning again reads as alive — it's "out" only when
+    // its latest decided main-race run is a loss.
+    if (buybackEarns) {
+      eliminatedIn = lastDecided === "loss" ? lastLossRound : null;
+      racedAfterElimination = false;
     }
 
     // Match to a roster entry. What the timing system shows is the truth, and
@@ -724,16 +754,23 @@ export function computeEtFinalsStandings(
       config.manualMatches?.[agg.identity];
     if (manualTarget) take(manualEntries.get(manualTarget) ?? null, "manual");
 
-    // Find this racer's tech card from whatever the timing system shows. It
-    // supplies the member number (the strongest route) and the track team,
-    // which breaks ties a name or car number alone can't.
+    // Find this racer's tech card from whatever the timing system shows. When
+    // the timing data itself carries the member number that lookup is exact;
+    // otherwise fall back to car/name. The card supplies the track team, which
+    // breaks ties a name or car number alone can't.
     const card =
+      (agg.member_number ? tech.byMember.get(agg.member_number) : undefined) ||
       tech.byCar.get(carKey) ||
       tech.byName.get(nameKey) ||
       tech.byLoose.get(looseKey) ||
       undefined;
     const teamHint = card?.trackTeam || "";
 
+    // Member number straight off the timing data is the strongest automatic
+    // route — it survives renumbered cars and re-spelled names alike.
+    if (!ref && agg.member_number) {
+      take(resolveBucket(byMember.get(agg.member_number), teamHint), "member");
+    }
     if (!ref && card?.memberNumber) {
       take(resolveBucket(byMember.get(card.memberNumber), teamHint), "member");
     }
@@ -793,7 +830,7 @@ export function computeEtFinalsStandings(
         roundsWon,
         reason: sawAmbiguous ? "ambiguous" : "no_roster_entry",
         techTeam: teamHint,
-        memberNumber: card?.memberNumber || "",
+        memberNumber: agg.member_number || card?.memberNumber || "",
       });
       continue;
     }

@@ -210,6 +210,7 @@ export function parseEdataFile(raw: string, opts: EdataParseOptions): EdataParse
         qual_pos: num(f[3]),
         car_number: text(f[0]),
         name: text(f[4]),
+        member_number: text(f[1]),
         class_index: text(f[2]),
         rt: num(f[8]),
         ft60: null,

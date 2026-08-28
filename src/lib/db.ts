@@ -33,6 +33,9 @@ export interface RunRow {
   qual_pos: number | null;
   car_number: string | null;
   name: string | null;
+  /** NHRA member number, when the source carries it (EData always does, the
+   *  API and some getresults grids do). The strongest identity for matching. */
+  member_number?: string | null;
   class_index: string | null;
   rt: number | null;
   ft60: number | null;
@@ -594,6 +597,7 @@ export async function insertRuns(
           run.mph_1320 !== existing.mph_1320 || run.is_winner !== existing.is_winner ||
           run.dial_in !== existing.dial_in || run.qual_pos !== existing.qual_pos ||
           run.result !== existing.result || (!existing.name && run.name) ||
+          (!existing.member_number && run.member_number) ||
           run.timestamp !== existing.timestamp;
         if (!changed) {
           if (run._scrape_seq != null && existingIdx !== -1) {
@@ -3313,6 +3317,7 @@ export async function getEtFinalsConfig(eventCode: string, season: string): Prom
         : 1,
       manualMatches: (data.manualMatches as Record<string, string>) || {},
       eligibilityOverrides: (data.eligibilityOverrides as Record<string, boolean>) || {},
+      buybackEarnsPoints: data.buybackEarnsPoints === true,
     };
   } catch (err) {
     console.error("[DB] Failed to load ET Finals config:", err);
@@ -3394,6 +3399,7 @@ export async function saveEtFinalsConfig(
       pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
       manualMatches: config.manualMatches || {},
       eligibilityOverrides: config.eligibilityOverrides || {},
+      buybackEarnsPoints: config.buybackEarnsPoints === true,
       updated_at: new Date().toISOString(),
     },
     { merge: true },

@@ -457,6 +457,18 @@ export function parseRunsFromHtml(
     return runs;
   }
 
+  // Some grids carry an NHRA member-number column beyond the 22 fixed ones.
+  // Find it by header text so nothing shifts when it isn't there.
+  let memberCol = -1;
+  table
+    .find("tr")
+    .first()
+    .find("th, td")
+    .each((i, cell) => {
+      const t = $(cell).text().trim().toLowerCase();
+      if (memberCol === -1 && (t.includes("member") || t === "nhra #" || t === "nhra#")) memberCol = i;
+    });
+
   const rows = table.find("tr").slice(1);
   let seq = 0;
 
@@ -492,6 +504,7 @@ export function parseRunsFromHtml(
       qual_pos: parseNum(getText(2)) as number | null,
       car_number,
       name,
+      member_number: memberCol >= 0 && memberCol < cells.length ? cleanText(getText(memberCol)) : null,
       class_index: cleanText(getText(5)),
       rt: parseNum(getText(6)),
       ft60: parseNum(getText(7)),

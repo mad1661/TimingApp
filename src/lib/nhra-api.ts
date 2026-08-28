@@ -419,6 +419,7 @@ function mapLane(
     qual_pos: apiNum(field("QualPos")),
     car_number,
     name,
+    member_number: memberId,
     class_index: strOrNull(field("ClassIndex")),
     rt,
     ft60,
