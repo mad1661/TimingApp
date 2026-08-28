@@ -113,10 +113,10 @@ function RacerRow({ racer }: { racer: RunRow }) {
   const bgClass = isWinner ? "bg-green-500/5" : isRunnerUp ? "bg-blue-500/5" : "";
 
   let badge: React.ReactNode = null;
-  if (isWinner) badge = <span className="text-[9px] font-bold bg-green-600 text-white px-1.5 py-0.5 rounded">W</span>;
-  else if (isRunnerUp) badge = <span className="text-[9px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">R</span>;
-  else if (r === "3") badge = <span className="text-[9px] font-bold bg-gray-600 text-white px-1.5 py-0.5 rounded">3</span>;
-  else if (r === "4") badge = <span className="text-[9px] font-bold bg-gray-600 text-white px-1.5 py-0.5 rounded">4</span>;
+  if (isWinner) badge = <span className="text-[10px] font-bold bg-green-600 text-white px-1.5 py-0.5 rounded">W</span>;
+  else if (isRunnerUp) badge = <span className="text-[10px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">R</span>;
+  else if (r === "3") badge = <span className="text-[10px] font-bold bg-gray-600 text-white px-1.5 py-0.5 rounded">3</span>;
+  else if (r === "4") badge = <span className="text-[10px] font-bold bg-gray-600 text-white px-1.5 py-0.5 rounded">4</span>;
 
   return (
     <div className={`px-4 py-3 flex items-center justify-between transition-colors ${bgClass}`}>

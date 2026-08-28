@@ -100,20 +100,20 @@ function Banner({ roundHeader, startTime, date, category, isFourWide }: { roundH
     <div className="leading-none">
       {/* Top bang line with category name centered */}
       <div className="flex items-baseline w-full overflow-hidden whitespace-nowrap">
-        <span className="flex-1 overflow-hidden text-[9px]">{bangFill}</span>
+        <span className="flex-1 overflow-hidden text-[10px]">{bangFill}</span>
         <span className="px-3 font-bold italic text-[13px] tracking-[0.25em] flex-shrink-0">{category}</span>
-        <span className="flex-1 overflow-hidden text-[9px] text-right">{bangFill}</span>
+        <span className="flex-1 overflow-hidden text-[10px] text-right">{bangFill}</span>
       </div>
 
       {/* Round / time / date line */}
-      <div className="text-[11px] mt-1 mb-1 font-bold">
+      <div className="text-xs mt-1 mb-1 font-bold">
         Round #&nbsp;{roundHeader.replace(/^Round # /, "")}&nbsp;&nbsp;&nbsp;{startTime}&nbsp;&nbsp;{date}
       </div>
 
       {/* Bottom bang line with CompuLink label on the right */}
       <div className="flex items-baseline w-full overflow-hidden whitespace-nowrap">
-        <span className="flex-1 overflow-hidden text-[9px]">{bangFill}</span>
-        <span className="pl-3 text-[10px] flex-shrink-0">{compuLinkLabel}&nbsp;&nbsp;&nbsp;&nbsp;#####</span>
+        <span className="flex-1 overflow-hidden text-[10px]">{bangFill}</span>
+        <span className="pl-3 text-[11px] flex-shrink-0">{compuLinkLabel}&nbsp;&nbsp;&nbsp;&nbsp;#####</span>
       </div>
 
       <div className="h-2" />
@@ -272,7 +272,7 @@ export default function RoundPrintCard({ data, categoryLabel, footerLabel }: Pro
   const totalPages = pageChunks.length || 1;
 
   return (
-    <div className="round-print bg-white text-black font-mono text-[11px] leading-tight p-5 mx-auto print:p-0 print:shadow-none print:m-0" style={{ width: "100%" }}>
+    <div className="round-print bg-white text-black font-mono text-xs leading-tight p-5 mx-auto print:p-0 print:shadow-none print:m-0" style={{ width: "100%" }}>
       {pageChunks.map((chunk, pageIdx) => {
         const isFirst = pageIdx === 0;
         const isLast = pageIdx === totalPages - 1;
@@ -292,7 +292,7 @@ export default function RoundPrintCard({ data, categoryLabel, footerLabel }: Pro
               />
             )}
 
-            <table className="w-full border-collapse text-[11px] leading-tight">
+            <table className="w-full border-collapse text-xs leading-tight">
               <ColumnHeader isFourWide={data.is_four_wide} />
               <tbody>
                 {chunk.map((pair, pi) => (
@@ -304,7 +304,7 @@ export default function RoundPrintCard({ data, categoryLabel, footerLabel }: Pro
             </table>
 
             {isLast && (
-              <div className="whitespace-pre text-center mt-3 text-[11px]">
+              <div className="whitespace-pre text-center mt-3 text-xs">
                 {dots} END of CATEGORY ... {car_count} Cars ...... {footerLabel || data.end_time_label} {dots}
               </div>
             )}

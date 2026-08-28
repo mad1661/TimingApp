@@ -55,7 +55,7 @@ function SheetHeader({
     <div className="px-3 pt-1 pb-1">
       {/* Top row: date / field / round on the left, series banner on the right */}
       <div className="flex items-start gap-3">
-        <div className="text-[9px] leading-tight whitespace-nowrap">
+        <div className="text-[10px] leading-tight whitespace-nowrap">
           {h.runDate && <div>{h.runDate}</div>}
           <div>{fieldSize} car field</div>
           <div>Round # {h.roundNumber || "1"}</div>
@@ -67,12 +67,12 @@ function SheetHeader({
             </div>
           )}
           {h.eventTitle && (
-            <div className="text-[10px] italic leading-tight whitespace-pre-line">
+            <div className="text-[11px] italic leading-tight whitespace-pre-line">
               {h.eventTitle}
             </div>
           )}
           {(h.venue || h.dateRange) && (
-            <div className="text-[10px] italic leading-tight">
+            <div className="text-[11px] italic leading-tight">
               {h.venue}
               {h.venue && h.dateRange ? " " : ""}
               {h.dateRange}
@@ -90,14 +90,14 @@ function SheetHeader({
         )}
         <div className="flex-1 border-b border-dotted border-black mb-0.5" />
         {h.systemMark && (
-          <div className="text-[10px] italic">{h.systemMark}</div>
+          <div className="text-[11px] italic">{h.systemMark}</div>
         )}
       </div>
 
       {/* Low E.T. / Top Speed callouts (right-aligned) */}
       {(h.lowEt || h.topSpeed) && (
         <div className="flex justify-end mt-1">
-          <table className="text-[10px] leading-tight">
+          <table className="text-[11px] leading-tight">
             <tbody>
               {h.lowEt && (
                 <tr>
@@ -259,7 +259,7 @@ function FinalCell({
         <PodiumBox label="Runner-Up" lane={runnerUp} accent="runner" />
       </div>
       <div className="flex-1 flex flex-col justify-center min-h-0">
-        <div className="text-center text-[10px] italic tracking-widest mb-1">
+        <div className="text-center text-[11px] italic tracking-widest mb-1">
           — FINAL —
         </div>
         <QuadBox quad={quad} variant="advanced" />
@@ -286,12 +286,12 @@ function PodiumBox({
       : "border-black bg-gray-50";
   return (
     <div className={`border-2 ${accentClass}`}>
-      <div className="px-2 py-0.5 border-b border-black bg-white text-center text-[10px] font-bold tracking-[0.2em] uppercase">
+      <div className="px-2 py-0.5 border-b border-black bg-white text-center text-[11px] font-bold tracking-[0.2em] uppercase">
         {label}
       </div>
       <div className="px-2 py-1.5 min-h-[42px] flex items-center">
         {q ? (
-          <div className="text-[10px] leading-[1.15] font-mono w-full">
+          <div className="text-[11px] leading-[1.15] font-mono w-full">
             <div className="flex gap-1">
               <span className="w-9 text-right font-bold">{q.carNumber ?? ""}</span>
               <span className="flex-1 truncate font-bold">{q.driver ?? ""}</span>
@@ -345,7 +345,7 @@ function QuadBox({ quad, variant }: { quad: QuadCell; variant: QuadVariant }) {
 function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
   if (variant === "round1" && lane.isBye) {
     return (
-      <div className="text-[9px] leading-[1.1] font-mono">
+      <div className="text-[10px] leading-[1.1] font-mono">
         <div className="flex gap-1">
           <span className="w-3 text-right">&nbsp;</span>
           <span>BYE</span>
@@ -364,7 +364,7 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
     const et = lane.runEt != null ? lane.runEt : q.et ?? null;
     const mph = lane.runMph != null ? lane.runMph : q.qMph ?? null;
     return (
-      <div className="text-[9px] leading-[1.1] font-mono">
+      <div className="text-[10px] leading-[1.1] font-mono">
         <div className="flex gap-1">
           <span className="w-3 text-right">&nbsp;</span>
           <span className="w-9 text-right font-bold">{q.carNumber ?? ""}</span>
@@ -386,7 +386,7 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
   if (variant === "round1") {
     // Round 1 active lane with no qualifier loaded — show just the seed.
     return (
-      <div className="text-[9px] leading-tight font-mono">
+      <div className="text-[10px] leading-tight font-mono">
         {lane.position != null ? <div>{lane.position}</div> : <div>&nbsp;</div>}
       </div>
     );
@@ -395,7 +395,7 @@ function LaneRow({ lane, variant }: { lane: Lane; variant: QuadVariant }) {
   // variant === "advanced": no qualifier yet → leave the cell blank so the
   // user has the printable sheet to fill in by hand if they want, while
   // any lanes that have been advanced still print real data above.
-  return <div className="text-[9px] leading-tight">&nbsp;</div>;
+  return <div className="text-[10px] leading-tight">&nbsp;</div>;
 }
 
 // ─── Connector pair ────────────────────────────────────────────────────────

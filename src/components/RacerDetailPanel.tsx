@@ -442,7 +442,7 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
                 <span className="text-xs text-gray-500">{seasonRuns.length} runs | {seasonEventCount} events</span>
               </div>
               {seasonAbortedCount > 0 && (
-                <p className="text-[11px] text-yellow-400/70 mb-3">
+                <p className="text-xs text-yellow-400/70 mb-3">
                   Averages exclude {seasonAbortedCount} aborted run{seasonAbortedCount !== 1 && "s"} (ET &gt;30% off median or MPH &gt;30% low). Totals and wins still include all runs.
                 </p>
               )}
@@ -450,12 +450,12 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
                 <div className="bg-nhra-darker rounded-lg p-3">
                   <p className="text-xs text-gray-500 uppercase">Avg ET</p>
                   <p className="text-lg font-bold text-white font-mono">{seasonAvgET?.toFixed(3) ?? "-"}</p>
-                  <p className="text-[10px] text-gray-600">best {seasonBestET?.toFixed(3) ?? "-"}</p>
+                  <p className="text-[11px] text-gray-600">best {seasonBestET?.toFixed(3) ?? "-"}</p>
                 </div>
                 <div className="bg-nhra-darker rounded-lg p-3">
                   <p className="text-xs text-gray-500 uppercase">Avg RT</p>
                   <p className="text-lg font-bold text-white font-mono">{seasonAvgRT?.toFixed(3) ?? "-"}</p>
-                  <p className="text-[10px] text-gray-600">best {seasonBestRT?.toFixed(3) ?? "-"}</p>
+                  <p className="text-[11px] text-gray-600">best {seasonBestRT?.toFixed(3) ?? "-"}</p>
                 </div>
                 <div className="bg-nhra-darker rounded-lg p-3">
                   <p className="text-xs text-gray-500 uppercase">Avg 60&apos;</p>
@@ -464,7 +464,7 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
                 <div className="bg-nhra-darker rounded-lg p-3">
                   <p className="text-xs text-gray-500 uppercase">Avg MPH</p>
                   <p className="text-lg font-bold text-white font-mono">{seasonAvgSpeed?.toFixed(2) ?? "-"}</p>
-                  <p className="text-[10px] text-gray-600">top {seasonBestSpeed?.toFixed(2) ?? "-"}</p>
+                  <p className="text-[11px] text-gray-600">top {seasonBestSpeed?.toFixed(2) ?? "-"}</p>
                 </div>
                 <div className="bg-nhra-darker rounded-lg p-3">
                   <p className="text-xs text-gray-500 uppercase">Wins</p>
@@ -642,19 +642,19 @@ export default function RacerDetailPanel({ name, compact = false, onRacerClick, 
                         </div>
                         <div className={`grid ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"} gap-2 mb-3`}>
                           <div className="bg-nhra-darker rounded-lg p-2">
-                            <p className="text-[10px] text-gray-500 uppercase">Runs</p>
+                            <p className="text-[11px] text-gray-500 uppercase">Runs</p>
                             <p className="text-sm font-bold text-white">{evRuns.length}</p>
                           </div>
                           <div className="bg-nhra-darker rounded-lg p-2">
-                            <p className="text-[10px] text-gray-500 uppercase">Best ET</p>
+                            <p className="text-[11px] text-gray-500 uppercase">Best ET</p>
                             <p className="text-sm font-bold text-white font-mono">{evBestET?.toFixed(3) ?? "-"}</p>
                           </div>
                           <div className="bg-nhra-darker rounded-lg p-2">
-                            <p className="text-[10px] text-gray-500 uppercase">Best RT</p>
+                            <p className="text-[11px] text-gray-500 uppercase">Best RT</p>
                             <p className="text-sm font-bold text-white font-mono">{evBestRT?.toFixed(3) ?? "-"}</p>
                           </div>
                           <div className="bg-nhra-darker rounded-lg p-2">
-                            <p className="text-[10px] text-gray-500 uppercase">Wins</p>
+                            <p className="text-[11px] text-gray-500 uppercase">Wins</p>
                             <p className="text-sm font-bold text-white">{evWins.length}</p>
                           </div>
                         </div>

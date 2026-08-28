@@ -189,7 +189,7 @@ export default function EdataPage() {
           </p>
         </div>
 
-        <p className="text-[11px] text-gray-500 mt-4 leading-relaxed">
+        <p className="text-xs text-gray-500 mt-4 leading-relaxed">
           EData records the finish order but no clock times or lanes, so each pass is given a
           synthetic timestamp from its round and position in the file. Runs order and pair up
           correctly everywhere in the app, but the times shown on time-of-day views are sequence
@@ -246,7 +246,7 @@ export default function EdataPage() {
               <p className="text-xs font-semibold text-yellow-500 mb-1">
                 {warnings.length} thing{warnings.length === 1 ? "" : "s"} to check
               </p>
-              <ul className="text-[11px] text-gray-400 space-y-0.5 list-disc list-inside">
+              <ul className="text-xs text-gray-400 space-y-0.5 list-disc list-inside">
                 {warnings.map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}

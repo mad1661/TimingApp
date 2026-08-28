@@ -101,7 +101,7 @@ function ClassChip({ entry }: { entry: DoubleClassEntry }) {
       <div className="text-right shrink-0">
         <span className="text-xs font-bold whitespace-nowrap">{entryStatusLabel(entry)}</span>
         {entry.status === "in" && entry.laterRoundStarted && (
-          <p className="text-[10px] text-yellow-500 mt-0.5 whitespace-nowrap">
+          <p className="text-[11px] text-yellow-500 mt-0.5 whitespace-nowrap">
             next round underway
           </p>
         )}
