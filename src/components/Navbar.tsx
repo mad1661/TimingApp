@@ -62,7 +62,7 @@ export default function Navbar() {
             <div className="min-w-0">
               <h1 className="text-lg font-bold text-white tracking-tight truncate">
                 Timing Data
-                <span className="ml-2 align-middle text-[10px] font-semibold text-gray-400 bg-nhra-card border border-nhra-border rounded px-1.5 py-0.5">
+                <span className="ml-2 align-middle text-[11px] font-semibold text-gray-400 bg-nhra-card border border-nhra-border rounded px-1.5 py-0.5">
                   v{APP_VERSION}
                 </span>
               </h1>
@@ -126,14 +126,14 @@ export default function Navbar() {
               {/* Data source: getresults scraper (default), official API, or
                   EData files. EData turns polling off entirely. */}
               <div className="flex items-center gap-1 rounded-lg bg-nhra-card border border-nhra-border p-1">
-                <span className="text-[10px] uppercase tracking-wide text-gray-500 px-1 shrink-0">Source</span>
+                <span className="text-[11px] uppercase tracking-wide text-gray-500 px-1 shrink-0">Source</span>
                 {(["scraper", "api", "edata"] as const).map((src) => {
                   const active = (live.config?.dataSource ?? "scraper") === src;
                   return (
                     <button
                       key={src}
                       onClick={() => live.setDataSource(src)}
-                      className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-all ${
+                      className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-all ${
                         active ? "bg-nhra-red text-white" : "text-gray-400 hover:text-white"
                       }`}
                     >
@@ -145,7 +145,7 @@ export default function Navbar() {
               {(live.config?.dataSource ?? "scraper") === "edata" && (
                 <Link
                   href="/edata"
-                  className="block text-[11px] text-yellow-500 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-2 py-1.5 leading-snug hover:bg-yellow-500/20"
+                  className="block text-xs text-yellow-500 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-2 py-1.5 leading-snug hover:bg-yellow-500/20"
                 >
                   getresults polling is off. Runs come from the EData files you
                   upload — open EData Import.
@@ -178,7 +178,7 @@ export default function Navbar() {
             Change Event
           </Link>
 
-          <p className="text-[10px] text-gray-600 text-center pt-1">v{APP_VERSION}</p>
+          <p className="text-[11px] text-gray-600 text-center pt-1">v{APP_VERSION}</p>
         </div>
       </nav>
 

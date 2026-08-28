@@ -89,13 +89,13 @@ function SlotLine({ occ, showClass }: { occ: Occupant; showClass: boolean }) {
   const e = occ.entry;
   return (
     <div className="h-9 flex items-center gap-2 px-2 border-b border-nhra-border min-w-0">
-      <span className="text-[10px] text-gray-500 w-4 shrink-0 text-right">{e.seed}</span>
+      <span className="text-[11px] text-gray-500 w-4 shrink-0 text-right">{e.seed}</span>
       <span className="text-xs font-bold text-nhra-accent shrink-0">{e.car_number}</span>
       <span className="text-xs text-white truncate">{e.name}</span>
       {showClass && e.designation && (
-        <span className="text-[10px] text-gray-400 shrink-0">{e.designation}</span>
+        <span className="text-[11px] text-gray-400 shrink-0">{e.designation}</span>
       )}
-      <span className="text-[10px] text-gray-400 ml-auto shrink-0">{fmtUnder(e.underOver)}</span>
+      <span className="text-[11px] text-gray-400 ml-auto shrink-0">{fmtUnder(e.underOver)}</span>
     </div>
   );
 }
@@ -124,7 +124,7 @@ function LadderBracket({
       <div className="flex gap-6 min-w-fit">
         {ladder.rounds.map((cells, ri) => (
           <div key={ri} className="flex flex-col w-56 shrink-0">
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 mb-2 text-center">
+            <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-2 text-center">
               {roundName(ri, ladder.rounds.length)}
             </p>
             <div className="flex flex-col justify-around grow gap-3">
@@ -144,7 +144,7 @@ function LadderBracket({
           </div>
         ))}
         <div className="flex flex-col w-56 shrink-0">
-          <p className="text-[10px] uppercase tracking-wider text-gray-500 mb-2 text-center">Winner</p>
+          <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-2 text-center">Winner</p>
           <div className="flex flex-col justify-around grow">
             <div className="rounded border border-nhra-border bg-nhra-darker/40">
               <div className="h-9 border-b border-nhra-border" />
@@ -187,7 +187,7 @@ function CarRow({
               <button
                 key={call}
                 onClick={() => onTrans(car, call)}
-                className={`px-2 py-0.5 text-[10px] font-bold uppercase ${
+                className={`px-2 py-0.5 text-[11px] font-bold uppercase ${
                   car.transmission === call
                     ? "bg-nhra-red text-white"
                     : "bg-nhra-darker text-gray-400 hover:text-white"
@@ -202,7 +202,7 @@ function CarRow({
           <button
             onClick={() => onScratch(car)}
             title={car.excluded ? "Restore to class" : "Scratch (didn't make the call)"}
-            className="px-2 py-0.5 text-[10px] font-bold rounded border border-nhra-border text-gray-400 hover:text-white hover:border-red-500 print:hidden"
+            className="px-2 py-0.5 text-[11px] font-bold rounded border border-nhra-border text-gray-400 hover:text-white hover:border-red-500 print:hidden"
           >
             {car.excluded ? "RESTORE" : "SCRATCH"}
           </button>
@@ -226,7 +226,7 @@ function GroupTable({
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="text-[10px] uppercase tracking-wider text-gray-500 border-b border-nhra-border">
+        <tr className="text-[11px] uppercase tracking-wider text-gray-500 border-b border-nhra-border">
           <td className="pb-1 pr-2 text-right">#</td>
           <td className="pb-1 pr-3">Car</td>
           <td className="pb-1 pr-3">Driver</td>

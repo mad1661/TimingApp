@@ -200,7 +200,7 @@ export default function StatsPage() {
                             <td className="p-3 pl-5">
                               <div className="flex items-center gap-2">
                                 <span className="text-white font-medium">{c.category}</span>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${badge.cls}`}>{badge.label}</span>
+                                <span className={`text-[11px] px-1.5 py-0.5 rounded border ${badge.cls}`}>{badge.label}</span>
                               </div>
                             </td>
                             <Td>{c.count}</Td>

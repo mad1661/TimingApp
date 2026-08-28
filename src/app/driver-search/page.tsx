@@ -357,7 +357,7 @@ function ProfileCard({ t }: { t: TechCard }) {
 function Section({ title, full, children }: { title: string; full?: boolean; children: React.ReactNode }) {
   return (
     <div className={`mb-3 ${full ? "sm:col-span-2" : ""}`}>
-      <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">{title}</h3>
+      <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">{title}</h3>
       {children}
     </div>
   );

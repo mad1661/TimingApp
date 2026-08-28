@@ -99,7 +99,7 @@ export default function TechCardsPage() {
         <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
           <label className="block text-sm text-gray-400">Event Name</label>
           {autoFilledEvent && live.config?.eventName && (
-            <span className="text-[10px] uppercase tracking-wider text-green-400">
+            <span className="text-[11px] uppercase tracking-wider text-green-400">
               Auto-filled from current event
             </span>
           )}

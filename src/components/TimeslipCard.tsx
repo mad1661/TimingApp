@@ -85,7 +85,7 @@ function TimingRow2Wide({
 }) {
   const valClass = bold ? "font-black" : "font-bold";
   const textSize = highlight ? "text-xl" : "text-sm";
-  const subSize = highlight ? textSize : "text-[10px]";
+  const subSize = highlight ? textSize : "text-[11px]";
 
   return (
     <div className={`flex items-center ${highlight ? "py-2.5 bg-gray-50 -mx-1 px-1 rounded" : "py-1.5"} border-b border-dashed border-gray-300 last:border-0`}>
@@ -94,7 +94,7 @@ function TimingRow2Wide({
         {subs && <div className={`${subSize} text-black font-mono`}>{subs[0]}</div>}
       </div>
       <div className="w-24 text-center flex-shrink-0">
-        <span className={`text-[10px] uppercase tracking-wider text-black ${highlight ? "font-bold" : ""}`}>
+        <span className={`text-[11px] uppercase tracking-wider text-black ${highlight ? "font-bold" : ""}`}>
           {label}
         </span>
       </div>
@@ -122,7 +122,7 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         <div className="text-base font-bold tracking-wider">
           {eventTitle || left.event_name || "NHRA EVENT"}
         </div>
-        <div className="text-[10px] text-gray-400 mt-0.5">
+        <div className="text-[11px] text-gray-400 mt-0.5">
           {date} &bull; {left.season} &bull; Round {left.round || "-"} &bull; {left.category || "-"}
           {eighth ? " • 1/8 MILE" : ""}
         </div>
@@ -134,13 +134,13 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
           <div className="text-sm font-black tracking-wide truncate">{left.name || "—"}</div>
           <div className="flex items-center justify-center gap-2 mt-0.5">
             <span className="text-xs text-nhra-accent font-bold">#{left.car_number || "-"}</span>
-            <span className="text-[10px] text-black">{left.lane || ""}</span>
-            {leftBadge && <span className={`text-[9px] font-bold ${leftBadge.bg} ${leftBadge.fg} px-1.5 py-0.5 rounded`}>{leftBadge.text}</span>}
+            <span className="text-[11px] text-black">{left.lane || ""}</span>
+            {leftBadge && <span className={`text-[10px] font-bold ${leftBadge.bg} ${leftBadge.fg} px-1.5 py-0.5 rounded`}>{leftBadge.text}</span>}
           </div>
         </div>
         <div className="w-px bg-gray-800" />
         <div className="w-24 flex-shrink-0 bg-gray-800 flex items-center justify-center">
-          <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">VS</span>
+          <span className="text-[11px] text-gray-300 font-bold uppercase tracking-widest">VS</span>
         </div>
         <div className="w-px bg-gray-800" />
         <div className={`flex-1 px-3 py-2.5 text-center ${right ? resultRowBg(right) : "bg-white"}`}>
@@ -149,8 +149,8 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
               <div className="text-sm font-black tracking-wide truncate">{right.name || "—"}</div>
               <div className="flex items-center justify-center gap-2 mt-0.5">
                 <span className="text-xs text-nhra-accent font-bold">#{right.car_number || "-"}</span>
-                <span className="text-[10px] text-black">{right.lane || ""}</span>
-                {rightBadge && <span className={`text-[9px] font-bold ${rightBadge.bg} ${rightBadge.fg} px-1.5 py-0.5 rounded`}>{rightBadge.text}</span>}
+                <span className="text-[11px] text-black">{right.lane || ""}</span>
+                {rightBadge && <span className={`text-[10px] font-bold ${rightBadge.bg} ${rightBadge.fg} px-1.5 py-0.5 rounded`}>{rightBadge.text}</span>}
               </div>
             </>
           ) : (
@@ -165,7 +165,7 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
           <span className="text-xs font-bold font-mono">{left.dial_in != null ? fmt(left.dial_in, 2) : "N/A"}</span>
         </div>
         <div className="w-24 text-center flex-shrink-0">
-          <span className="text-[10px] uppercase tracking-wider text-black font-bold">Dial-In</span>
+          <span className="text-[11px] uppercase tracking-wider text-black font-bold">Dial-In</span>
         </div>
         <div className="flex-1 text-left pl-3 py-1.5">
           <span className={`text-xs font-bold font-mono ${!right ? "text-gray-300" : ""}`}>{right?.dial_in != null ? fmt(right.dial_in, 2) : "N/A"}</span>
@@ -195,13 +195,13 @@ function Timeslip2Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
       {/* MOV */}
       {left.mov != null && (
         <div className="border-t border-gray-300 px-3 py-1.5 flex justify-center">
-          <span className="text-[10px] text-black uppercase tracking-wider">Margin of Victory: </span>
+          <span className="text-[11px] text-black uppercase tracking-wider">Margin of Victory: </span>
           <span className="text-xs font-bold font-mono ml-1">{fmt(left.mov, 4)}</span>
         </div>
       )}
 
       {/* Footer */}
-      <div className="bg-gray-900 text-white px-4 py-2 text-center text-[10px]">
+      <div className="bg-gray-900 text-white px-4 py-2 text-center text-[11px]">
         <div className="text-gray-400">
           {time && `${time}`}
           {left.class_index && ` | Class: ${left.class_index}`}
@@ -230,7 +230,7 @@ function TimingRow4Wide({
 }) {
   const valClass = bold ? "font-black" : "font-bold";
   const textSize = highlight ? "text-lg sm:text-xl" : "text-xs sm:text-sm";
-  const subSize = highlight ? textSize : "text-[9px]";
+  const subSize = highlight ? textSize : "text-[10px]";
   const midIdx = Math.ceil(runners.length / 2);
 
   return (
@@ -242,7 +242,7 @@ function TimingRow4Wide({
         </div>
       ))}
       <div className="w-20 text-center flex-shrink-0 px-1">
-        <span className={`text-[10px] uppercase tracking-wider text-black ${highlight ? "font-bold" : ""}`}>
+        <span className={`text-[11px] uppercase tracking-wider text-black ${highlight ? "font-bold" : ""}`}>
           {label}
         </span>
       </div>
@@ -269,7 +269,7 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
         <div className="text-base font-bold tracking-wider">
           {eventTitle || first.event_name || "NHRA EVENT"}
         </div>
-        <div className="text-[10px] text-gray-400 mt-0.5">
+        <div className="text-[11px] text-gray-400 mt-0.5">
           {date} &bull; {first.season} &bull; Round {first.round || "-"} &bull; {first.category || "-"} &bull; 4-WIDE
           {eighth ? " • 1/8 MILE" : ""}
         </div>
@@ -286,11 +286,11 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
             const laneNum = offset + i + 1;
             return (
               <div key={`${offset}-${i}`} className={`flex-1 px-2 py-2 text-center ${resultRowBg(run)} ${i > 0 || offset > 0 ? "border-l border-gray-800" : ""}`}>
-                <div className="text-[10px] text-black font-bold uppercase mb-0.5">Lane {laneNum}</div>
+                <div className="text-[11px] text-black font-bold uppercase mb-0.5">Lane {laneNum}</div>
                 <div className="text-xs sm:text-sm font-black tracking-wide truncate">{run.name || "—"}</div>
                 <div className="flex items-center justify-center gap-1 mt-0.5 flex-wrap">
-                  <span className="text-[10px] text-nhra-accent font-bold">#{run.car_number || "-"}</span>
-                  {badge && <span className={`text-[8px] font-bold ${badge.bg} ${badge.fg} px-1 py-0.5 rounded`}>{badge.text}</span>}
+                  <span className="text-[11px] text-nhra-accent font-bold">#{run.car_number || "-"}</span>
+                  {badge && <span className={`text-[9px] font-bold ${badge.bg} ${badge.fg} px-1 py-0.5 rounded`}>{badge.text}</span>}
                 </div>
               </div>
             );
@@ -299,7 +299,7 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
             <>
               {left.map((run, i) => renderLane(run, i, 0))}
               <div className="w-20 flex-shrink-0 bg-gray-800 flex items-center justify-center">
-                <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest">VS</span>
+                <span className="text-[11px] text-gray-300 font-bold uppercase tracking-widest">VS</span>
               </div>
               {right.map((run, i) => renderLane(run, i, mid))}
             </>
@@ -315,7 +315,7 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
           const right = runners.slice(mid);
           const renderDial = (run: TimeslipRun, i: number, offset: number) => (
             <div key={`${offset}-${i}`} className={`flex-1 text-center py-1.5 ${i > 0 || offset > 0 ? "border-l border-gray-200" : ""}`}>
-              <div className="text-[9px] text-black uppercase">Dial-In</div>
+              <div className="text-[10px] text-black uppercase">Dial-In</div>
               <span className="text-xs font-bold font-mono">{run.dial_in != null ? fmt(run.dial_in, 2) : "N/A"}</span>
             </div>
           );
@@ -352,13 +352,13 @@ function Timeslip4Wide({ runners, eventTitle }: { runners: TimeslipRun[]; eventT
       {/* MOV */}
       {first.mov != null && (
         <div className="border-t border-gray-300 px-3 py-1.5 flex justify-center">
-          <span className="text-[10px] text-black uppercase tracking-wider">Margin of Victory: </span>
+          <span className="text-[11px] text-black uppercase tracking-wider">Margin of Victory: </span>
           <span className="text-xs font-bold font-mono ml-1">{fmt(first.mov, 4)}</span>
         </div>
       )}
 
       {/* Footer */}
-      <div className="bg-gray-900 text-white px-4 py-2 text-center text-[10px]">
+      <div className="bg-gray-900 text-white px-4 py-2 text-center text-[11px]">
         <div className="text-gray-400">
           {time && `${time}`}
           {first.class_index && ` | Class: ${first.class_index}`}

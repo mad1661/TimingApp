@@ -196,7 +196,7 @@ export default function SharePage() {
               {refreshing ? "Refreshing…" : "Refresh"}
             </button>
             {data && !refreshing && (
-              <span className={`text-[11px] ${data.inserted > 0 ? "text-green-400 font-bold" : "text-gray-500"}`}>
+              <span className={`text-xs ${data.inserted > 0 ? "text-green-400 font-bold" : "text-gray-500"}`}>
                 {data.inserted > 0 ? `+${data.inserted} new run${data.inserted === 1 ? "" : "s"}` : "no new runs"}
               </span>
             )}
@@ -218,19 +218,19 @@ export default function SharePage() {
             {/* Summary tiles */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
               <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Pairs run</div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Pairs run</div>
                 <div className="text-2xl font-bold text-white font-mono">{totalPairs}</div>
               </div>
               <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Cars run</div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Cars run</div>
                 <div className="text-2xl font-bold text-white font-mono">{totalCars}</div>
               </div>
               <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Sessions</div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Sessions</div>
                 <div className="text-2xl font-bold text-white font-mono">{distinctRounds}</div>
               </div>
               <div className="bg-nhra-card border border-nhra-border rounded-xl p-4">
-                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Categories</div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Categories</div>
                 <div className="text-2xl font-bold text-white font-mono">{distinctCategories}</div>
               </div>
             </div>
@@ -241,7 +241,7 @@ export default function SharePage() {
                 <div key={day} className="mb-6">
                   <h2 className={`text-base font-bold mb-3 ${isToday ? "text-nhra-accent" : "text-white"}`}>
                     {fmtDateLabel(entries[0].firstTimestamp)}
-                    {isToday && <span className="ml-2 text-[10px] uppercase tracking-widest bg-nhra-accent/20 text-nhra-accent px-2 py-0.5 rounded">Today</span>}
+                    {isToday && <span className="ml-2 text-[11px] uppercase tracking-widest bg-nhra-accent/20 text-nhra-accent px-2 py-0.5 rounded">Today</span>}
                   </h2>
                   <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-x-auto">
                     <table className="w-full text-sm min-w-[640px]">

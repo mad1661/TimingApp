@@ -1002,7 +1002,7 @@ export default function LadderBuilderPage() {
                         const value = autoFillRound[roundNum] || defaultRound;
                         return (
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] uppercase text-gray-500">Auto-fill from</span>
+                            <span className="text-[11px] uppercase text-gray-500">Auto-fill from</span>
                             <select
                               value={value}
                               onChange={(e) => setAutoFillRoundFor(roundNum, e.target.value)}
@@ -1110,7 +1110,7 @@ function QuadAdvancePicker({
         {picks && (
           <button
             onClick={() => onChange(null)}
-            className="text-[10px] text-gray-500 hover:text-red-400"
+            className="text-[11px] text-gray-500 hover:text-red-400"
           >
             Clear
           </button>
@@ -1118,7 +1118,7 @@ function QuadAdvancePicker({
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="block text-[10px] uppercase text-gray-500 mb-1">
+          <label className="block text-[11px] uppercase text-gray-500 mb-1">
             1st (Winner)
           </label>
           <select
@@ -1135,7 +1135,7 @@ function QuadAdvancePicker({
           </select>
         </div>
         <div>
-          <label className="block text-[10px] uppercase text-gray-500 mb-1">
+          <label className="block text-[11px] uppercase text-gray-500 mb-1">
             2nd (Runner-up)
           </label>
           <select

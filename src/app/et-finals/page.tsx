@@ -93,7 +93,7 @@ const ROLE_STYLES: Record<EtCategoryRole, string> = {
 function StatusBadge({ racer }: { racer: EtRacerPoints }) {
   if (!racer.points_eligible) {
     return (
-      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-gray-600/20 text-gray-400 border border-gray-600/40">
+      <span className="px-2 py-0.5 rounded text-xs font-semibold bg-gray-600/20 text-gray-400 border border-gray-600/40">
         No Points
       </span>
     );
@@ -116,7 +116,7 @@ function StatusBadge({ racer }: { racer: EtRacerPoints }) {
   };
   const s = map[racer.status];
   return (
-    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${s.cls}`}>{s.label}</span>
+    <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${s.cls}`}>{s.label}</span>
   );
 }
 
@@ -149,7 +149,7 @@ function RoundsDetail({
   }
 
   return (
-    <table className="w-full text-[11px]">
+    <table className="w-full text-xs">
       <thead className="text-gray-600 uppercase tracking-wider">
         <tr>
           <th className="text-left pl-10 pr-2 py-1 font-medium">Round</th>
@@ -201,7 +201,7 @@ function RoundsDetail({
                       onChange={(e) => setCarValue(e.target.value.toUpperCase())}
                       placeholder="correct #"
                       autoFocus
-                      className="w-20 px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-[11px] text-white"
+                      className="w-20 px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && carValue.trim() && rd.dedup_key) {
                           onFixCarNumber(rd.dedup_key, carValue.trim());
@@ -278,7 +278,7 @@ function MatchedFromList({
   return (
     <div className="pl-10 pr-4 pb-2 space-y-1">
       {racer.matched_from.map((m) => (
-        <div key={m.identity} className="flex items-center gap-2 flex-wrap text-[11px] text-gray-400">
+        <div key={m.identity} className="flex items-center gap-2 flex-wrap text-xs text-gray-400">
           <span>
             {racer.matched_from.length > 1 ? "Combined: " : "Matched: "}
             <span className="text-gray-300 font-mono">{m.car_number || "—"}</span>
@@ -290,7 +290,7 @@ function MatchedFromList({
             value=""
             disabled={assigning === m.identity}
             onChange={(e) => e.target.value && onAssign(m.identity, e.target.value)}
-            className="px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-[11px] text-gray-300 disabled:opacity-40"
+            className="px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-xs text-gray-300 disabled:opacity-40"
           >
             <option value="">{assigning === m.identity ? "Moving…" : "Move to…"}</option>
             <optgroup label="Teams (no roster row needed)">
@@ -375,7 +375,7 @@ function RacerTable({
                 className="border-t border-nhra-border/40 cursor-pointer hover:bg-nhra-darker/40"
                 onClick={() => toggle(rowKey(r))}
               >
-                <td className="pl-4 py-1.5 text-gray-600 text-[10px]">
+                <td className="pl-4 py-1.5 text-gray-600 text-[11px]">
                   {r.rounds.length > 0 ? (open.has(rowKey(r)) ? "▾" : "▸") : ""}
                 </td>
                 <td className="px-2 py-1.5 text-gray-400">
@@ -396,7 +396,7 @@ function RacerTable({
                   {r.name}
                   {r.matched_from.length > 1 && (
                     <span
-                      className="ml-1.5 text-[10px] text-yellow-600"
+                      className="ml-1.5 text-[11px] text-yellow-600"
                       title="Runs from more than one car number were combined onto this entry — expand to see and move them"
                     >
                       ({r.matched_from.length} combined)
@@ -439,7 +439,7 @@ function RacerTable({
                         ? "Mark this racer a non-points earner"
                         : "Let this racer earn points again"
                     }
-                    className={`px-2 py-0.5 rounded border text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                    className={`px-2 py-0.5 rounded border text-xs font-semibold transition-colors disabled:opacity-40 ${
                       r.points_eligible
                         ? "bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40"
                         : "bg-gray-600/20 text-gray-400 border-gray-600/40 hover:bg-green-500/20 hover:text-green-400 hover:border-green-500/40"
@@ -743,7 +743,7 @@ function RoundReview({
                                 onChange={(e) => setCarValue(e.target.value.toUpperCase())}
                                 autoFocus
                                 placeholder="correct #"
-                                className="w-20 px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-[11px] text-white"
+                                className="w-20 px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter" && carValue.trim() && key) {
                                     onFixCarNumber(key, carValue.trim());
@@ -857,32 +857,32 @@ function TeamPanel({
           </div>
           <div className="flex gap-6 text-right">
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-gray-500">Big Cars</div>
+              <div className="text-xs uppercase tracking-wider text-gray-500">Big Cars</div>
               <div className="text-xl font-bold text-white">{team.bigPoints}</div>
               {team.bigAdjustment !== 0 && (
-                <div className="text-[10px] text-yellow-500">
+                <div className="text-[11px] text-yellow-500">
                   incl. {team.bigAdjustment > 0 ? "+" : ""}
                   {team.bigAdjustment} adj
                 </div>
               )}
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-gray-500">Jrs</div>
+              <div className="text-xs uppercase tracking-wider text-gray-500">Jrs</div>
               <div className="text-xl font-bold text-white">{team.jrPoints}</div>
               {team.jrAdjustment !== 0 && (
-                <div className="text-[10px] text-yellow-500">
+                <div className="text-[11px] text-yellow-500">
                   incl. {team.jrAdjustment > 0 ? "+" : ""}
                   {team.jrAdjustment} adj
                 </div>
               )}
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-gray-500">Total</div>
+              <div className="text-xs uppercase tracking-wider text-gray-500">Total</div>
               <div className="text-xl font-bold text-nhra-red">{team.totalPoints}</div>
             </div>
             <button
               onClick={() => setShowAdjust((v) => !v)}
-              className="self-start text-[11px] text-gray-500 hover:text-white underline decoration-dotted underline-offset-2"
+              className="self-start text-xs text-gray-500 hover:text-white underline decoration-dotted underline-offset-2"
             >
               {showAdjust ? "hide" : "Adjust points"}
             </button>
@@ -890,7 +890,7 @@ function TeamPanel({
         </div>
         {showAdjust && (
           <div className="mt-3 pt-3 border-t border-nhra-border/60 flex items-end gap-3 flex-wrap">
-            <label className="text-[11px] text-gray-400">
+            <label className="text-xs text-gray-400">
               Big Cars +/−
               <input
                 type="number"
@@ -899,7 +899,7 @@ function TeamPanel({
                 className="block mt-1 w-20 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
               />
             </label>
-            <label className="text-[11px] text-gray-400">
+            <label className="text-xs text-gray-400">
               Jrs +/−
               <input
                 type="number"
@@ -908,7 +908,7 @@ function TeamPanel({
                 className="block mt-1 w-20 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
               />
             </label>
-            <label className="text-[11px] text-gray-400 flex-1 min-w-[12rem]">
+            <label className="text-xs text-gray-400 flex-1 min-w-[12rem]">
               Why (shows on the board and the print)
               <input
                 value={adjNote}
@@ -941,7 +941,7 @@ function TeamPanel({
               </button>
             )}
             {team.adjustmentNote && (
-              <span className="w-full text-[11px] text-yellow-500">Note: {team.adjustmentNote}</span>
+              <span className="w-full text-xs text-yellow-500">Note: {team.adjustmentNote}</span>
             )}
           </div>
         )}
@@ -950,7 +950,7 @@ function TeamPanel({
             {team.byCategory.map((c) => (
               <span
                 key={c.category}
-                className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-nhra-darker border border-nhra-border text-gray-300"
+                className="px-2.5 py-1 rounded-full text-xs font-semibold bg-nhra-darker border border-nhra-border text-gray-300"
               >
                 {c.category}
                 <span className="ml-1.5 text-nhra-red font-bold">{c.points}</span>
@@ -1956,7 +1956,7 @@ export default function EtFinalsPage() {
                             className="w-full px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600"
                           />
                         </td>
-                        <td className="px-6 py-2 text-right text-[11px] text-gray-500">
+                        <td className="px-6 py-2 text-right text-xs text-gray-500">
                           {tc.hasRoster ? "roster" : ""}
                           {tc.hasRoster && tc.techCardCount ? " · " : ""}
                           {tc.techCardCount ? `${tc.techCardCount} tech cards` : ""}
@@ -2049,7 +2049,7 @@ export default function EtFinalsPage() {
                       <tr key={c.category} className="border-t border-nhra-border/60">
                         <td className="px-6 py-2">
                           <div className="text-white font-medium">{c.category}</div>
-                          <div className="text-[11px] text-gray-500">
+                          <div className="text-xs text-gray-500">
                             {c.rounds.join(" · ") || "no rounds yet"}
                             {!effectiveConfig?.categoryRoles[c.category] ? (
                               <span className="ml-2 text-gray-600">(auto)</span>
@@ -2069,7 +2069,7 @@ export default function EtFinalsPage() {
                               <button
                                 key={r}
                                 onClick={() => setRole(c.category, r)}
-                                className={`px-2 py-1 rounded text-[11px] font-semibold border transition-colors ${
+                                className={`px-2 py-1 rounded text-xs font-semibold border transition-colors ${
                                   role === r
                                     ? ROLE_STYLES[r]
                                     : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-gray-300"
@@ -2086,7 +2086,7 @@ export default function EtFinalsPage() {
                               <button
                                 key={d}
                                 onClick={() => setDivision(c.category, d)}
-                                className={`px-2 py-1 rounded text-[11px] font-semibold border transition-colors ${
+                                className={`px-2 py-1 rounded text-xs font-semibold border transition-colors ${
                                   division === d
                                     ? "bg-nhra-red/20 text-red-400 border-nhra-red/40"
                                     : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-gray-300"
@@ -2306,7 +2306,7 @@ export default function EtFinalsPage() {
                   className="ml-2 w-24 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600"
                 />
               </label>
-              <span className="text-[11px] text-gray-600">
+              <span className="text-xs text-gray-600">
                 For a roster submitted with the track-code cell left blank. Applies to a single-file upload.
               </span>
             </div>
@@ -2503,7 +2503,7 @@ export default function EtFinalsPage() {
                 C11EDAT.TXT, C12EDAT.TXT, … — all classes at once. Re-importing updates rather than duplicates.
               </p>
             </div>
-            <p className="text-[11px] text-gray-500 leading-relaxed">
+            <p className="text-xs text-gray-500 leading-relaxed">
               EData records finish order but no clock times, so each pass gets a synthetic timestamp from its round and
               position in the file. Runs order and pair correctly; the times on time-of-day views are sequence markers,
               not when the cars ran.
@@ -2707,7 +2707,7 @@ export default function EtFinalsPage() {
                     <td className="px-4 py-3 text-gray-500 font-semibold">{i + 1}</td>
                     <td className="px-4 py-3">
                       <div className="text-white font-semibold">{team.team_name}</div>
-                      <div className="text-[11px] text-gray-500">
+                      <div className="text-xs text-gray-500">
                         {team.track_code}
                         {team.captain ? ` · ${team.captain}` : ""}
                         {!team.hasRoster && (
@@ -2738,7 +2738,7 @@ export default function EtFinalsPage() {
                       {team.totalPoints}
                       {(team.bigAdjustment !== 0 || team.jrAdjustment !== 0) && (
                         <span
-                          className="ml-1 text-[10px] text-yellow-500 font-semibold align-top"
+                          className="ml-1 text-[11px] text-yellow-500 font-semibold align-top"
                           title={`Includes a hand adjustment (${[
                             team.bigAdjustment ? `big ${team.bigAdjustment > 0 ? "+" : ""}${team.bigAdjustment}` : "",
                             team.jrAdjustment ? `jrs ${team.jrAdjustment > 0 ? "+" : ""}${team.jrAdjustment}` : "",
@@ -2759,7 +2759,7 @@ export default function EtFinalsPage() {
               </tbody>
             </table>
           </div>
-          <div className="px-4 py-2.5 border-t border-nhra-border text-[11px] text-gray-500">
+          <div className="px-4 py-2.5 border-t border-nhra-border text-xs text-gray-500">
             Click a team — or its tab above — for the full roster split into who&apos;s gaining points and who isn&apos;t.
           </div>
         </div>
@@ -2817,14 +2817,14 @@ export default function EtFinalsPage() {
                         })
                       }
                     >
-                      <td className="pl-4 py-2 text-gray-600 text-[10px]">
+                      <td className="pl-4 py-2 text-gray-600 text-[11px]">
                         {u.rounds.length > 0 ? (unmatchedOpen.has(u.identity) ? "▾" : "▸") : ""}
                       </td>
                       <td className="px-2 py-2 text-gray-300">{u.car_number || "—"}</td>
                       <td className="px-3 py-2 text-white">
                         {u.name || "—"}
                         {u.memberNumber && (
-                          <span className="block text-[10px] text-gray-500">member #{u.memberNumber}</span>
+                          <span className="block text-[11px] text-gray-500">member #{u.memberNumber}</span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-gray-400">{u.category}</td>
