@@ -745,7 +745,6 @@ export function computeEtFinalsStandings(
   // different cars), with an unscoped bucket as a fallback for when a class was
   // filed under the wrong division.
   const byCar = new Map<string, Bucket>();
-  const byCarAnyDivision = new Map<string, Bucket>();
   const byName = new Map<string, Bucket>();
   const byNameAnyDivision = new Map<string, Bucket>();
   const byMember = new Map<string, Bucket>();
@@ -810,7 +809,6 @@ export function computeEtFinalsStandings(
       if (card?.carKey) cars.add(card.carKey);
       for (const car of cars) {
         addToBucket(byCar, `${entry.division}|${car}`, ref);
-        addToBucket(byCarAnyDivision, car, ref);
       }
 
       // Names: the roster spelling plus the tech-card spelling, which is often
@@ -1092,6 +1090,18 @@ export function computeEtFinalsStandings(
     // different people and the car number must not join them — the roster
     // number is simply stale. Vetoes the car route only; a member-number
     // match is stronger than any spelling and stands.
+    // Juniors race under a parent's or guardian's NHRA membership, so a member
+    // number is emphatically NOT unique to a person across the two boards: the
+    // live event had a 6-9 junior's round win landing on an adult's Super entry
+    // because they shared a membership. Identity routes that can't tell a
+    // junior from an adult must therefore stay on one board.
+    const sameDivision = (b: Bucket | undefined): Bucket | undefined => {
+      if (!b) return b;
+      const ok = b.matches.filter((m) => m.entry.division === agg.division);
+      if (ok.length === b.matches.length) return b;
+      return ok.length > 0 ? { matches: ok } : undefined;
+    };
+
     const runSurname = surnameOf(agg.name);
     const surnameCompatible = (b: Bucket | undefined): Bucket | undefined => {
       if (!b || !runSurname) return b;
@@ -1106,10 +1116,10 @@ export function computeEtFinalsStandings(
     // Member number straight off the timing data is the strongest automatic
     // route — it survives renumbered cars and re-spelled names alike.
     if (!ref && agg.member_number) {
-      take(resolveBucket(byMember.get(agg.member_number), teamHint), "member");
+      take(resolveBucket(sameDivision(byMember.get(agg.member_number)), teamHint), "member");
     }
     if (!ref && card?.memberNumber) {
-      take(resolveBucket(byMember.get(card.memberNumber), teamHint), "member");
+      take(resolveBucket(sameDivision(byMember.get(card.memberNumber)), teamHint), "member");
     }
     if (!ref) {
       take(
@@ -1118,16 +1128,15 @@ export function computeEtFinalsStandings(
         "name",
       );
     }
+    // Car numbers repeat across the boards for the same reason — a junior
+    // "4ED" and a Super "4ED" are different cars — so the car route stays on
+    // the run's own board too.
     if (!ref) {
       take(
         resolveBucket(
           surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`))),
           teamHint,
-        ) ??
-          resolveBucket(
-            surnameCompatible(memberConsistent(byCarAnyDivision.get(carKey))),
-            teamHint,
-          ),
+        ),
         "car",
       );
     }

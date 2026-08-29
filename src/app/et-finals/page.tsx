@@ -2138,6 +2138,23 @@ export default function EtFinalsPage() {
   const [pubEarners, setPubEarners] = useState(true);
   const [pubCarCounts, setPubCarCounts] = useState(false);
 
+  // A public, standings-only link for teams and the tower. Read-only and
+  // credential-free; deliberately carries no per-team breakdown.
+  const [copiedLink, setCopiedLink] = useState(false);
+  async function copyShareLink() {
+    if (!eventCode || !season) return;
+    const url = `${window.location.origin}/share/points?event=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${
+      view !== "combined" ? `&view=${view}` : ""
+    }${eventName ? `&title=${encodeURIComponent(eventName)}` : ""}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+    } catch {
+      window.open(url, "_blank");
+    }
+  }
+
   // Plain-text copy of the publication for pasting into an email — the same
   // content as the print, formatted to survive email clients unmangled.
   const [copiedPub, setCopiedPub] = useState(false);
@@ -2446,6 +2463,18 @@ export default function EtFinalsPage() {
             className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white disabled:opacity-40"
           >
             Print for Publication
+          </button>
+          <button
+            onClick={copyShareLink}
+            disabled={!eventCode}
+            title="A public, read-only page with just the standings — no team breakdowns"
+            className={`px-4 py-2 rounded-lg text-sm disabled:opacity-40 border ${
+              copiedLink
+                ? "bg-green-500/15 border-green-500/40 text-green-400"
+                : "bg-nhra-darker border-nhra-border text-gray-300 hover:text-white"
+            }`}
+          >
+            {copiedLink ? "Link copied" : "Share Points Link"}
           </button>
           <button
             onClick={copyPublication}
