@@ -2486,7 +2486,9 @@ export async function getQualifyingConfig(eventCode: string, season: string): Pr
 
 export async function saveQualifyingConfig(eventCode: string, season: string, config: QualifyingConfig): Promise<void> {
   const db = getDb();
-  await db.collection("qualifying_config").doc(`${eventCode}_${season}`).set(config, { merge: true });
+  // Full replace, not merge: classMode is a map and merge:true would
+  // resurrect entries the caller removed (same bug as the points adjustments).
+  await db.collection("qualifying_config").doc(`${eventCode}_${season}`).set(config);
 }
 
 export interface QualifyingEntry {
@@ -2626,7 +2628,8 @@ export async function getClassIndexTable(eventCode: string, season: string): Pro
 
 export async function saveClassIndexTable(eventCode: string, season: string, indexes: Record<string, number>): Promise<void> {
   const db = getDb();
-  await db.collection("class_indexes").doc(`${eventCode}_${season}`).set({ indexes }, { merge: true });
+  // Full replace, not merge: a deleted index entry must stay deleted.
+  await db.collection("class_indexes").doc(`${eventCode}_${season}`).set({ indexes });
 }
 
 /** Get a racer's dial_in value (the index/dial from the timing system). */
@@ -3057,20 +3060,19 @@ export async function saveClassElimConfig(
   config: ClassElimConfig,
 ): Promise<void> {
   const db = getDb();
+  // Full replace, not merge: `trans` is a map and merge:true would resurrect
+  // entries the caller removed (same bug as the points adjustments).
   await db
     .collection("class_elim_configs")
     .doc(classElimConfigDocId(eventCode, season, category))
-    .set(
-      {
-        event_code: eventCode,
-        season,
-        category,
-        trans: config.trans || {},
-        excluded: config.excluded || [],
-        updated_at: new Date().toISOString(),
-      },
-      { merge: true },
-    );
+    .set({
+      event_code: eventCode,
+      season,
+      category,
+      trans: config.trans || {},
+      excluded: config.excluded || [],
+      updated_at: new Date().toISOString(),
+    });
 }
 
 // Seeding: furthest under index first; index-less cars follow by raw ET;
@@ -3531,24 +3533,26 @@ export async function saveEtFinalsConfig(
 ): Promise<void> {
   const db = getDb();
   await rememberEtFinalsClassDefaults(season, config);
-  await db.collection(ET_FINALS_CONFIGS).doc(`${eventCode}_${season}`).set(
-    {
-      event_code: eventCode,
-      season,
-      categoryRoles: config.categoryRoles || {},
-      categoryDivision: config.categoryDivision || {},
-      buybackRounds: config.buybackRounds || {},
-      pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
-      manualMatches: config.manualMatches || {},
-      eligibilityOverrides: config.eligibilityOverrides || {},
-      buybackEarnsPoints: config.buybackEarnsPoints === true,
-      scoreFromDate: (config.scoreFromDate || "").trim() || null,
-      excludedDates: config.excludedDates || [],
-      pointsAdjustments: config.pointsAdjustments || {},
-      updated_at: new Date().toISOString(),
-    },
-    { merge: true },
-  );
+  // A full replace, deliberately NOT merge:true. The config's maps shrink as
+  // well as grow — clearing a points adjustment or unpinning a racer removes
+  // its key — and a merged write deep-merges maps, silently resurrecting every
+  // removed entry. This write already carries the complete config, so
+  // replacing the document is the correct semantics.
+  await db.collection(ET_FINALS_CONFIGS).doc(`${eventCode}_${season}`).set({
+    event_code: eventCode,
+    season,
+    categoryRoles: config.categoryRoles || {},
+    categoryDivision: config.categoryDivision || {},
+    buybackRounds: config.buybackRounds || {},
+    pointsPerRoundWin: config.pointsPerRoundWin > 0 ? config.pointsPerRoundWin : 1,
+    manualMatches: config.manualMatches || {},
+    eligibilityOverrides: config.eligibilityOverrides || {},
+    buybackEarnsPoints: config.buybackEarnsPoints === true,
+    scoreFromDate: (config.scoreFromDate || "").trim() || null,
+    excludedDates: config.excludedDates || [],
+    pointsAdjustments: config.pointsAdjustments || {},
+    updated_at: new Date().toISOString(),
+  });
 }
 
 /**
