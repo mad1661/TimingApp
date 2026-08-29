@@ -2132,6 +2132,12 @@ export default function EtFinalsPage() {
     [data],
   );
 
+  // What goes on the published points sheet. The per-team earner lists spell
+  // out every car a team has in the race, which isn't always wanted in
+  // something being sent out, so each part can be left off.
+  const [pubEarners, setPubEarners] = useState(true);
+  const [pubCarCounts, setPubCarCounts] = useState(false);
+
   // Plain-text copy of the publication for pasting into an email — the same
   // content as the print, formatted to survive email clients unmangled.
   const [copiedPub, setCopiedPub] = useState(false);
@@ -2163,8 +2169,11 @@ export default function EtFinalsPage() {
     lines.push("");
     lines.push("STANDINGS");
     teams.forEach((t, i) => {
+      const cars = t.racers.filter((r) => r.status === "racing").length;
       lines.push(
-        `${i + 1}. ${t.team_name}${t.track_code ? ` (${t.track_code})` : ""} — Big Cars ${t.bigPoints}, Jrs ${t.jrPoints}, Total ${t.totalPoints}`,
+        `${i + 1}. ${t.team_name}${t.track_code ? ` (${t.track_code})` : ""} — Big Cars ${t.bigPoints}, Jrs ${t.jrPoints}, Total ${t.totalPoints}${
+          pubCarCounts ? `, ${cars} still in` : ""
+        }`,
       );
     });
     const adjusted = teams.filter((t) => t.bigAdjustment !== 0 || t.jrAdjustment !== 0);
@@ -2185,6 +2194,17 @@ export default function EtFinalsPage() {
             .join("; "),
       );
     }
+    if (!pubEarners) {
+      try {
+        await navigator.clipboard.writeText(lines.join("\n"));
+        setCopiedPub(true);
+        setTimeout(() => setCopiedPub(false), 2500);
+      } catch {
+        setError("Couldn't reach the clipboard — use Print for Publication instead.");
+      }
+      return;
+    }
+
     lines.push("");
     lines.push("POINT EARNERS BY TEAM");
     for (const t of teams) {
@@ -2228,6 +2248,7 @@ export default function EtFinalsPage() {
           <td class="r">${t.bigPoints}</td>
           <td class="r">${t.jrPoints}</td>
           <td class="r total">${t.totalPoints}</td>
+          ${pubCarCounts ? `<td class="r">${t.racers.filter((r) => r.status === "racing").length}</td>` : ""}
         </tr>`,
       )
       .join("");
@@ -2310,12 +2331,13 @@ export default function EtFinalsPage() {
       }</div>
       <h2>Standings</h2>
       <table>
-        <thead><tr><th class="c">Place</th><th>Team</th><th class="r">Big Cars</th><th class="r">Jrs</th><th class="r">Total</th></tr></thead>
+        <thead><tr><th class="c">Place</th><th>Team</th><th class="r">Big Cars</th><th class="r">Jrs</th><th class="r">Total</th>${
+          pubCarCounts ? '<th class="r">Still In</th>' : ""
+        }</tr></thead>
         <tbody>${standingsRows}</tbody>
       </table>
       ${adjustmentsNote}
-      <h2>Point Earners by Team</h2>
-      ${teamBlocks || '<p class="sub">No points scored yet.</p>'}
+      ${pubEarners ? `<h2>Point Earners by Team</h2>${teamBlocks || '<p class="sub">No points scored yet.</p>'}` : ""}
       <script>window.onload = () => window.print();</script>
       </body></html>`;
 
@@ -2394,6 +2416,30 @@ export default function EtFinalsPage() {
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
+          <label
+            className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
+            title="Off: the sheet is standings only, which doesn't spell out how many cars each team has in the race"
+          >
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-red-600"
+              checked={pubEarners}
+              onChange={(e) => setPubEarners(e.target.checked)}
+            />
+            List drivers
+          </label>
+          <label
+            className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
+            title="Adds a 'Still In' column showing how many cars each team has left"
+          >
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-red-600"
+              checked={pubCarCounts}
+              onChange={(e) => setPubCarCounts(e.target.checked)}
+            />
+            Cars still in
+          </label>
           <button
             onClick={printPublication}
             disabled={!data}
