@@ -358,6 +358,22 @@ export function normalizeCarKey(v: string | null | undefined): string {
 }
 
 /**
+ * The team behind a car number. E.T. Finals numbers are the vehicle number
+ * plus the track code ("6SM", "40ID", "1LV"), so the number the timing system
+ * shows names the team on its own — no roster needed. Only codes already known
+ * to this event count, so a class letter ("105A") can't invent a team.
+ */
+export function trackCodeFromCarNumber(
+  car: string | null | undefined,
+  knownCodes: Set<string>,
+): string {
+  const m = normalizeCarKey(car).match(/^\d+([A-Z]+)$/);
+  if (!m) return "";
+  const code = m[1];
+  return knownCodes.has(code) ? code : "";
+}
+
+/**
  * Split a name into comparable tokens. Rosters write "LAST, FIRST" while the
  * timing system and the tech cards may show either order, so callers sort
  * rather than rely on position. Dropped along the way: nicknames in quotes or
@@ -726,6 +742,21 @@ export function computeEtFinalsStandings(
 
   const tech = indexTechCards(techCards);
 
+  // Every team code this event knows about, so a car number's suffix can be
+  // trusted as a team only when it names a real team.
+  const knownTrackCodes = new Set<string>();
+  for (const r of rosters) {
+    const c = (r.track_code || "").trim().toUpperCase();
+    if (c) knownTrackCodes.add(c);
+  }
+  for (const c of Object.keys(trackNames || {})) {
+    const k = c.trim().toUpperCase();
+    if (k) knownTrackCodes.add(k);
+  }
+  for (const c of techCards) {
+    if (c.trackTeam) knownTrackCodes.add(c.trackTeam);
+  }
+
   // Roster entry -> its stable key, so eligibility overrides and manual pins
   // can be looked up by the same handle everywhere below.
   const keyForEntry = new Map<EtRosterEntry, string>();
@@ -840,6 +871,8 @@ export function computeEtFinalsStandings(
     carNumber: string;
     category: string;
     eligible: boolean;
+    /** How the team was decided, for an honest "Matched" column. */
+    via: "car" | "member" | "manual";
   }
 
   interface Scored {
@@ -1103,23 +1136,30 @@ export function computeEtFinalsStandings(
         category: agg.category,
         // Deliberately placed by hand, so they earn unless switched off.
         eligible: config.eligibilityOverrides?.[key] ?? true,
+        via: "manual",
       };
-    } else if (!ref && teamHint) {
-      techPlacement = {
-        trackCode: teamHint,
-        division: agg.division,
-        key: `TECH|${teamHint}|${agg.division}|${agg.identity}`,
-        name: agg.name,
-        carNumber: agg.car_number,
-        category: agg.category,
-        // Every big-car entry earns. Juniors can't be assumed: only roster rows
-        // 1-10 score, and without that roster there is no way to tell which
-        // ten, so a junior placed this way starts as a non-earner and can be
-        // switched on per racer.
-        eligible:
-          config.eligibilityOverrides?.[`TECH|${teamHint}|${agg.division}|${agg.identity}`] ??
-          agg.division === "big",
-      };
+    } else if (!ref) {
+      // The car number's track-code suffix names the team straight from the
+      // timing system, which is the most reliable thing available; the tech
+      // card's team code is the fallback.
+      const carTeam = trackCodeFromCarNumber(agg.car_number, knownTrackCodes);
+      const placeCode = carTeam || teamHint;
+      if (placeCode) {
+        const key = `TECH|${placeCode}|${agg.division}|${agg.identity}`;
+        techPlacement = {
+          trackCode: placeCode,
+          division: agg.division,
+          key,
+          name: agg.name,
+          carNumber: agg.car_number,
+          category: agg.category,
+          // The roster's job is to say who does NOT earn — only junior roster
+          // rows 11 and up. A racer the roster doesn't cover isn't one of
+          // those, so they earn, with the per-racer toggle for corrections.
+          eligible: config.eligibilityOverrides?.[key] ?? true,
+          via: carTeam ? "car" : "member",
+        };
+      }
     }
 
     if (!ref && !techPlacement) {
@@ -1141,7 +1181,7 @@ export function computeEtFinalsStandings(
     scored.push({
       ref: ref as RosterIndexEntry | null,
       tech: techPlacement,
-      matchedBy: manualTeam ? "manual" : techPlacement ? "member" : matchedBy,
+      matchedBy: techPlacement ? techPlacement.via : matchedBy,
       agg,
       points,
       roundsWon,

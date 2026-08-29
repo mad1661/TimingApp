@@ -2259,19 +2259,12 @@ export default function EtFinalsPage() {
           <span className="text-white font-semibold">{techPlaced}</span>
           <span className="text-gray-400">
             {" "}
-            racer{techPlaced === 1 ? "" : "s"} placed on a team by their tech card&apos;s team code,
-            with no roster entry claiming them.
+            racer{techPlaced === 1 ? "" : "s"} placed on a team by the track code in their car number
+            (or their tech card), with no roster entry claiming them. They earn like anyone else —
+            the roster only marks who does <em>not</em> earn, which is junior roster rows 11 and up.
+            Use the <span className="text-gray-300">Earns</span> toggle in the team drill-down for
+            any that shouldn&apos;t be scoring.
           </span>
-          {jrTechPlaced > 0 && (
-            <span className="text-gray-400">
-              {" "}
-              <span className="text-yellow-500 font-semibold">{jrTechPlaced}</span> of them{" "}
-              {jrTechPlaced === 1 ? "is a junior and earns" : "are juniors and earn"} nothing yet —
-              only roster rows 1-10 score and there&apos;s no roster here saying which ten, so switch
-              them on individually with the <span className="text-gray-300">Earns</span> toggle in
-              the team drill-down.
-            </span>
-          )}
         </div>
       )}
       {data && data.rosterCount === 0 && (
