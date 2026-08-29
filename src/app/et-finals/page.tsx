@@ -2137,17 +2137,20 @@ export default function EtFinalsPage() {
   // something being sent out, so each part can be left off.
   const [pubEarners, setPubEarners] = useState(true);
   const [pubCarCounts, setPubCarCounts] = useState(false);
-  // Car numbers are off by default: a published sheet is read by name.
-  const [pubCarNumbers, setPubCarNumbers] = useState(false);
+  // Car numbers never appear on a published sheet — it is read by name.
 
   // A public, standings-only link for teams and the tower. Read-only and
   // credential-free; deliberately carries no per-team breakdown.
   const [copiedLink, setCopiedLink] = useState(false);
   async function copyShareLink() {
     if (!eventCode || !season) return;
-    const url = `${window.location.origin}/share/team-points?event=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${
-      view !== "combined" ? `&view=${view}` : ""
-    }${eventName ? `&title=${encodeURIComponent(eventName)}` : ""}`;
+    // Short form: /p/EVENT-SEASON[-big|-jr]. The board refreshes at whatever
+    // interval this event polls at, so the shared page stays in step with the
+    // data behind it (10 minutes when polling is off).
+    const refresh = live.config?.intervalSeconds || 0;
+    const url = `${window.location.origin}/p/${encodeURIComponent(eventCode)}-${encodeURIComponent(season)}${
+      view !== "combined" ? `-${view}` : ""
+    }${refresh > 0 ? `?refresh=${refresh}` : ""}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopiedLink(true);
@@ -2232,9 +2235,8 @@ export default function EtFinalsPage() {
       lines.push("");
       lines.push(`${t.team_name}${t.track_code ? ` (${t.track_code})` : ""} — ${t.totalPoints} point${t.totalPoints === 1 ? "" : "s"}`);
       for (const r of earners) {
-        const car = pubCarNumbers ? `${r.run_car_number || r.roster_car_number || "—"}  ` : "";
         lines.push(
-          `  ${car}${r.name} — ${r.division === "jr" ? "Jr" : "Big Car"}, ${r.categories.join(", ") || r.roster_category || "?"} — ${r.roundsWon} round${r.roundsWon === 1 ? "" : "s"}, ${r.points} pt${r.points === 1 ? "" : "s"}`,
+          `  ${r.name} — ${r.division === "jr" ? "Jr" : "Big Car"}, ${r.categories.join(", ") || r.roster_category || "?"} — ${r.roundsWon} round${r.roundsWon === 1 ? "" : "s"}, ${r.points} pt${r.points === 1 ? "" : "s"}`,
         );
       }
     }
@@ -2295,7 +2297,6 @@ export default function EtFinalsPage() {
         const rows = earners
           .map(
             (r) => `<tr>
-              ${pubCarNumbers ? `<td>${esc(r.run_car_number || r.roster_car_number)}</td>` : ""}
               <td>${esc(r.name)}</td>
               <td>${r.division === "jr" ? "Jr" : "Big Car"}</td>
               <td>${esc(r.categories.join(", ") || r.roster_category)}</td>
@@ -2307,7 +2308,7 @@ export default function EtFinalsPage() {
         return `<div class="team">
           <h3>${esc(t.team_name)}${t.track_code ? ` (${esc(t.track_code)})` : ""} — ${t.totalPoints} point${t.totalPoints === 1 ? "" : "s"}</h3>
           <table>
-            <thead><tr>${pubCarNumbers ? "<th>Car #</th>" : ""}<th>Driver</th><th>Board</th><th>Class</th><th class="r">Rounds Won</th><th class="r">Points</th></tr></thead>
+            <thead><tr><th>Driver</th><th>Board</th><th>Class</th><th class="r">Rounds Won</th><th class="r">Points</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
@@ -2447,18 +2448,6 @@ export default function EtFinalsPage() {
               onChange={(e) => setPubEarners(e.target.checked)}
             />
             List drivers
-          </label>
-          <label
-            className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
-            title="Show each driver's car number on the sheet"
-          >
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-red-600"
-              checked={pubCarNumbers}
-              onChange={(e) => setPubCarNumbers(e.target.checked)}
-            />
-            Car numbers
           </label>
           <label
             className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
