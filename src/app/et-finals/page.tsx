@@ -6,6 +6,7 @@ import {
   elimRoundOrder,
   inDayWindow,
   isByeMarker,
+  isScoringRound,
   normalizeCarKey,
   normalizeNameKey,
   runDateKey,
@@ -500,14 +501,10 @@ function buildPairingPlan(groups: { label: string; count: number }[]): {
   const work = groups.filter((g) => g.count > 0).map((g) => ({ ...g }));
   const cross = new Map<string, number>();
   const internal = new Map<string, number>();
-  let bye: string | null = null;
-
-  const total = work.reduce((s, g) => s + g.count, 0);
-  if (total % 2 === 1) {
-    work.sort((a, b) => b.count - a.count);
-    bye = work[0].label;
-    work[0].count--;
-  }
+  // The bye is decided by reaction time and bye history before this runs (see
+  // chooseBye), so the odd car is already out of these counts. Any leftover
+  // odd number here means a group could not be paired at all.
+  const bye: string | null = null;
 
   let totalPairs = 0;
   for (;;) {
@@ -543,15 +540,80 @@ function buildPairingPlan(groups: { label: string; count: number }[]): {
  * team-vs-team matchups are the theoretical minimum — forced only when one
  * team outnumbers everyone else combined.
  */
-function PairingHelper({ data }: { data: StandingsResponse | null }) {
+function PairingHelper({
+  data,
+  eventCode,
+  season,
+}: {
+  data: StandingsResponse | null;
+  eventCode: string;
+  season: string;
+}) {
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState("");
+  const [classRuns, setClassRuns] = useState<ReviewRun[]>([]);
 
   const mainCats = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
   );
   const activeCat = mainCats.find((c) => c.category === category) || mainCats[0];
+
+  // Reaction times and bye history live in the run data, not the standings.
+  useEffect(() => {
+    if (!open || !eventCode || !season || !activeCat) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/runs?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(activeCat.category)}&limit=2000&sort_by=timestamp&sort_dir=ASC`,
+          { cache: "no-store" },
+        );
+        const body = await res.json();
+        if (!cancelled) setClassRuns(body.runs || []);
+      } catch {
+        if (!cancelled) setClassRuns([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, eventCode, season, activeCat, data]);
+
+  // Per car: byes already taken, and the reaction time from their latest pass.
+  const carFacts = useMemo(() => {
+    const facts = new Map<string, { byes: number; rt: number | null; rtRound: string; name: string; car: string }>();
+    const byTs = new Map<string, ReviewRun[]>();
+    for (const r of classRuns) {
+      const key = r.timestamp || "";
+      const arr = byTs.get(key) || [];
+      arr.push(r);
+      byTs.set(key, arr);
+    }
+    const ordered = [...classRuns].sort((a, b) =>
+      elimRoundOrder((a.round || "").trim()) - elimRoundOrder((b.round || "").trim()),
+    );
+    for (const r of ordered) {
+      if (isByeMarker(r)) continue;
+      const carKey = normalizeCarKey(r.car_number);
+      if (!carKey) continue;
+      const f = facts.get(carKey) || { byes: 0, rt: null, rtRound: "", name: "", car: "" };
+      f.car = (r.car_number || "").trim() || f.car;
+      if (r.name) f.name = r.name;
+      // A bye: the pass either sits alone at its timestamp or is paired with a
+      // BYE placeholder lane.
+      const group = byTs.get(r.timestamp || "") || [];
+      const others = group.filter((g) => g !== r);
+      if (isScoringRound(r.round) && (others.length === 0 || others.every(isByeMarker))) f.byes++;
+      // Latest round wins for the reaction time (walk is in round order).
+      if (r.rt != null) {
+        f.rt = r.rt;
+        f.rtRound = (r.round || "").trim();
+      }
+      facts.set(carKey, f);
+    }
+    return facts;
+  }, [classRuns]);
 
   const groups = useMemo(() => {
     if (!data || !activeCat) return [];
@@ -585,8 +647,55 @@ function PairingHelper({ data }: { data: StandingsResponse | null }) {
       .sort((a, b) => b.count - a.count);
   }, [data, activeCat]);
 
-  const plan = useMemo(() => buildPairingPlan(groups), [groups]);
+  // Everyone still in, with their bye history and reaction time.
+  const candidates = useMemo(() => {
+    if (!data || !activeCat) return [];
+    const out: ByeCandidate[] = [];
+    const add = (car: string, name: string, team: string) => {
+      const carKey = normalizeCarKey(car);
+      const f = carFacts.get(carKey);
+      out.push({
+        carKey,
+        car: car || "—",
+        name: name || f?.name || "",
+        team,
+        rt: f?.rt ?? null,
+        byes: f?.byes ?? 0,
+        rtRound: f?.rtRound || "",
+      });
+    };
+    for (const t of data.teams) {
+      for (const r of t.racers) {
+        if (r.status !== "racing" || !r.categories.includes(activeCat.category)) continue;
+        // Only the points-earning field takes byes. Buy-back cars and
+        // non-points entries are the free opponents that can run anyone, which
+        // is worth more than a bye — and they're counted in their own pool, so
+        // handing one the bye would also decrement the wrong group.
+        if (!r.points_eligible) continue;
+        add(r.run_car_number || r.roster_car_number, r.name, t.team_name);
+      }
+    }
+    for (const u of data.unmatched) {
+      if (u.category !== activeCat.category) continue;
+      if (u.rounds.some((rd) => !rd.ignored && rd.outcome === "loss")) continue;
+      add(u.car_number, u.name, "(unassigned)");
+    }
+    return out;
+  }, [data, activeCat, carFacts]);
+
   const totalCars = groups.reduce((s, g) => s + g.count, 0);
+  const order = useMemo(() => byeOrder(candidates), [candidates]);
+  // Odd field: the bye goes to the top of the bye order, and that car leaves
+  // the pairing pool before teams are matched up.
+  const byeRacer = totalCars % 2 === 1 ? order[0] ?? null : null;
+  const everyoneHadBye = candidates.length > 0 && candidates.every((c) => c.byes > 0);
+
+  const pairingGroups = useMemo(() => {
+    if (!byeRacer) return groups;
+    return groups.map((g) => (g.label === byeRacer.team ? { ...g, count: g.count - 1 } : g));
+  }, [groups, byeRacer]);
+
+  const plan = useMemo(() => buildPairingPlan(pairingGroups), [pairingGroups]);
 
   return (
     <div className="mt-8 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
@@ -598,8 +707,8 @@ function PairingHelper({ data }: { data: StandingsResponse | null }) {
           <h2 className="text-white font-bold">Pairing Helper</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             Best pairings for the next round — out of what&apos;s left, how many of each team should run each other so
-            teammates meet as little as possible. Buy-back cars and non-points entries count as their own group: they
-            can&apos;t earn, so they&apos;re free opponents for anyone.
+            teammates meet as little as possible, plus who is owed the bye on reaction time. Buy-back cars and
+            non-points entries count as their own group: they can&apos;t earn, so they&apos;re free opponents.
           </p>
         </div>
         <span className="text-gray-400 text-sm">{open ? "Hide" : "Open"}</span>
@@ -625,8 +734,7 @@ function PairingHelper({ data }: { data: StandingsResponse | null }) {
             {totalCars > 0 && (
               <span className="text-xs text-gray-400">
                 {totalCars} car{totalCars === 1 ? "" : "s"} still in · {plan.totalPairs} pair
-                {plan.totalPairs === 1 ? "" : "s"}
-                {plan.bye ? ` · bye to ${plan.bye}` : ""} ·{" "}
+                {plan.totalPairs === 1 ? "" : "s"} ·{" "}
                 {plan.forcedPairs === 0 ? (
                   <span className="text-green-400 font-semibold">no team-vs-team needed</span>
                 ) : (
@@ -641,6 +749,69 @@ function PairingHelper({ data }: { data: StandingsResponse | null }) {
           {totalCars === 0 ? (
             <p className="px-6 py-6 text-sm text-gray-500">Nobody still standing in this class.</p>
           ) : (
+            <>
+              <div className="px-6 py-3 border-b border-nhra-border/60">
+                {byeRacer ? (
+                  <>
+                    <span className="text-white text-sm font-semibold">
+                      Bye goes to {byeRacer.car}
+                      {byeRacer.name ? ` — ${byeRacer.name}` : ""}{" "}
+                      <span className="text-gray-400 font-normal">({byeRacer.team})</span>
+                    </span>
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      Odd field, so one car sits out.{" "}
+                      {byeRacer.rt != null
+                        ? `Best reaction time among those owed a bye: ${byeRacer.rt.toFixed(3)}${byeRacer.rtRound ? ` (${byeRacer.rtRound})` : ""}.`
+                        : "No reaction time on file for this car yet."}{" "}
+                      {everyoneHadBye
+                        ? "Every car in the class has had a bye, so the order is back to pure reaction time."
+                        : "Cars that already had a bye drop behind those that haven't."}{" "}
+                      Buy-back and non-points cars don&apos;t take byes — they can run anyone, so they&apos;re more
+                      use as opponents.
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-sm text-gray-400">
+                    Even field — no bye this round. The order below is who would get it.
+                  </span>
+                )}
+                {order.length > 0 && (
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-gray-500 uppercase tracking-wider">
+                        <tr>
+                          <th className="text-left pr-3 py-1 font-medium">Bye order</th>
+                          <th className="text-left px-2 py-1 font-medium">Car</th>
+                          <th className="text-left px-2 py-1 font-medium">Driver</th>
+                          <th className="text-left px-2 py-1 font-medium">Team</th>
+                          <th className="text-right px-2 py-1 font-medium">Reaction</th>
+                          <th className="text-right px-2 py-1 font-medium">Byes had</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {order.slice(0, 8).map((c, i) => (
+                          <tr
+                            key={c.carKey || c.car}
+                            className={`border-t border-nhra-border/40 ${i === 0 && byeRacer ? "bg-green-500/10" : ""}`}
+                          >
+                            <td className="pr-3 py-1 text-gray-500 font-semibold">{i + 1}</td>
+                            <td className="px-2 py-1 font-mono text-white">{c.car}</td>
+                            <td className="px-2 py-1 text-gray-300">{c.name || "—"}</td>
+                            <td className="px-2 py-1 text-gray-400">{c.team}</td>
+                            <td className="px-2 py-1 text-right font-mono text-gray-300">
+                              {c.rt != null ? c.rt.toFixed(3) : "—"}
+                              {c.rtRound && <span className="text-gray-600"> {c.rtRound}</span>}
+                            </td>
+                            <td className={`px-2 py-1 text-right font-semibold ${c.byes > 0 ? "text-yellow-500" : "text-gray-500"}`}>
+                              {c.byes}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             <div className="px-6 py-4 grid gap-4 md:grid-cols-2">
               <div>
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Still In, By Team</h3>
@@ -687,9 +858,11 @@ function PairingHelper({ data }: { data: StandingsResponse | null }) {
                         </td>
                       </tr>
                     ))}
-                    {plan.bye && (
+                    {byeRacer && (
                       <tr className="border-t border-nhra-border/40">
-                        <td className="py-1.5 text-gray-400">{plan.bye} — bye</td>
+                        <td className="py-1.5 text-gray-400">
+                          {byeRacer.car} — bye <span className="text-gray-600">({byeRacer.team})</span>
+                        </td>
                         <td className="py-1.5 text-right text-gray-400">1 car</td>
                       </tr>
                     )}
@@ -697,10 +870,40 @@ function PairingHelper({ data }: { data: StandingsResponse | null }) {
                 </table>
               </div>
             </div>
+            </>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+/** A car still in the class, with what the bye order needs to know. */
+interface ByeCandidate {
+  carKey: string;
+  car: string;
+  name: string;
+  team: string;
+  /** Reaction time from their latest completed pass, lower is better. */
+  rt: number | null;
+  /** Byes already taken in this class. */
+  byes: number;
+  /** Round their reaction time came from. */
+  rtRound: string;
+}
+
+/**
+ * Bye order: fewest byes taken first, then best (lowest) reaction time. A car
+ * that has already had a bye drops behind everyone who hasn't; once every car
+ * in the class has had one, the whole field is level again and it reverts to
+ * pure reaction time — which is the rule the division runs.
+ */
+function byeOrder(candidates: ByeCandidate[]): ByeCandidate[] {
+  return [...candidates].sort(
+    (a, b) =>
+      a.byes - b.byes ||
+      (a.rt ?? Number.POSITIVE_INFINITY) - (b.rt ?? Number.POSITIVE_INFINITY) ||
+      a.car.localeCompare(b.car),
   );
 }
 
@@ -3271,7 +3474,7 @@ export default function EtFinalsPage() {
       )}
 
       {/* ── Pairing helper ─────────────────────────────────────────────── */}
-      <PairingHelper data={data} />
+      <PairingHelper data={data} eventCode={eventCode} season={season} />
 
       {/* ── Round review ───────────────────────────────────────────────── */}
       <RoundReview
