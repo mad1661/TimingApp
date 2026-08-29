@@ -1,4 +1,4 @@
-import PointsBoard from "../PointsBoard";
+import QueryBoard from "../QueryBoard";
 
 // Rendered per request, never cached. A points board has to show the current
 // standings, and a long-lived CDN entry for a shared link is exactly what went
@@ -8,5 +8,5 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default function ShareTeamPointsPage() {
-  return <PointsBoard />;
+  return <QueryBoard />;
 }

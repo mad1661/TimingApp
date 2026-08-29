@@ -28,13 +28,25 @@ interface ShareData {
   roundsScored: string[];
 }
 
-function Board() {
-  const params = useSearchParams();
-  const eventCode = params.get("event") || params.get("event_code") || "";
-  const season = params.get("season") || "";
-  const title = params.get("title") || "";
-  const view = (params.get("view") || "combined") as "combined" | "big" | "jr";
+export interface PointsBoardProps {
+  eventCode: string;
+  season: string;
+  view?: "combined" | "big" | "jr";
+  title?: string;
+  /** How often to re-read the standings. Defaults to 10 minutes. */
+  refreshSeconds?: number;
+}
 
+const DEFAULT_REFRESH_SECONDS = 600;
+
+function Board({
+  eventCode,
+  season,
+  view = "combined",
+  title = "",
+  refreshSeconds,
+}: PointsBoardProps) {
+  const every = Math.max(15, refreshSeconds || DEFAULT_REFRESH_SECONDS);
   const [data, setData] = useState<ShareData | null>(null);
   const [error, setError] = useState("");
   const [updated, setUpdated] = useState<Date | null>(null);
@@ -58,9 +70,9 @@ function Board() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 60_000);
+    const t = setInterval(load, every * 1000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, every]);
 
   if (!eventCode || !season) {
     return (
@@ -124,7 +136,6 @@ function Board() {
                     <td className="px-4 py-3 text-gray-500 font-bold text-lg">{i + 1}</td>
                     <td className="px-4 py-3">
                       <div className="text-white font-semibold text-lg">{t.team_name}</div>
-                      <div className="text-xs text-gray-500">{t.track_code}</div>
                     </td>
                     {view !== "jr" && (
                       <td className="px-4 py-3 text-right text-white font-semibold">{t.bigPoints}</td>
@@ -141,17 +152,37 @@ function Board() {
         )}
 
         <p className="text-center text-xs text-gray-600 mt-6">
-          {updated ? `Updated ${updated.toLocaleTimeString()} · refreshes every minute` : ""}
+          {updated
+            ? `Updated ${updated.toLocaleTimeString()} · refreshes every ${
+                every % 60 === 0 ? `${every / 60} min` : `${every} sec`
+              }`
+            : ""}
         </p>
       </div>
     </div>
   );
 }
 
-export default function PointsBoard() {
+export default function PointsBoard(props: PointsBoardProps) {
   return (
     <Suspense fallback={null}>
-      <Board />
+      <Board {...props} />
+    </Suspense>
+  );
+}
+
+/** Query-string form: /share/team-points?event=CODE&season=YEAR[&view=][&title=] */
+export function PointsBoardFromQuery() {
+  const params = useSearchParams();
+  return (
+    <Suspense fallback={null}>
+      <Board
+        eventCode={params.get("event") || params.get("event_code") || ""}
+        season={params.get("season") || ""}
+        view={(params.get("view") || "combined") as "combined" | "big" | "jr"}
+        title={params.get("title") || ""}
+        refreshSeconds={Number(params.get("refresh")) || undefined}
+      />
     </Suspense>
   );
 }
