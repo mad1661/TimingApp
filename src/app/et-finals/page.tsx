@@ -2145,7 +2145,7 @@ export default function EtFinalsPage() {
   const [copiedLink, setCopiedLink] = useState(false);
   async function copyShareLink() {
     if (!eventCode || !season) return;
-    const url = `${window.location.origin}/share/points?event=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${
+    const url = `${window.location.origin}/share/team-points?event=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}${
       view !== "combined" ? `&view=${view}` : ""
     }${eventName ? `&title=${encodeURIComponent(eventName)}` : ""}`;
     try {
