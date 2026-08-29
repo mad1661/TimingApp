@@ -35,6 +35,12 @@ body {
 :root:not([data-theme="light"]) .text-gray-500 { color: #9aa6b8; }
 :root:not([data-theme="light"]) .text-gray-600 { color: #7d899c; }
 
+/* The brand red (#C8102E) is deep enough to read well on white, but as TEXT on
+   the dark surfaces it's the hardest thing on the page — and it carries the
+   headline numbers (team totals, points). Brighten it for dark mode only.
+   Solid red buttons are unaffected: they set a background, not a text colour. */
+:root:not([data-theme="light"]) .text-nhra-red { color: #ff7183; }
+
 /* Light theme.
    Tailwind v4 hoists the @theme --color-* tokens into :root and DROPS scoped
    redefinitions of them, so overriding those variables under [data-theme]
