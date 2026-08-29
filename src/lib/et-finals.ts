@@ -510,6 +510,22 @@ export function windowBoundMinutes(v: string | undefined): number | null {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
+/**
+ * Sortable instant for a run: date first, then time of day. Needed because
+ * two passes can share a round — the buy-back is commonly run as a second
+ * round-1 session — and a racer's passes must be walked in the order they
+ * actually happened or a buy-back win gets counted before the loss that
+ * froze them.
+ */
+export function runInstant(timestamp: string | null | undefined): number {
+  const dateKey = runDateKey(timestamp);
+  if (!dateKey) return 0;
+  const day = Number(dateKey.replace(/-/g, ""));
+  const minutes = runMinutesOfDay(timestamp) ?? 0;
+  const sec = (timestamp || "").match(/\d{1,2}:\d{2}:(\d{2})/);
+  return day * 86_400 + minutes * 60 + (sec ? parseInt(sec[1], 10) : 0);
+}
+
 /** Whether a run falls inside its day's counting hours (open when unset). */
 export function inDayWindow(
   timestamp: string | null | undefined,
@@ -902,8 +918,14 @@ export function computeEtFinalsStandings(
       (config.buybackRounds[agg.category] || []).map((r) => r.trim().toUpperCase()),
     );
 
+    // Round order first, then the clock. The clock tiebreaker is what makes a
+    // buy-back run inside round 1 behave: the morning loss is walked before the
+    // afternoon buy-back win, so the win lands after the racer is already
+    // frozen instead of scoring ahead of it.
     const ordered = [...agg.runs].sort(
-      (a, b) => elimRoundOrder(a.round || "") - elimRoundOrder(b.round || ""),
+      (a, b) =>
+        elimRoundOrder(a.round || "") - elimRoundOrder(b.round || "") ||
+        runInstant(a.timestamp) - runInstant(b.timestamp),
     );
 
     // Walk the racer's own rounds in order. Wins score until the first decided
