@@ -1558,8 +1558,9 @@ export default function EtFinalsPage() {
     });
   }
 
-  // Counting hours for one day. Local like the chips; Save Days applies.
-  function setDayWindow(date: string, field: "from" | "to", value: string) {
+  // Counting hours for one day. Saves itself — a time typed and walked away
+  // from used to sit in an unsaved draft and quietly do nothing.
+  function setDayWindow(date: string, field: "from" | "to", value: string, commit = false) {
     const base = draftConfig ?? data?.config;
     if (!base) return;
     const windows = { ...(base.dayWindows || {}) };
@@ -1568,7 +1569,49 @@ export default function EtFinalsPage() {
     else delete cur[field];
     if (!cur.from && !cur.to) delete windows[date];
     else windows[date] = cur;
-    setDraftConfig({ ...base, dayWindows: windows });
+    if (commit) savePointsRule({ dayWindows: windows }, `window-${date}`);
+    else setDraftConfig({ ...base, dayWindows: windows });
+  }
+
+  // Lock out everything already run: every pass on file right now is thrown
+  // out, so only passes recorded from here on count. No clock or date
+  // reasoning — the surest way to draw a line under a session that has
+  // already happened (a race that ran past midnight, a test session).
+  async function lockRunsSoFar() {
+    if (!eventCode || !season) return;
+    if (
+      !confirm(
+        "Lock out every run recorded so far?\n\nEverything already on file stops counting for team points — only passes that arrive from now on will score. Individual passes can still be put back one at a time in Round Review.",
+      )
+    )
+      return;
+    setAssigning("lock-so-far");
+    try {
+      const res = await fetch(
+        `/api/runs?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&limit=5000&sort_by=timestamp&sort_dir=ASC`,
+        { cache: "no-store" },
+      );
+      const body = await res.json();
+      const keys = (body.runs || [])
+        .map((r: { _dedup_key?: string }) => r._dedup_key)
+        .filter(Boolean);
+      if (keys.length === 0) throw new Error("No runs on file to lock out.");
+      const lockRes = await fetch("/api/ignore-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_code: eventCode, season, dedup_keys: keys }),
+      });
+      if (!lockRes.ok) {
+        const b = await lockRes.json();
+        throw new Error(b.error || "Failed to lock the runs out");
+      }
+      setError("");
+      await loadStandings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to lock the runs out");
+    } finally {
+      setAssigning(null);
+    }
   }
 
   // Do the day choices on screen differ from what's saved?
@@ -2961,16 +3004,18 @@ export default function EtFinalsPage() {
                         <input
                           type="time"
                           value={w.from || ""}
-                          disabled={savingConfig}
+                          disabled={savingConfig || assigning === `window-${d}`}
                           onChange={(e) => setDayWindow(d, "from", e.target.value)}
+                          onBlur={(e) => setDayWindow(d, "from", e.target.value, true)}
                           className="px-1.5 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
                         />
                         until
                         <input
                           type="time"
                           value={w.to || ""}
-                          disabled={savingConfig}
+                          disabled={savingConfig || assigning === `window-${d}`}
                           onChange={(e) => setDayWindow(d, "to", e.target.value)}
+                          onBlur={(e) => setDayWindow(d, "to", e.target.value, true)}
                           className="px-1.5 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
                         />
                         {(w.from || w.to) && (
@@ -2991,9 +3036,9 @@ export default function EtFinalsPage() {
                   <button
                     onClick={saveConfig}
                     disabled={savingConfig}
-                    className="px-3 py-1.5 bg-nhra-red text-white rounded-lg text-xs font-semibold hover:bg-red-600 disabled:opacity-40"
+                    className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-bold hover:bg-red-600 disabled:opacity-40 animate-pulse"
                   >
-                    {savingConfig ? "Saving…" : "Save Days"}
+                    {savingConfig ? "Saving…" : "⚠ Save Days — not saved yet"}
                   </button>
                   <button
                     onClick={() => setDraftConfig(null)}
@@ -3004,6 +3049,21 @@ export default function EtFinalsPage() {
                   </button>
                 </div>
               )}
+              <div className="pt-2 mt-1 border-t border-nhra-border/60">
+                <button
+                  onClick={lockRunsSoFar}
+                  disabled={assigning === "lock-so-far"}
+                  className="px-3 py-1.5 bg-nhra-darker border border-yellow-500/40 text-yellow-500 rounded-lg text-xs font-semibold hover:bg-yellow-500/10 disabled:opacity-40"
+                >
+                  {assigning === "lock-so-far" ? "Locking…" : "Lock out everything run so far"}
+                </button>
+                <span className="block text-xs text-gray-500 mt-1 leading-relaxed">
+                  Draws a line under what has already happened: every pass on file right now stops counting, and only
+                  passes recorded from here on score. Use it when a session shouldn&apos;t count at all and the clock
+                  can&apos;t tell them apart — a race that ran past midnight into today&apos;s date, say. Individual
+                  passes can be put back one at a time in Round Review.
+                </span>
+              </div>
             </div>
           </div>
         </div>

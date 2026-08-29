@@ -1414,7 +1414,8 @@ export function computeEtFinalsStandings(
             r.category &&
             mainCats.has(r.category.trim()) &&
             isScoringRound(r.round) &&
-            inScoringWindow(r),
+            inScoringWindow(r) &&
+            !isIgnored(r),
         )
         .map((r) => (r.round || "").trim().toUpperCase()),
     ),
