@@ -395,6 +395,17 @@ export function normalizeNameKey(raw: string | null | undefined): string {
  * initial survives, so it is a last-resort route and used only when it lands on
  * exactly one racer.
  */
+/**
+ * The surname, taken as the longest name token — the part that survives
+ * nicknames and shortened first names ("Bob"/"Robert", "Mike"/"Michael").
+ * Used as a veto: two names with different surnames are different people.
+ */
+export function surnameOf(raw: string | null | undefined): string {
+  const tokens = nameTokens(raw);
+  if (tokens.length === 0) return "";
+  return tokens.reduce((a, b) => (b.length > a.length ? b : a));
+}
+
 export function looseNameKey(raw: string | null | undefined): string {
   const tokens = nameTokens(raw);
   if (tokens.length < 2) return "";
@@ -1020,6 +1031,23 @@ export function computeEtFinalsStandings(
       return ok.length > 0 ? { matches: ok } : undefined;
     };
 
+    // Car numbers get reassigned between events, so a roster's number is
+    // routinely being run by somebody else. When the timing system gives a
+    // name and it disagrees with the roster entry's surname, they are two
+    // different people and the car number must not join them — the roster
+    // number is simply stale. Vetoes the car route only; a member-number
+    // match is stronger than any spelling and stands.
+    const runSurname = surnameOf(agg.name);
+    const surnameCompatible = (b: Bucket | undefined): Bucket | undefined => {
+      if (!b || !runSurname) return b;
+      const ok = b.matches.filter((m) => {
+        const entrySurname = surnameOf(m.entry.name);
+        return !entrySurname || entrySurname === runSurname;
+      });
+      if (ok.length === b.matches.length) return b;
+      return ok.length > 0 ? { matches: ok } : undefined;
+    };
+
     // Member number straight off the timing data is the strongest automatic
     // route — it survives renumbered cars and re-spelled names alike.
     if (!ref && agg.member_number) {
@@ -1037,8 +1065,14 @@ export function computeEtFinalsStandings(
     }
     if (!ref) {
       take(
-        resolveBucket(memberConsistent(byCar.get(`${agg.division}|${carKey}`)), teamHint) ??
-          resolveBucket(memberConsistent(byCarAnyDivision.get(carKey)), teamHint),
+        resolveBucket(
+          surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`))),
+          teamHint,
+        ) ??
+          resolveBucket(
+            surnameCompatible(memberConsistent(byCarAnyDivision.get(carKey))),
+            teamHint,
+          ),
         "car",
       );
     }
