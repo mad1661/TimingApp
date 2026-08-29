@@ -31,9 +31,12 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { event_code, season, dedup_key, action } = await req.json();
-    if (!event_code || !season || !dedup_key) {
-      return NextResponse.json({ error: "event_code, season, and dedup_key required" }, { status: 400 });
+    const { event_code, season, dedup_key, dedup_keys, action } = await req.json();
+    if (!event_code || !season || (!dedup_key && !Array.isArray(dedup_keys))) {
+      return NextResponse.json(
+        { error: "event_code, season, and dedup_key (or dedup_keys) required" },
+        { status: 400 },
+      );
     }
 
     const db = getDb();
@@ -43,15 +46,32 @@ export async function POST(req: NextRequest) {
     // Normalize both the stored list and the incoming key so add/restore work
     // against keys saved under the older dedup-key shape.
     let keys = [...new Set(raw.map(normalizeDedupKey))];
-    const key = normalizeDedupKey(dedup_key);
 
+    // Bulk form: lock out (or restore) many passes at once — used by "lock out
+    // everything run so far", which excludes the runs already on file so only
+    // later passes count.
+    if (Array.isArray(dedup_keys)) {
+      const incoming = dedup_keys
+        .filter((k: unknown): k is string => typeof k === "string" && k.length > 0)
+        .map(normalizeDedupKey);
+      if (action === "restore") {
+        const drop = new Set(incoming);
+        keys = keys.filter((k) => !drop.has(k));
+      } else {
+        keys = [...new Set([...keys, ...incoming])];
+      }
+      await ref.set({ keys, updatedAt: new Date().toISOString() });
+      return NextResponse.json({ ok: true, count: keys.length });
+    }
+
+    const key = normalizeDedupKey(dedup_key);
     if (action === "restore") {
       keys = keys.filter((k) => k !== key);
     } else {
       if (!keys.includes(key)) keys.push(key);
     }
 
-    await ref.set({ keys, updatedAt: new Date().toISOString() }, { merge: true });
+    await ref.set({ keys, updatedAt: new Date().toISOString() });
     return NextResponse.json({ ok: true, keys });
   } catch (err) {
     console.error("Ignored runs POST error:", err);
