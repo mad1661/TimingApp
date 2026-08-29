@@ -934,7 +934,12 @@ function TeamPanel({
             {hasAdjustment && (
               <button
                 disabled={adjBusy}
-                onClick={() => onAdjustPoints(team.track_code, 0, 0, "")}
+                onClick={() => {
+                  setAdjBig("0");
+                  setAdjJr("0");
+                  setAdjNote("");
+                  onAdjustPoints(team.track_code, 0, 0, "");
+                }}
                 className="px-3 py-1.5 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-xs hover:text-white disabled:opacity-40"
               >
                 Clear
