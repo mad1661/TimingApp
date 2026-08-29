@@ -124,6 +124,13 @@ export interface EtFinalsConfig {
    */
   excludedDates: string[];
   /**
+   * Optional counting hours per day (YYYY-MM-DD -> "HH:MM" 24h bounds). A race
+   * running past midnight spills its passes into the next day's date; a
+   * "from" on race day keeps those small-hours passes out of the points
+   * without losing the day. Blank bound = open on that side.
+   */
+  dayWindows: Record<string, { from?: string; to?: string }>;
+  /**
    * Hand adjustments to a team's totals (track code -> points added, may be
    * negative), for when the board is known to be off. Applied on top of the
    * computed points and always shown as an adjustment, never silently.
@@ -148,6 +155,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     buybackEarnsPoints: false,
     scoreFromDate: null,
     excludedDates: [],
+    dayWindows: {},
     pointsAdjustments: {},
   };
 }
@@ -456,6 +464,47 @@ export function runDateKey(timestamp: string | null | undefined): string {
   return `${m[3]}-${p(m[1])}-${p(m[2])}`;
 }
 
+/** Minutes since midnight from a run timestamp, or null when unparseable. */
+export function runMinutesOfDay(timestamp: string | null | undefined): number | null {
+  const m = (timestamp || "").match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const ap = (m[3] || "").toUpperCase();
+  if (ap === "PM" && h !== 12) h += 12;
+  if (ap === "AM" && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+/** "HH:MM" -> minutes since midnight, or null for blank/invalid. */
+export function windowBoundMinutes(v: string | undefined): number | null {
+  const m = (v || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+/** Whether a run falls inside its day's counting hours (open when unset). */
+export function inDayWindow(
+  timestamp: string | null | undefined,
+  windows: Record<string, { from?: string; to?: string }> | undefined,
+): boolean {
+  if (!windows) return true;
+  const dateKey = runDateKey(timestamp);
+  if (!dateKey) return true;
+  const w = windows[dateKey];
+  if (!w) return true;
+  const from = windowBoundMinutes(w.from);
+  const to = windowBoundMinutes(w.to);
+  if (from === null && to === null) return true;
+  const t = runMinutesOfDay(timestamp);
+  // A pass whose time can't be read shouldn't silently score inside a
+  // restricted day.
+  if (t === null) return false;
+  if (from !== null && t < from) return false;
+  if (to !== null && t > to) return false;
+  return true;
+}
+
 function isWin(run: RunRow): boolean {
   if (run.is_dq === 1) return false;
   const r = (run.result || "").trim().toUpperCase();
@@ -611,11 +660,14 @@ export function computeEtFinalsStandings(
   // separating them.
   const scoreFrom = (config.scoreFromDate || "").trim();
   const excludedDays = new Set((config.excludedDates || []).map((d) => d.trim()).filter(Boolean));
+  const dayWindows = config.dayWindows || {};
+  const hasWindows = Object.keys(dayWindows).length > 0;
   const inScoringWindow = (run: RunRow): boolean => {
-    if (!scoreFrom && excludedDays.size === 0) return true;
+    if (!scoreFrom && excludedDays.size === 0 && !hasWindows) return true;
     const key = runDateKey(run.timestamp);
     if (excludedDays.size > 0 && key && excludedDays.has(key)) return false;
     if (scoreFrom && (key === "" || key < scoreFrom)) return false;
+    if (hasWindows && !inDayWindow(run.timestamp, dayWindows)) return false;
     return true;
   };
 

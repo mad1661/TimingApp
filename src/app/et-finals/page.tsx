@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useLiveData } from "@/components/LiveDataProvider";
 import {
   elimRoundOrder,
+  inDayWindow,
   isByeMarker,
   normalizeCarKey,
   normalizeNameKey,
@@ -902,7 +903,8 @@ function RoundReview({
                     const dk = runDateKey(r.timestamp);
                     const preDate =
                       (!!scoreFrom && dk < scoreFrom) ||
-                      (data?.config.excludedDates || []).includes(dk);
+                      (data?.config.excludedDates || []).includes(dk) ||
+                      !inDayWindow(r.timestamp, data?.config.dayWindows);
                     const ident = `${(r.category || "").trim()}|${normalizeCarKey(r.car_number) || normalizeNameKey(r.name)}`;
                     const credited = bye ? null : creditedTo.get(ident);
                     const res = (r.result || "").trim().toUpperCase();
@@ -945,8 +947,8 @@ function RoundReview({
                           {bye ? (
                             <span className="text-gray-600">—</span>
                           ) : preDate ? (
-                            <span className="text-gray-600" title="This day is unchecked in “Days that count for points” — earns nothing">
-                              day not counted
+                            <span className="text-gray-600" title="Outside the days & hours that count for points — earns nothing">
+                              not counted
                             </span>
                           ) : credited ? (
                             <span className="text-gray-300">{credited}</span>
@@ -1556,6 +1558,19 @@ export default function EtFinalsPage() {
     });
   }
 
+  // Counting hours for one day. Local like the chips; Save Days applies.
+  function setDayWindow(date: string, field: "from" | "to", value: string) {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const windows = { ...(base.dayWindows || {}) };
+    const cur = { ...(windows[date] || {}) };
+    if (value) cur[field] = value;
+    else delete cur[field];
+    if (!cur.from && !cur.to) delete windows[date];
+    else windows[date] = cur;
+    setDraftConfig({ ...base, dayWindows: windows });
+  }
+
   // Do the day choices on screen differ from what's saved?
   const daysDirty = useMemo(() => {
     if (!draftConfig || !data) return false;
@@ -1563,7 +1578,8 @@ export default function EtFinalsPage() {
     return (
       JSON.stringify([...(draftConfig.excludedDates || [])].sort()) !==
         JSON.stringify([...(saved.excludedDates || [])].sort()) ||
-      (draftConfig.scoreFromDate || null) !== (saved.scoreFromDate || null)
+      (draftConfig.scoreFromDate || null) !== (saved.scoreFromDate || null) ||
+      JSON.stringify(draftConfig.dayWindows || {}) !== JSON.stringify(saved.dayWindows || {})
     );
   }, [draftConfig, data]);
 
@@ -1892,6 +1908,12 @@ export default function EtFinalsPage() {
     if (effectiveConfig?.buybackEarnsPoints) lines.push("Buy-back winners keep earning points");
     if ((effectiveConfig?.excludedDates || []).length)
       lines.push(`Days not counted: ${(effectiveConfig?.excludedDates || []).join(", ")}`);
+    if (Object.keys(effectiveConfig?.dayWindows || {}).length)
+      lines.push(
+        `Counted hours: ${Object.entries(effectiveConfig?.dayWindows || {})
+          .map(([d, w]) => `${d} ${w.from || "start"}–${w.to || "end"}`)
+          .join("; ")}`,
+      );
     lines.push("");
     lines.push("STANDINGS");
     teams.forEach((t, i) => {
@@ -2030,6 +2052,14 @@ export default function EtFinalsPage() {
       }${
         (effectiveConfig?.excludedDates || []).length
           ? ` · Days not counted: ${esc((effectiveConfig?.excludedDates || []).join(", "))}`
+          : ""
+      }${
+        Object.keys(effectiveConfig?.dayWindows || {}).length
+          ? ` · Counted hours: ${esc(
+              Object.entries(effectiveConfig?.dayWindows || {})
+                .map(([d, w]) => `${d} ${w.from || "start"}–${w.to || "end"}`)
+                .join("; "),
+            )}`
           : ""
       }</div>
       <h2>Standings</h2>
@@ -2890,17 +2920,19 @@ export default function EtFinalsPage() {
             </span>
           </label>
           <div className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
-            <span className="text-white text-sm font-semibold">Days that count for points</span>
+            <span className="text-white text-sm font-semibold">Days &amp; hours that count for points</span>
             <span className="block text-xs text-gray-500 mt-0.5 mb-2 leading-relaxed">
               Practice days run through the timing system labelled E1, exactly like the real race — turn them off and
-              nothing from those days earns. Pick the days, then hit Save. A new day (race morning) counts
-              automatically.
+              nothing from those days earns. A race running past midnight spills into the next date: set counting
+              hours (from / until) on a day to keep those small-hours passes out. Pick, then hit Save. A new day
+              counts automatically.
             </span>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="space-y-1.5">
               {(data.runDates || []).map((d) => {
                 const from = (effectiveConfig?.scoreFromDate || "").trim();
                 const counts =
                   !(effectiveConfig?.excludedDates || []).includes(d) && (!from || d >= from);
+                const w = (effectiveConfig?.dayWindows || {})[d] || {};
                 const [y, m, day] = d.split("-");
                 const label = new Date(
                   parseInt(y, 10),
@@ -2908,28 +2940,54 @@ export default function EtFinalsPage() {
                   parseInt(day, 10),
                 ).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
                 return (
-                  <button
-                    key={d}
-                    type="button"
-                    disabled={savingConfig}
-                    onClick={() => setDayCounts(d, !counts)}
-                    title={counts ? "Counting — click to exclude this day" : "Excluded — click to count this day"}
-                    className={`px-3 py-1.5 rounded-lg border select-none text-xs font-semibold transition-colors disabled:opacity-40 ${
-                      counts
-                        ? "bg-green-500/10 border-green-500/40 text-green-400"
-                        : "bg-nhra-darker border-nhra-border text-gray-500 line-through"
-                    }`}
-                  >
-                    {counts ? "✓ " : "✕ "}
-                    {label}
-                  </button>
+                  <div key={d} className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      disabled={savingConfig}
+                      onClick={() => setDayCounts(d, !counts)}
+                      title={counts ? "Counting — click to exclude this day" : "Excluded — click to count this day"}
+                      className={`px-3 py-1.5 rounded-lg border select-none text-xs font-semibold transition-colors disabled:opacity-40 min-w-[7.5rem] text-left ${
+                        counts
+                          ? "bg-green-500/10 border-green-500/40 text-green-400"
+                          : "bg-nhra-darker border-nhra-border text-gray-500 line-through"
+                      }`}
+                    >
+                      {counts ? "✓ " : "✕ "}
+                      {label}
+                    </button>
+                    {counts && (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+                        from
+                        <input
+                          type="time"
+                          value={w.from || ""}
+                          disabled={savingConfig}
+                          onChange={(e) => setDayWindow(d, "from", e.target.value)}
+                          className="px-1.5 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+                        />
+                        until
+                        <input
+                          type="time"
+                          value={w.to || ""}
+                          disabled={savingConfig}
+                          onChange={(e) => setDayWindow(d, "to", e.target.value)}
+                          className="px-1.5 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+                        />
+                        {(w.from || w.to) && (
+                          <span className="text-yellow-500">
+                            only {w.from || "start"}–{w.to || "end"} counts
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 );
               })}
               {(data.runDates || []).length === 0 && (
                 <span className="text-xs text-gray-600">No runs on file yet.</span>
               )}
               {daysDirty && (
-                <span className="inline-flex items-center gap-2 ml-1">
+                <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={saveConfig}
                     disabled={savingConfig}
@@ -2944,7 +3002,7 @@ export default function EtFinalsPage() {
                   >
                     Discard
                   </button>
-                </span>
+                </div>
               )}
             </div>
           </div>
