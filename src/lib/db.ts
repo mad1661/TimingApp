@@ -1816,6 +1816,12 @@ function tsHour(ts: string): number {
   return timePart ? parseInt(timePart.split(":")[0], 10) : 0;
 }
 
+function tsMinute(ts: string): number {
+  const timePart = ts.split(" ")[1];
+  const mm = timePart ? parseInt(timePart.split(":")[1], 10) : 0;
+  return Number.isFinite(mm) ? mm : 0;
+}
+
 function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
   for (const run of runs) {
     // Never strip the AM/PM off an exact (API-sourced) timestamp — it's already
@@ -1833,7 +1839,20 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
     byDay.set(day, arr);
   }
 
-  for (const [, dayRuns] of byDay) {
+  // Walk the days in date order so a day can tell whether the previous one
+  // ran up to midnight (see the midnight-continuation check below).
+  const dayKeyMs = (day: string): number => {
+    const m = day.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return 0;
+    return new Date(parseInt(m[3], 10), parseInt(m[1], 10) - 1, parseInt(m[2], 10)).getTime();
+  };
+  const orderedDays = Array.from(byDay.entries()).sort((a, b) => dayKeyMs(a[0]) - dayKeyMs(b[0]));
+  // End of the previous race day: its date and how many minutes before
+  // midnight its last pass was.
+  let prevDayMs: number | null = null;
+  let prevDayEndMinutes: number | null = null;
+
+  for (const [dayKey, dayRuns] of orderedDays) {
     // The NHRA data comes in chronological order. Sort by scrape sequence
     // (when available) and walk: start AM, flip to PM when we first see
     // an hour 1-5 run after morning hours. Hours 1-5 are always PM.
@@ -1852,11 +1871,54 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       );
     }
 
+    // A race that runs past midnight puts its small-hours passes on the NEXT
+    // date, where they look exactly like an early-afternoon session: the day
+    // opens on hour 12 or 1-5 with no morning before it. Getting this wrong
+    // stamps a 12:05 AM pass as 12:05 PM, which lands it in the middle of the
+    // next day's real racing. Two conservative signals identify a genuine
+    // continuation, and only a leading block of such runs is affected:
+    //   (a) morning hours (6-11) appear LATER the same day — the leading block
+    //       can't be afternoon if 8 AM racing follows it;
+    //   (b) the previous race day ran up to the edge of midnight and this day
+    //       opens just after it (a real crossing leaves a small gap, while an
+    //       afternoon session the next day leaves twelve-plus hours).
+    // Everything else keeps the long-standing "12 and 1-5 are PM" rule.
+    const hourList = dayRuns.map((r) => (r._ts_exact ? null : tsHour(r.timestamp!)));
+    let leadingBlock = 0;
+    while (
+      leadingBlock < hourList.length &&
+      hourList[leadingBlock] !== null &&
+      (hourList[leadingBlock] === 12 ||
+        (hourList[leadingBlock]! >= 1 && hourList[leadingBlock]! <= 5))
+    ) {
+      leadingBlock++;
+    }
+    let midnightRun = false;
+    if (!pmStart && leadingBlock > 0) {
+      const laterMorning = hourList
+        .slice(leadingBlock)
+        .some((h) => h !== null && h >= 6 && h <= 11);
+      const firstHour = hourList[0]!;
+      const firstMinutes = (firstHour === 12 ? 0 : firstHour) * 60 + tsMinute(dayRuns[0].timestamp!);
+      const crossedFromLastNight =
+        prevDayMs !== null &&
+        prevDayEndMinutes !== null &&
+        dayKeyMs(dayKey) - prevDayMs === 86_400_000 &&
+        prevDayEndMinutes >= 22 * 60 + 30 &&
+        firstMinutes <= 90;
+      midnightRun = laterMorning || crossedFromLastNight;
+    }
+
     // Walk in order: AM until we see hour 12 or 1-5, then PM.
     let passedNoon = pmStart;
     let seenMorning = false;
+    let idx = -1;
+    // Latest pass of this day in minutes-since-midnight, for the next day's
+    // crossing check.
+    let dayEndMinutes: number | null = null;
 
     for (const run of dayRuns) {
+      idx++;
       const h = tsHour(run.timestamp!);
 
       // Exact rows already have the right marker — don't re-tag them. Still let
@@ -1865,6 +1927,19 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       if (run._ts_exact) {
         if (/PM\s*$/i.test(run.timestamp!)) passedNoon = true;
         else if (h >= 6 && h <= 11) seenMorning = true;
+        const em = tsMinute(run.timestamp!);
+        const eh = /PM\s*$/i.test(run.timestamp!) && h !== 12 ? h + 12 : h === 12 && /AM\s*$/i.test(run.timestamp!) ? 0 : h;
+        dayEndMinutes = Math.max(dayEndMinutes ?? 0, eh * 60 + em);
+        continue;
+      }
+
+      // Leading small-hours block of a race that carried past midnight: these
+      // are AM, and they must not trip the noon crossing for the rest of the
+      // day (the real morning racing follows them).
+      if (midnightRun && idx < leadingBlock) {
+        run.timestamp += " AM";
+        const mm = tsMinute(run.timestamp!);
+        dayEndMinutes = Math.max(dayEndMinutes ?? 0, (h === 12 ? 0 : h) * 60 + mm);
         continue;
       }
 
@@ -1878,10 +1953,16 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
       // Hours 12 and 1-5 are always PM regardless of context
       if (h === 12 || (h >= 1 && h <= 5)) {
         run.timestamp += " PM";
+        dayEndMinutes = Math.max(dayEndMinutes ?? 0, (h === 12 ? 12 : h + 12) * 60 + tsMinute(run.timestamp!));
       } else {
-        run.timestamp += passedNoon ? " PM" : " AM";
+        const isPm = passedNoon;
+        run.timestamp += isPm ? " PM" : " AM";
+        dayEndMinutes = Math.max(dayEndMinutes ?? 0, (isPm ? h + 12 : h) * 60 + tsMinute(run.timestamp!));
       }
     }
+
+    prevDayMs = dayKeyMs(dayKey);
+    prevDayEndMinutes = dayEndMinutes;
   }
 }
 
