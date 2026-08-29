@@ -482,6 +482,227 @@ function RacerTable({
  * gaining points right now, who isn't (out, bought back, or a non-points
  * entry), and who hasn't made a pass yet.
  */
+/**
+ * Minimal team-vs-team pairing plan. Greedy: always pair one car from each of
+ * the two biggest remaining groups — a classic result that yields the minimum
+ * possible number of same-team pairs (forced only when one team outnumbers
+ * everyone else combined). The bye, when the field is odd, goes to the largest
+ * group, which never increases forced pairs.
+ */
+function buildPairingPlan(groups: { label: string; count: number }[]): {
+  cross: Map<string, number>;
+  internal: Map<string, number>;
+  bye: string | null;
+  totalPairs: number;
+  forcedPairs: number;
+} {
+  const work = groups.filter((g) => g.count > 0).map((g) => ({ ...g }));
+  const cross = new Map<string, number>();
+  const internal = new Map<string, number>();
+  let bye: string | null = null;
+
+  const total = work.reduce((s, g) => s + g.count, 0);
+  if (total % 2 === 1) {
+    work.sort((a, b) => b.count - a.count);
+    bye = work[0].label;
+    work[0].count--;
+  }
+
+  let totalPairs = 0;
+  for (;;) {
+    work.sort((a, b) => b.count - a.count);
+    const alive = work.filter((g) => g.count > 0);
+    if (alive.length === 0) break;
+    if (alive.length === 1) {
+      // One team left with everyone else exhausted — forced in-team pairs.
+      const g = alive[0];
+      const pairs = Math.floor(g.count / 2);
+      if (pairs > 0) internal.set(g.label, (internal.get(g.label) || 0) + pairs);
+      totalPairs += pairs;
+      break;
+    }
+    // Pair the two biggest against each other, one pair at a time (optimal,
+    // and fast enough at field sizes). Key is order-normalized so "A vs B"
+    // and "B vs A" tally as one matchup.
+    const [a, b] = alive;
+    const key = [a.label, b.label].sort().join("|");
+    cross.set(key, (cross.get(key) || 0) + 1);
+    a.count--;
+    b.count--;
+    totalPairs++;
+  }
+
+  const forcedPairs = Array.from(internal.values()).reduce((s, n) => s + n, 0);
+  return { cross, internal, bye, totalPairs, forcedPairs };
+}
+
+/**
+ * Best pairings for the next round of a class: counts the cars still standing
+ * on each team and lays out how many of each team should run each other so
+ * team-vs-team matchups are the theoretical minimum — forced only when one
+ * team outnumbers everyone else combined.
+ */
+function PairingHelper({ data }: { data: StandingsResponse | null }) {
+  const [open, setOpen] = useState(false);
+  const [category, setCategory] = useState("");
+
+  const mainCats = useMemo(
+    () => (data?.categories || []).filter((c) => c.role === "main"),
+    [data],
+  );
+  const activeCat = mainCats.find((c) => c.category === category) || mainCats[0];
+
+  const groups = useMemo(() => {
+    if (!data || !activeCat) return [];
+    const byTeam = new Map<string, number>();
+    // Cars that can no longer earn — bought back in, or a non-points entry —
+    // aren't "team" cars for pairing purposes: put them in one shared pool the
+    // plan can spend freely as opponents, soaking up pairings that would
+    // otherwise force teammates together.
+    let freeCars = 0;
+    for (const t of data.teams) {
+      let earning = 0;
+      for (const r of t.racers) {
+        if (!r.categories.includes(activeCat.category)) continue;
+        if (r.status === "racing" && r.points_eligible) earning++;
+        else if (r.status === "racing" && !r.points_eligible) freeCars++;
+        else if (r.status === "eliminated" && r.racedAfterElimination) freeCars++;
+      }
+      if (earning > 0) byTeam.set(t.team_name, earning);
+    }
+    // Unmatched cars are still in the round draw — count them as their own
+    // group so the plan reflects the real field.
+    const unmatchedAlive = data.unmatched.filter(
+      (u) =>
+        u.category === activeCat.category &&
+        !u.rounds.some((rd) => !rd.ignored && rd.outcome === "loss"),
+    ).length;
+    if (unmatchedAlive > 0) byTeam.set("(unassigned)", unmatchedAlive);
+    if (freeCars > 0) byTeam.set("(buy-backs / non-points)", freeCars);
+    return Array.from(byTeam.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [data, activeCat]);
+
+  const plan = useMemo(() => buildPairingPlan(groups), [groups]);
+  const totalCars = groups.reduce((s, g) => s + g.count, 0);
+
+  return (
+    <div className="mt-8 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+      >
+        <div>
+          <h2 className="text-white font-bold">Pairing Helper</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Best pairings for the next round — out of what&apos;s left, how many of each team should run each other so
+            teammates meet as little as possible. Buy-back cars and non-points entries count as their own group: they
+            can&apos;t earn, so they&apos;re free opponents for anyone.
+          </p>
+        </div>
+        <span className="text-gray-400 text-sm">{open ? "Hide" : "Open"}</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-nhra-border">
+          <div className="px-6 py-3 flex items-center gap-3 flex-wrap bg-nhra-darker/40">
+            <label className="text-xs text-gray-400">
+              Class
+              <select
+                value={activeCat?.category || ""}
+                onChange={(e) => setCategory(e.target.value)}
+                className="ml-2 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+              >
+                {mainCats.map((c) => (
+                  <option key={c.category} value={c.category}>
+                    {c.category}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {totalCars > 0 && (
+              <span className="text-xs text-gray-400">
+                {totalCars} car{totalCars === 1 ? "" : "s"} still in · {plan.totalPairs} pair
+                {plan.totalPairs === 1 ? "" : "s"}
+                {plan.bye ? ` · bye to ${plan.bye}` : ""} ·{" "}
+                {plan.forcedPairs === 0 ? (
+                  <span className="text-green-400 font-semibold">no team-vs-team needed</span>
+                ) : (
+                  <span className="text-yellow-500 font-semibold">
+                    {plan.forcedPairs} team-vs-team pair{plan.forcedPairs === 1 ? "" : "s"} unavoidable
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+
+          {totalCars === 0 ? (
+            <p className="px-6 py-6 text-sm text-gray-500">Nobody still standing in this class.</p>
+          ) : (
+            <div className="px-6 py-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Still In, By Team</h3>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {groups.map((g) => (
+                      <tr key={g.label} className="border-t border-nhra-border/40">
+                        <td className="py-1.5 text-white">{g.label}</td>
+                        <td className="py-1.5 text-right font-bold text-gray-300">{g.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                  Run These Against Each Other
+                </h3>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {Array.from(plan.cross.entries())
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([key, n]) => {
+                        const [a, b] = key.split("|");
+                        return (
+                          <tr key={key} className="border-t border-nhra-border/40">
+                            <td className="py-1.5 text-gray-300">
+                              {a} <span className="text-gray-600">vs</span> {b}
+                            </td>
+                            <td className="py-1.5 text-right font-bold text-white">
+                              {n} pair{n === 1 ? "" : "s"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {Array.from(plan.internal.entries()).map(([team, n]) => (
+                      <tr key={`int-${team}`} className="border-t border-nhra-border/40">
+                        <td className="py-1.5 text-yellow-500">
+                          {team} <span className="text-gray-600">vs</span> {team}{" "}
+                          <span className="text-gray-600">(unavoidable — they outnumber everyone else)</span>
+                        </td>
+                        <td className="py-1.5 text-right font-bold text-yellow-500">
+                          {n} pair{n === 1 ? "" : "s"}
+                        </td>
+                      </tr>
+                    ))}
+                    {plan.bye && (
+                      <tr className="border-t border-nhra-border/40">
+                        <td className="py-1.5 text-gray-400">{plan.bye} — bye</td>
+                        <td className="py-1.5 text-right text-gray-400">1 car</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ReviewRun {
   timestamp: string | null;
   round: string | null;
@@ -2937,6 +3158,9 @@ export default function EtFinalsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Pairing helper ─────────────────────────────────────────────── */}
+      <PairingHelper data={data} />
 
       {/* ── Round review ───────────────────────────────────────────────── */}
       <RoundReview
