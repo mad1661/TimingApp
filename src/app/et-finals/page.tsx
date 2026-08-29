@@ -1162,11 +1162,29 @@ export default function EtFinalsPage() {
   }
 
   // Save the whole team-points setup — class roles and boards, buy-back rule,
-  // pins, eligibility overrides — under a name, so it can be brought back after
-  // a purge, a re-created event or a changed event code.
+  // day picks, adjustments, pins, eligibility overrides — under a name, so it
+  // can be brought back after a purge, a re-created event or a changed event
+  // code. Class setup is MATERIALIZED: every class is written with the role
+  // and board actually in effect on screen, whether it was hand-set,
+  // remembered from the season, or auto-guessed — so a restore reproduces
+  // exactly what was showing, not just the hand-ruled subset.
   async function saveSetup() {
     const cfg = draftConfig ?? data?.config;
     if (!cfg) return;
+    const effectiveRoles = Object.fromEntries(
+      (data?.categories || []).map((c) => [c.category, cfg.categoryRoles[c.category] ?? c.role]),
+    );
+    const effectiveDivisions = Object.fromEntries(
+      (data?.categories || []).map((c) => [
+        c.category,
+        cfg.categoryDivision[c.category] ?? c.division,
+      ]),
+    );
+    const snapshot: EtFinalsConfig = {
+      ...cfg,
+      categoryRoles: { ...cfg.categoryRoles, ...effectiveRoles },
+      categoryDivision: { ...cfg.categoryDivision, ...effectiveDivisions },
+    };
     const name = setupName.trim() || `${season} ET Finals`;
     setSetupBusy(true);
     setSetupMsg("");
@@ -1174,7 +1192,7 @@ export default function EtFinalsPage() {
       const res = await fetch("/api/et-finals/setups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, season, event_code: eventCode, config: cfg }),
+        body: JSON.stringify({ name, season, event_code: eventCode, config: snapshot }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || "Failed to save settings");
@@ -2252,10 +2270,11 @@ export default function EtFinalsPage() {
         {showSetups && (
           <div className="border-t border-nhra-border p-6 space-y-4">
             <p className="text-xs text-gray-400 leading-relaxed">
-              Saves everything the points chase is configured with — class roles and boards, the buy-back rule, manual
-              pins and per-racer eligibility — under one name. If the event ever has to be reloaded or re-created,
-              load the name back and the setup is exactly as it was. Rosters, tech cards and track names are stored
-              separately and survive on their own.
+              Saves everything the points chase is configured with — every class&apos;s role and board exactly as
+              shown in Class Setup (hand-set, remembered or auto-guessed alike), the buy-back rule, the days that
+              count, points adjustments, manual pins and per-racer eligibility — under one name. If the event ever has
+              to be reloaded or re-created, load the name back and the setup is exactly as it was. Rosters, tech cards
+              and track names are stored separately and survive on their own.
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <input
