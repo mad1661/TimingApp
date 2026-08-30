@@ -93,16 +93,21 @@ function Board({
   );
 
   return (
-    <div className="min-h-screen px-4 py-8 sm:px-8">
+    <div className="min-h-screen px-3 py-6 sm:px-8 sm:py-8">
       <div className="max-w-3xl mx-auto">
-        <header className="mb-6 text-center">
-          <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">
+        <header className="mb-4 sm:mb-6 text-center">
+          <h1 className="text-xl sm:text-3xl md:text-4xl font-bold text-white tracking-tight text-balance">
             {title || "Summit E.T. Finals — Team Points"}
           </h1>
-          <p className="text-sm text-gray-400 mt-2">
+          <p className="text-xs sm:text-sm text-gray-400 mt-1.5 sm:mt-2">
             {eventCode} · {season}
-            {data?.roundsScored?.length ? ` · Rounds scored: ${data.roundsScored.join(", ")}` : ""}
             {view === "big" ? " · Big Cars" : view === "jr" ? " · Jrs" : ""}
+            {data?.roundsScored?.length ? (
+              <span className="block sm:inline">
+                <span className="hidden sm:inline"> · </span>
+                Rounds scored: {data.roundsScored.join(", ")}
+              </span>
+            ) : null}
           </p>
         </header>
 
@@ -119,39 +124,34 @@ function Board({
         ) : teams.length === 0 ? (
           <p className="text-center text-gray-500 py-16">No points yet.</p>
         ) : (
-          <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
-                <tr>
-                  <th className="text-left px-4 py-3 font-medium w-14">#</th>
-                  <th className="text-left px-4 py-3 font-medium">Team</th>
-                  {view !== "jr" && <th className="text-right px-4 py-3 font-medium">Big Cars</th>}
-                  {view !== "big" && <th className="text-right px-4 py-3 font-medium">Jrs</th>}
-                  <th className="text-right px-4 py-3 font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {teams.map((t, i) => (
-                  <tr key={t.track_code} className="border-t border-nhra-border/60">
-                    <td className="px-4 py-3 text-gray-500 font-bold text-lg">{i + 1}</td>
-                    <td className="px-4 py-3">
-                      <div className="text-white font-semibold text-lg">{t.team_name}</div>
-                    </td>
-                    {view !== "jr" && (
-                      <td className="px-4 py-3 text-right text-white font-semibold">{t.bigPoints}</td>
-                    )}
-                    {view !== "big" && (
-                      <td className="px-4 py-3 text-right text-white font-semibold">{t.jrPoints}</td>
-                    )}
-                    <td className="px-4 py-3 text-right text-2xl font-bold text-nhra-red">{pointsOf(t)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          // A row per team rather than a table: five columns of numbers don't
+          // survive a phone, and this reads the same on a phone, a laptop or a
+          // screen in the tower.
+          <ol className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden divide-y divide-nhra-border/60">
+            {teams.map((t, i) => (
+              <li key={t.track_code} className="flex items-center gap-3 px-3 py-3 sm:px-5 sm:py-4">
+                <span className="w-7 shrink-0 text-center text-base sm:text-lg font-bold text-gray-500">
+                  {i + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-white font-semibold text-base sm:text-xl leading-tight">
+                    {t.team_name}
+                  </span>
+                  {view === "combined" && (
+                    <span className="block text-xs sm:text-sm text-gray-500 mt-0.5">
+                      Big Cars {t.bigPoints} · Jrs {t.jrPoints}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-3xl sm:text-4xl font-bold text-nhra-red tabular-nums leading-none">
+                  {pointsOf(t)}
+                </span>
+              </li>
+            ))}
+          </ol>
         )}
 
-        <p className="text-center text-xs text-gray-600 mt-6">
+        <p className="text-center text-xs text-gray-600 mt-4 sm:mt-6">
           {updated
             ? `Updated ${updated.toLocaleTimeString()} · refreshes every ${
                 every % 60 === 0 ? `${every / 60} min` : `${every} sec`
