@@ -28,4 +28,4 @@ env:
   # the primary App Hosting domain keeps serving the whole app.
   # e.g. "points.example.com,nhra-timing-app.web.app"
   - variable: PUBLIC_POINTS_HOSTS
-    value: ""
+    value: "nhra-timing-app.web.app,nhra-timing-app.firebaseapp.com"

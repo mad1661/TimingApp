@@ -34,8 +34,16 @@ export function middleware(request: NextRequest) {
   const hosts = publicHosts();
   if (hosts.length === 0) return NextResponse.next();
 
-  const host = (request.headers.get("host") || "").toLowerCase().split(":")[0];
-  if (!hosts.includes(host)) return NextResponse.next();
+  // Behind a proxy (Firebase Hosting rewriting to this service) the original
+  // domain arrives in x-forwarded-host, so check both.
+  const candidates = [
+    request.headers.get("x-forwarded-host") || "",
+    request.headers.get("host") || "",
+  ]
+    .flatMap((h) => h.split(","))
+    .map((h) => h.trim().toLowerCase().split(":")[0])
+    .filter(Boolean);
+  if (!candidates.some((h) => hosts.includes(h))) return NextResponse.next();
 
   const path = request.nextUrl.pathname;
   const allowed =
