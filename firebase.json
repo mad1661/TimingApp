@@ -4,7 +4,12 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "redirects": [
       {
-        "source": "**",
+        "source": "/:rest*",
+        "destination": "https://timingapp--nhra-timing-app.us-east4.hosted.app/:rest*",
+        "type": 302
+      },
+      {
+        "source": "/",
         "destination": "https://timingapp--nhra-timing-app.us-east4.hosted.app",
         "type": 302
       }
