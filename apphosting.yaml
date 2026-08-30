@@ -21,3 +21,11 @@ env:
   # Re-add this once the NHRA_API_KEY secret exists, to re-enable the API source.
   - variable: FB_ADMIN_PROJECT_ID
     value: nhra-timing-app
+  # Hostnames that may serve ONLY the shared points board (/p/*, /share/*) and
+  # its read-only standings API. Every other path 404s on these hosts, so a
+  # public link can have its own domain without exposing the working pages,
+  # the uploads or any write endpoint. Comma-separated; empty = no gating, so
+  # the primary App Hosting domain keeps serving the whole app.
+  # e.g. "points.example.com,nhra-timing-app.web.app"
+  - variable: PUBLIC_POINTS_HOSTS
+    value: ""
