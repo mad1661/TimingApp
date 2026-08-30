@@ -1488,13 +1488,44 @@ export function computeEtFinalsStandings(
     return 0;
   };
 
+  /**
+   * The most points a team can still take out of one class.
+   *
+   * Only cars that can still earn are counted — a bought-back car or a
+   * non-points entry occupies a bracket slot but can never add to the total.
+   * The count is then walked round by round against the real field, because a
+   * team can't win more matchups in a round than there are matchups: with 9
+   * live cars in a 37-car class the team wins at most 9 in the next round, 9
+   * again, then 5, 2, 1... Multiplying every earner by the full bracket depth
+   * (9 x 6) ignores that they must eventually knock each other out, and
+   * inflates the ceiling so far that no spot ever reads as locked.
+   */
+  const maxFromClass = (fieldSize: number, earners: number, roundsLeft: number): number => {
+    let field = fieldSize;
+    let alive = earners;
+    let rounds = roundsLeft;
+    let points = 0;
+    while (rounds > 0 && alive > 0 && field >= 2) {
+      const wins = Math.min(alive, Math.floor(field / 2));
+      points += wins * pointsPerWin;
+      field = Math.ceil(field / 2);
+      alive = wins;
+      rounds--;
+    }
+    return points;
+  };
+
   for (const team of standings) {
-    let remaining = 0;
+    const earnersByCat = new Map<string, number>();
     for (const r of team.racers) {
       if (!r.points_eligible || r.status !== "racing") continue;
       const cat = r.categories[0];
       if (!cat) continue;
-      remaining += roundsLeftFor(cat) * pointsPerWin;
+      earnersByCat.set(cat, (earnersByCat.get(cat) || 0) + 1);
+    }
+    let remaining = 0;
+    for (const [cat, earners] of earnersByCat) {
+      remaining += maxFromClass(aliveByCat.get(cat) || earners, earners, roundsLeftFor(cat));
     }
     team.maxRemainingPoints = remaining;
     team.maxPossibleTotal = team.totalPoints + remaining;
