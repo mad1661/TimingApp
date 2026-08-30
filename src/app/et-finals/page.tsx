@@ -2191,7 +2191,9 @@ export default function EtFinalsPage() {
     lines.push("");
     lines.push("STANDINGS");
     teams.forEach((t, i) => {
-      const cars = t.racers.filter((r) => r.status === "racing").length;
+      // Only cars that can still earn count as "in" — a bought-back car or a
+      // non-points entry is on track but can't move the team's total.
+      const cars = t.racers.filter((r) => r.status === "racing" && r.points_eligible).length;
       lines.push(
         `${i + 1}. ${t.team_name}${t.track_code ? ` (${t.track_code})` : ""} — Big Cars ${t.bigPoints}, Jrs ${t.jrPoints}, Total ${t.totalPoints}${
           pubCarCounts ? `, ${cars} still in` : ""
@@ -2270,7 +2272,11 @@ export default function EtFinalsPage() {
           <td class="r">${t.bigPoints}</td>
           <td class="r">${t.jrPoints}</td>
           <td class="r total">${t.totalPoints}</td>
-          ${pubCarCounts ? `<td class="r">${t.racers.filter((r) => r.status === "racing").length}</td>` : ""}
+          ${
+            pubCarCounts
+              ? `<td class="r">${t.racers.filter((r) => r.status === "racing" && r.points_eligible).length}</td>`
+              : ""
+          }
         </tr>`,
       )
       .join("");
@@ -2451,7 +2457,7 @@ export default function EtFinalsPage() {
           </label>
           <label
             className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
-            title="Adds a 'Still In' column showing how many cars each team has left"
+            title="Off by default. Adds a 'Still In' column counting only cars that can still earn — bought-back and non-points cars aren't counted"
           >
             <input
               type="checkbox"
