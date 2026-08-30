@@ -12,7 +12,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const hasConfig = !!live.config;
   const isSetupPage = pathname === "/" && !hasConfig;
-  const isStandaloneSharedPage = pathname.startsWith("/day/") || pathname.startsWith("/share");
+  // Pages handed to people outside the tower carry none of the app's chrome —
+  // no navigation, no event banner, nothing to press. "/p/" is the short
+  // points link.
+  const isStandaloneSharedPage =
+    pathname.startsWith("/day/") || pathname.startsWith("/share") || pathname.startsWith("/p/");
 
   if (isSetupPage || isStandaloneSharedPage) {
     return <main className="min-h-screen">{children}</main>;
