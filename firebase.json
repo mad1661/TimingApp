@@ -2,13 +2,11 @@
   "hosting": {
     "public": "public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [
+    "redirects": [
       {
         "source": "**",
-        "run": {
-          "serviceId": "timingapp",
-          "region": "us-east4"
-        }
+        "destination": "https://timingapp--nhra-timing-app.us-east4.hosted.app",
+        "type": 302
       }
     ]
   },
