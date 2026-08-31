@@ -172,7 +172,17 @@ function RoundsDetail({
           const dim = rd.ignored ? "opacity-50 line-through" : "";
           return (
             <tr key={rd.dedup_key || i} className="border-t border-nhra-border/30">
-              <td className={`pl-10 pr-2 py-1 text-gray-300 font-semibold ${dim}`}>{rd.round}</td>
+              <td className={`pl-10 pr-2 py-1 text-gray-300 font-semibold ${dim}`}>
+                {rd.round}
+                {rd.buyback && (
+                  <span
+                    className="ml-1.5 text-[10px] font-normal text-yellow-500"
+                    title="The buy-back, not the main race — this pass never scores"
+                  >
+                    buy-back
+                  </span>
+                )}
+              </td>
               <td className={`px-2 py-1 text-gray-500 ${dim}`}>{rd.category}</td>
               <td className="px-2 py-1">
                 {rd.ignored ? (
@@ -181,7 +191,7 @@ function RoundsDetail({
                   </span>
                 ) : rd.outcome === "win" ? (
                   <span className={rd.scored ? "text-green-400 font-bold" : "text-yellow-500 font-bold"}>
-                    W{rd.scored ? "" : " (no pts)"}
+                    W{rd.scored ? "" : rd.buyback ? " (buy-back)" : " (no pts)"}
                   </span>
                 ) : rd.outcome === "loss" ? (
                   <span className="text-red-400">L</span>
@@ -1556,6 +1566,23 @@ export default function EtFinalsPage() {
     setDraftConfig({ ...base, buybackRounds: next });
   };
 
+  // Every class at a track normally runs its second chance the same way, so one
+  // class's rounds can be pushed onto all of them rather than typed six times.
+  const applyBuybackRoundsToAll = (raw: string) => {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const rounds = raw
+      .split(/[,\s]+/)
+      .map((r) => r.trim().toUpperCase())
+      .filter(Boolean);
+    if (!rounds.length) return;
+    const next = { ...base.buybackRounds };
+    for (const c of data?.categories || []) {
+      if ((base.categoryRoles[c.category] ?? c.role) === "main") next[c.category] = rounds;
+    }
+    setDraftConfig({ ...base, buybackRounds: next });
+  };
+
   // Hand-pin a timing-system racer onto a roster entry. Saved straight away
   // rather than batched with the class setup — it's a one-off correction and
   // waiting on a Save button would strand the fix.
@@ -2180,6 +2207,17 @@ export default function EtFinalsPage() {
         (data.roundsScored.length ? ` · Rounds scored: ${data.roundsScored.join(", ")}` : ""),
     );
     if (effectiveConfig?.buybackEarnsPoints) lines.push("Buy-back winners keep earning points");
+    // Where the buy-back is run inside a main class, say so — otherwise a
+    // reader counting round wins off the timing sheet gets a different total.
+    const buybackInRounds = Object.entries(effectiveConfig?.buybackRounds || {}).filter(
+      ([, rounds]) => rounds.length > 0,
+    );
+    if (buybackInRounds.length)
+      lines.push(
+        `Buy-back run inside: ${buybackInRounds
+          .map(([cat, rounds]) => `${cat} ${rounds.join("/")}`)
+          .join("; ")}`,
+      );
     if ((effectiveConfig?.excludedDates || []).length)
       lines.push(`Days not counted: ${(effectiveConfig?.excludedDates || []).join(", ")}`);
     if (Object.keys(effectiveConfig?.dayWindows || {}).length)
@@ -2706,6 +2744,11 @@ export default function EtFinalsPage() {
               Saved against this event and remembered by class name for the rest of the season, so the next race opens
               already set — anything carried over is marked <em>(remembered)</em> and can still be changed here without
               affecting the race it came from.
+              <br />
+              <strong className="text-gray-300">Buy-back rounds</strong> is for a class that runs its own second chance
+              instead of having a separate buy-back class. Put the round it&apos;s run in — usually{" "}
+              <strong className="text-gray-300">E1</strong>, a second session of round 1. Every racer&apos;s first pass
+              in that round still counts as the main race; a second pass is the buy-back and never scores.
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -2776,13 +2819,25 @@ export default function EtFinalsPage() {
                           </div>
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            defaultValue={buyback}
-                            onBlur={(e) => setBuybackRounds(c.category, e.target.value)}
-                            placeholder="e.g. E2"
-                            disabled={role !== "main"}
-                            className="w-24 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 disabled:opacity-30"
-                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              key={`${c.category}|${buyback}`}
+                              defaultValue={buyback}
+                              onBlur={(e) => setBuybackRounds(c.category, e.target.value)}
+                              placeholder="e.g. E1"
+                              disabled={role !== "main"}
+                              className="w-20 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 disabled:opacity-30"
+                            />
+                            {role === "main" && buyback && (
+                              <button
+                                onClick={() => applyBuybackRoundsToAll(buyback)}
+                                title="Use these buy-back rounds for every main-race class"
+                                className="text-[11px] text-nhra-accent hover:underline"
+                              >
+                                all classes
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-2 text-right text-gray-400">{c.runCount}</td>
                       </tr>

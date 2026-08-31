@@ -81,9 +81,16 @@ export interface EtFinalsConfig {
   /** Timing-system category -> big cars or juniors. */
   categoryDivision: Record<string, EtDivision>;
   /**
-   * Rounds inside a main category that are really the buy-back, for tracks that
-   * run the second chance as an extra round of the same class instead of as its
-   * own class. Category -> round codes ("E2"). Usually empty.
+   * Rounds where a main category runs its buy-back, for tracks that run the
+   * second chance inside the same class instead of as its own class.
+   * Category -> round codes ("E1", "E2").
+   *
+   * The buy-back is nearly always run as a second session of round 1, so the
+   * bought-back cars show up under the same round code as the main race. A
+   * listed round is therefore read per racer: their FIRST pass in it is the
+   * main-race pass and every later pass is the buy-back. Only when no racer in
+   * the class has two passes in the round is the whole round taken as the
+   * buy-back (a round only the bought-back cars ran).
    */
   buybackRounds: Record<string, string[]>;
   /** Points awarded per main-race round win. Defaults to 1. */
@@ -172,6 +179,8 @@ export interface EtRoundResult {
   outcome: "win" | "loss" | "pending";
   /** False for rounds excluded from scoring (buy-back rounds). */
   scored: boolean;
+  /** This pass was the buy-back, not the main race. Never scores. */
+  buyback: boolean;
   points: number;
   /** Car number exactly as the timing system recorded this pass. */
   car_number: string;
@@ -863,6 +872,50 @@ export function computeEtFinalsStandings(
     agg.runs.push(run);
   }
 
+  // A round listed as this class's buy-back is read one of two ways, and the
+  // runs themselves say which.
+  //
+  // SHARED — the buy-back is run as a second session of a round the main race
+  // also runs, so the bought-back cars carry the same round code and a racer who
+  // bought back has two passes in it: the loss, then the buy-back. Every racer's
+  // first pass in the round still counts, and their later ones don't.
+  // Recognised either by a racer having two passes in the round, or by the round
+  // being the earliest the class has run — the main race always runs its own
+  // round 1, so listing it can only mean the shared kind, and waiting for the
+  // buy-back session to prove it would leave all morning's round-1 wins reading
+  // as worth nothing.
+  //
+  // DEDICATED — a round only the bought-back cars ran (the timing operator gave
+  // the second chance its own round code). Nothing in it scores.
+  const firstRoundByCat = new Map<string, number>();
+  for (const agg of runners.values()) {
+    for (const run of agg.runs) {
+      if (isIgnored(run)) continue;
+      const order = elimRoundOrder((run.round || "").trim().toUpperCase());
+      const seen = firstRoundByCat.get(agg.category);
+      if (seen === undefined || order < seen) firstRoundByCat.set(agg.category, order);
+    }
+  }
+
+  const sharedBuybackRounds = new Set<string>();
+  for (const agg of runners.values()) {
+    const listed = new Set(
+      (config.buybackRounds[agg.category] || []).map((r) => r.trim().toUpperCase()),
+    );
+    if (listed.size === 0) continue;
+    const perRound = new Map<string, number>();
+    for (const run of agg.runs) {
+      if (isIgnored(run)) continue; // a thrown-out rerun isn't a buy-back pass
+      const round = (run.round || "").trim().toUpperCase();
+      if (!listed.has(round)) continue;
+      const n = (perRound.get(round) || 0) + 1;
+      perRound.set(round, n);
+      if (n >= 2 || elimRoundOrder(round) === firstRoundByCat.get(agg.category)) {
+        sharedBuybackRounds.add(`${agg.category}|${round}`);
+      }
+    }
+  }
+
   // Winners per category+round, and per timestamp pairing, so an undecided pass
   // in a round that is still running reads as pending rather than as a loss.
   const roundHasWinner = new Set<string>();
@@ -940,10 +993,25 @@ export function computeEtFinalsStandings(
     let lastDecided: "win" | "loss" | null = null;
     let lastLossRound: string | null = null;
     const roundResults: EtRoundResult[] = [];
+    /** Main-race passes counted so far in each round, for the shared-round rule. */
+    const seenInRound = new Map<string, number>();
 
     for (const run of ordered) {
       const round = (run.round || "").trim().toUpperCase();
-      const isBuyback = buybackRounds.has(round);
+      const ignored = isIgnored(run);
+      // In a round the buy-back shares with the main race, this racer's first
+      // pass is the main race and everything after it is the buy-back. In a
+      // round only the bought-back cars ran, every pass is the buy-back.
+      let isBuyback = false;
+      if (buybackRounds.has(round)) {
+        if (!sharedBuybackRounds.has(`${agg.category}|${round}`)) isBuyback = true;
+        else if (ignored) isBuyback = (seenInRound.get(round) || 0) >= 1;
+        else {
+          const n = (seenInRound.get(round) || 0) + 1;
+          seenInRound.set(round, n);
+          isBuyback = n > 1;
+        }
+      }
       let outcome: "win" | "loss" | "pending";
       if (isWin(run)) outcome = "win";
       else if (isDecidedLoss(run)) outcome = "loss";
@@ -955,12 +1023,13 @@ export function computeEtFinalsStandings(
 
       // A thrown-out pass (rerun coming) stays in the log but changes nothing:
       // its win scores nothing and its loss doesn't end the points run.
-      if (isIgnored(run)) {
+      if (ignored) {
         roundResults.push({
           round: run.round || "",
           category: agg.category,
           outcome,
           scored: false,
+          buyback: isBuyback,
           points: 0,
           car_number: (run.car_number || "").trim(),
           timestamp: run.timestamp,
@@ -983,6 +1052,7 @@ export function computeEtFinalsStandings(
         category: agg.category,
         outcome,
         scored: scoresHere,
+        buyback: isBuyback,
         points: scoresHere ? pointsPerWin : 0,
         car_number: (run.car_number || "").trim(),
         timestamp: run.timestamp,
