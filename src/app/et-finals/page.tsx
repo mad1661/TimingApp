@@ -272,6 +272,22 @@ function RoundsDetail({
   );
 }
 
+/**
+ * Why a row holding two timing-system cars looks like two people rather than
+ * one racer who changed numbers — the phrase names it, or "" when the
+ * combination is unremarkable. Two membership numbers is conclusive (a racer
+ * holds one NHRA membership); two names is a strong hint, since a father and
+ * son are one name to the matcher once the JR / SR suffix is stripped.
+ */
+function combinedLooksWrong(racer: EtRacerPoints): string {
+  if (racer.matched_from.length < 2) return "";
+  const members = new Set(racer.matched_from.map((m) => m.member_number.trim()).filter(Boolean));
+  if (members.size > 1) return "Two different membership numbers";
+  const names = new Set(racer.matched_from.map((m) => normalizeNameKey(m.name)).filter(Boolean));
+  if (names.size > 1) return "Two different names";
+  return "";
+}
+
 /** The timing-system cars combined onto one roster row, each movable. */
 function MatchedFromList({
   racer,
@@ -287,13 +303,13 @@ function MatchedFromList({
   onAssign: (identity: string, target: string) => void;
 }) {
   if (racer.matched_from.length === 0) return null;
-  const combinedNames = new Set(racer.matched_from.map((m) => normalizeNameKey(m.name)).filter(Boolean));
+  const mixed = combinedLooksWrong(racer);
   return (
     <div className="pl-10 pr-4 pb-2 space-y-1">
-      {combinedNames.size > 1 && (
+      {mixed && (
         <p className="text-xs text-red-400">
-          Two different names are on this row — they are probably two people (a father and son share a name).
-          Split one off with <span className="text-gray-300">Move to… → Own row</span>.
+          {mixed} on this row — that is two people, not one. Use <strong>Split off</strong> on the one that
+          doesn&apos;t belong: it moves onto its own row on this team, keeping its points with the team.
         </p>
       )}
       {racer.matched_from.map((m) => (
@@ -305,6 +321,22 @@ function MatchedFromList({
             {m.member_number ? <span className="text-gray-600"> · member #{m.member_number}</span> : null}
             <span className="text-gray-600"> · {m.category} · via {m.matchedBy === "manual" ? "pin" : m.matchedBy}</span>
           </span>
+          {/* One click off this roster row onto a row of its own, still on this
+              team — how a wrongly merged pair (a father and son) gets split. */}
+          {racer.matched_from.length > 1 && racer.track_code && (
+            <button
+              disabled={assigning === m.identity}
+              onClick={() => onAssign(m.identity, `${TEAM_MATCH_PREFIX}${racer.track_code}`)}
+              title={`Give this car its own row on ${racer.team_name || racer.track_code} instead of sharing ${racer.name}'s`}
+              className={`px-1.5 py-0.5 rounded border text-xs font-semibold disabled:opacity-40 ${
+                mixed
+                  ? "bg-nhra-red/20 border-nhra-red/50 text-red-300 hover:bg-nhra-red/30"
+                  : "bg-nhra-darker border-nhra-border text-gray-300 hover:text-white"
+              }`}
+            >
+              {assigning === m.identity ? "Splitting…" : "Split off"}
+            </button>
+          )}
           <select
             value=""
             disabled={assigning === m.identity}
@@ -312,8 +344,6 @@ function MatchedFromList({
             className="px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-xs text-gray-300 disabled:opacity-40"
           >
             <option value="">{assigning === m.identity ? "Moving…" : "Move to…"}</option>
-            {/* Off this roster row onto a row of its own, still on this team —
-                how a wrongly merged pair (a father and son) gets separated. */}
             {racer.track_code && (
               <option value={`${TEAM_MATCH_PREFIX}${racer.track_code}`}>
                 Own row on {racer.team_name || racer.track_code}
@@ -421,12 +451,12 @@ function RacerTable({
                 <td className="px-2 py-1.5 text-white">
                   {r.name}
                   {r.matched_from.length > 1 &&
-                    (new Set(r.matched_from.map((m) => normalizeNameKey(m.name)).filter(Boolean)).size > 1 ? (
+                    (combinedLooksWrong(r) ? (
                       <span
                         className="ml-1.5 text-[11px] text-red-400"
-                        title="Two different names were combined onto this entry — expand to split one off"
+                        title={`${combinedLooksWrong(r)} were combined onto this entry — expand the row to split one off`}
                       >
-                        ({r.matched_from.length} combined — different names)
+                        ({r.matched_from.length} combined — {combinedLooksWrong(r).toLowerCase()})
                       </span>
                     ) : (
                       <span
@@ -2172,6 +2202,20 @@ export default function EtFinalsPage() {
 
   const [unmatchedOpen, setUnmatchedOpen] = useState<Set<string>>(new Set());
 
+  // Every row that ended up holding more than one timing-system car, gathered
+  // from all the teams so a wrong merge doesn't have to be hunted for team by
+  // team. The ones that look like two people come first.
+  const combinedRows = useMemo(() => {
+    const rows = (data?.teams || []).flatMap((t) => t.racers.filter((r) => r.matched_from.length > 1));
+    return rows.sort(
+      (a, b) =>
+        Number(!!combinedLooksWrong(b)) - Number(!!combinedLooksWrong(a)) ||
+        a.team_name.localeCompare(b.team_name) ||
+        a.name.localeCompare(b.name),
+    );
+  }, [data]);
+  const combinedSuspect = combinedRows.filter((r) => combinedLooksWrong(r)).length;
+
   const mainCategories = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
@@ -3647,6 +3691,59 @@ export default function EtFinalsPage() {
         onFixCarNumber={fixCarNumber}
         onToggleIgnored={toggleRunIgnored}
       />
+
+      {/* ── Combined rows ──────────────────────────────────────────────── */}
+      {combinedRows.length > 0 && (
+        <div
+          className={`mt-8 bg-nhra-card border rounded-xl overflow-hidden ${
+            combinedSuspect > 0 ? "border-nhra-red/40" : "border-nhra-border"
+          }`}
+        >
+          <div
+            className={`px-6 py-3 border-b ${
+              combinedSuspect > 0 ? "bg-nhra-red/10 border-nhra-red/30" : "bg-nhra-darker/50 border-nhra-border"
+            }`}
+          >
+            <h2 className={combinedSuspect > 0 ? "text-red-400 font-bold" : "text-white font-bold"}>
+              {combinedSuspect > 0
+                ? `${combinedSuspect} row${combinedSuspect === 1 ? "" : "s"} may be two people scored as one`
+                : `${combinedRows.length} row${combinedRows.length === 1 ? "" : "s"} holding more than one car`}
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Two cars from the timing system landed on one roster entry, so their points are stacked on one racer.
+              Usually that&apos;s right — a car renumbered mid-event. It&apos;s wrong when the two are different
+              people: two membership numbers is conclusive, and two names usually means a father and son, who are one
+              name here once the JR / SR suffix is stripped. <strong className="text-gray-300">Split off</strong> gives
+              a car its own row on the same team, so the team keeps the points and the racers stop sharing a total.
+            </p>
+          </div>
+          <div className="divide-y divide-nhra-border/60">
+            {combinedRows.map((r) => (
+              <div key={`${r.key}|${r.categories.join(",")}`} className="py-2">
+                <p className="px-6 pb-1 text-xs">
+                  <span className="text-white font-semibold">{r.name}</span>
+                  <span className="text-gray-500">
+                    {" · "}
+                    {r.team_name}
+                    {" · "}
+                    {r.division === "jr" ? "Jrs" : "Big Cars"}
+                    {r.categories.length ? ` · ${r.categories.join(", ")}` : ""}
+                    {" · "}
+                    {r.points} pt{r.points === 1 ? "" : "s"}
+                  </span>
+                </p>
+                <MatchedFromList
+                  racer={r}
+                  rosterOptions={data?.rosterOptions || []}
+                  teamOptions={teamOptions}
+                  assigning={assigning}
+                  onAssign={assignRacer}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Unmatched ──────────────────────────────────────────────────── */}
       {data && data.unmatched.length > 0 && (
