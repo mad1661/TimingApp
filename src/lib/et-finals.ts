@@ -81,9 +81,16 @@ export interface EtFinalsConfig {
   /** Timing-system category -> big cars or juniors. */
   categoryDivision: Record<string, EtDivision>;
   /**
-   * Rounds inside a main category that are really the buy-back, for tracks that
-   * run the second chance as an extra round of the same class instead of as its
-   * own class. Category -> round codes ("E2"). Usually empty.
+   * Rounds where a main category runs its buy-back, for tracks that run the
+   * second chance inside the same class instead of as its own class.
+   * Category -> round codes ("E1", "E2").
+   *
+   * The buy-back is nearly always run as a second session of round 1, so the
+   * bought-back cars show up under the same round code as the main race. A
+   * listed round is therefore read per racer: their FIRST pass in it is the
+   * main-race pass and every later pass is the buy-back. Only when no racer in
+   * the class has two passes in the round is the whole round taken as the
+   * buy-back (a round only the bought-back cars ran).
    */
   buybackRounds: Record<string, string[]>;
   /** Points awarded per main-race round win. Defaults to 1. */
@@ -172,6 +179,8 @@ export interface EtRoundResult {
   outcome: "win" | "loss" | "pending";
   /** False for rounds excluded from scoring (buy-back rounds). */
   scored: boolean;
+  /** This pass was the buy-back, not the main race. Never scores. */
+  buyback: boolean;
   points: number;
   /** Car number exactly as the timing system recorded this pass. */
   car_number: string;
@@ -302,7 +311,14 @@ export interface EtUnmatchedRacer {
   category: string;
   division: EtDivision;
   roundsWon: number;
-  reason: "no_roster_entry" | "ambiguous";
+  /**
+   * "other_board": the only roster entry with this name is on the other points
+   * board. Either this class's board is set wrong, or it's a same-named father
+   * and son — which is why the match wasn't made automatically.
+   */
+  reason: "no_roster_entry" | "ambiguous" | "other_board";
+  /** The entry behind an "other_board" reason ("Josh Levan — South Mountain"). */
+  hint: string;
   /** Track code from the racer's tech card, when one was found. A suggestion
    *  for the picker — the roster still decides where the points land. */
   techTeam: string;
@@ -420,6 +436,32 @@ export function surnameOf(raw: string | null | undefined): string {
   const tokens = nameTokens(raw);
   if (tokens.length === 0) return "";
   return tokens.reduce((a, b) => (b.length > a.length ? b : a));
+}
+
+// Roman-numeral and single-letter suffixes are ambiguous against a middle
+// initial, so only the ones that unmistakably mark a generation count.
+const GENERATION_SUFFIXES = new Set(["JR", "SR", "II", "III"]);
+
+/**
+ * The generational suffix on a name ("JR", "SR", "III"), or "" when there is
+ * none. A father and son entered on the same roster are the same name to every
+ * other key in this module — the suffix is the only thing separating them, and
+ * juniors race under a parent's membership so the member number doesn't either.
+ *
+ * The suffix stays OUT of the name keys, because one source routinely writes it
+ * and the other doesn't; it is used as a veto instead, and only where both
+ * sides state one.
+ */
+export function generationOf(raw: string | null | undefined): string {
+  const tokens = (raw || "")
+    .toUpperCase()
+    .replace(/[^A-Z\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const t of tokens) {
+    if (GENERATION_SUFFIXES.has(t)) return t;
+  }
+  return "";
 }
 
 export function looseNameKey(raw: string | null | undefined): string {
@@ -583,15 +625,39 @@ function addToBucket(map: Map<string, Bucket>, key: string, val: RosterIndexEntr
 }
 
 /**
+ * Two roster rows that are the same racer entered twice — the same name, the
+ * same generation, on the same team, scoring the same way. Collapsing those is
+ * safe because the points land on the team either way. Two rows that differ in
+ * any of it are two different people and must never be silently collapsed: a
+ * father and son share a name key and often a team.
+ *
+ * Two membership numbers settle it outright — one racer holds one NHRA
+ * membership, so two of them on one name is two people, whatever the names and
+ * suffixes say. (The reverse doesn't hold: a junior races on a parent's
+ * membership, so one number can cover two people.)
+ */
+function samePerson(a: RosterIndexEntry, b: RosterIndexEntry): boolean {
+  const memberA = (a.entry.member_number || "").trim();
+  const memberB = (b.entry.member_number || "").trim();
+  if (memberA && memberB && memberA !== memberB) return false;
+  return (
+    a.roster.track_code === b.roster.track_code &&
+    a.eligible === b.eligible &&
+    normalizeNameKey(a.entry.name) === normalizeNameKey(b.entry.name) &&
+    generationOf(a.entry.name) === generationOf(b.entry.name)
+  );
+}
+
+/**
  * Resolve a bucket to a single roster entry. Several roster rows can share a
  * key legitimately — one racer entered in two Summit categories, say — and that
- * is fine as long as they all belong to the same team with the same
- * eligibility, because the points land on the team either way.
+ * is fine as long as every candidate is that same racer.
  *
- * A key that spans teams is genuinely ambiguous. `teamHint` (the track code on
- * the racer's tech card) narrows it when exactly one candidate is on that team;
- * with no hint, or a hint that doesn't single one out, the racer is left
- * unmatched for a human to pin rather than guessed at.
+ * A key held by two different people, or one that spans teams, is genuinely
+ * ambiguous. `teamHint` (the track code on the racer's tech card) narrows it
+ * when exactly one candidate is on that team; with no hint, or a hint that
+ * doesn't single one out, the racer is left unmatched for a human to pin rather
+ * than guessed at.
  */
 function resolveBucket(
   b: Bucket | undefined,
@@ -600,12 +666,7 @@ function resolveBucket(
   if (!b || b.matches.length === 0) return null;
   if (b.matches.length === 1) return b.matches[0];
   const first = b.matches[0];
-  const uniform = b.matches.every(
-    (m) =>
-      m.roster.track_code === first.roster.track_code &&
-      m.eligible === first.eligible,
-  );
-  if (uniform) return first;
+  if (b.matches.every((m) => samePerson(m, first))) return first;
   if (teamHint) {
     const onHinted = b.matches.filter(
       (m) => m.roster.track_code.toUpperCase() === teamHint.toUpperCase(),
@@ -613,7 +674,7 @@ function resolveBucket(
     if (onHinted.length === 1) return onHinted[0];
     if (onHinted.length > 1) {
       const h = onHinted[0];
-      if (onHinted.every((m) => m.eligible === h.eligible)) return h;
+      if (onHinted.every((m) => samePerson(m, h))) return h;
     }
   }
   return "ambiguous";
@@ -863,6 +924,50 @@ export function computeEtFinalsStandings(
     agg.runs.push(run);
   }
 
+  // A round listed as this class's buy-back is read one of two ways, and the
+  // runs themselves say which.
+  //
+  // SHARED — the buy-back is run as a second session of a round the main race
+  // also runs, so the bought-back cars carry the same round code and a racer who
+  // bought back has two passes in it: the loss, then the buy-back. Every racer's
+  // first pass in the round still counts, and their later ones don't.
+  // Recognised either by a racer having two passes in the round, or by the round
+  // being the earliest the class has run — the main race always runs its own
+  // round 1, so listing it can only mean the shared kind, and waiting for the
+  // buy-back session to prove it would leave all morning's round-1 wins reading
+  // as worth nothing.
+  //
+  // DEDICATED — a round only the bought-back cars ran (the timing operator gave
+  // the second chance its own round code). Nothing in it scores.
+  const firstRoundByCat = new Map<string, number>();
+  for (const agg of runners.values()) {
+    for (const run of agg.runs) {
+      if (isIgnored(run)) continue;
+      const order = elimRoundOrder((run.round || "").trim().toUpperCase());
+      const seen = firstRoundByCat.get(agg.category);
+      if (seen === undefined || order < seen) firstRoundByCat.set(agg.category, order);
+    }
+  }
+
+  const sharedBuybackRounds = new Set<string>();
+  for (const agg of runners.values()) {
+    const listed = new Set(
+      (config.buybackRounds[agg.category] || []).map((r) => r.trim().toUpperCase()),
+    );
+    if (listed.size === 0) continue;
+    const perRound = new Map<string, number>();
+    for (const run of agg.runs) {
+      if (isIgnored(run)) continue; // a thrown-out rerun isn't a buy-back pass
+      const round = (run.round || "").trim().toUpperCase();
+      if (!listed.has(round)) continue;
+      const n = (perRound.get(round) || 0) + 1;
+      perRound.set(round, n);
+      if (n >= 2 || elimRoundOrder(round) === firstRoundByCat.get(agg.category)) {
+        sharedBuybackRounds.add(`${agg.category}|${round}`);
+      }
+    }
+  }
+
   // Winners per category+round, and per timestamp pairing, so an undecided pass
   // in a round that is still running reads as pending rather than as a loss.
   const roundHasWinner = new Set<string>();
@@ -940,10 +1045,25 @@ export function computeEtFinalsStandings(
     let lastDecided: "win" | "loss" | null = null;
     let lastLossRound: string | null = null;
     const roundResults: EtRoundResult[] = [];
+    /** Main-race passes counted so far in each round, for the shared-round rule. */
+    const seenInRound = new Map<string, number>();
 
     for (const run of ordered) {
       const round = (run.round || "").trim().toUpperCase();
-      const isBuyback = buybackRounds.has(round);
+      const ignored = isIgnored(run);
+      // In a round the buy-back shares with the main race, this racer's first
+      // pass is the main race and everything after it is the buy-back. In a
+      // round only the bought-back cars ran, every pass is the buy-back.
+      let isBuyback = false;
+      if (buybackRounds.has(round)) {
+        if (!sharedBuybackRounds.has(`${agg.category}|${round}`)) isBuyback = true;
+        else if (ignored) isBuyback = (seenInRound.get(round) || 0) >= 1;
+        else {
+          const n = (seenInRound.get(round) || 0) + 1;
+          seenInRound.set(round, n);
+          isBuyback = n > 1;
+        }
+      }
       let outcome: "win" | "loss" | "pending";
       if (isWin(run)) outcome = "win";
       else if (isDecidedLoss(run)) outcome = "loss";
@@ -955,12 +1075,13 @@ export function computeEtFinalsStandings(
 
       // A thrown-out pass (rerun coming) stays in the log but changes nothing:
       // its win scores nothing and its loss doesn't end the points run.
-      if (isIgnored(run)) {
+      if (ignored) {
         roundResults.push({
           round: run.round || "",
           category: agg.category,
           outcome,
           scored: false,
+          buyback: isBuyback,
           points: 0,
           car_number: (run.car_number || "").trim(),
           timestamp: run.timestamp,
@@ -983,6 +1104,7 @@ export function computeEtFinalsStandings(
         category: agg.category,
         outcome,
         scored: scoresHere,
+        buyback: isBuyback,
         points: scoresHere ? pointsPerWin : 0,
         car_number: (run.car_number || "").trim(),
         timestamp: run.timestamp,
@@ -1113,20 +1235,60 @@ export function computeEtFinalsStandings(
       return ok.length > 0 ? { matches: ok } : undefined;
     };
 
+    // A father and son entered at the same track are one name to every key
+    // here — the JR / SR suffix is all that separates them, and a shared
+    // membership means the member number doesn't. Where both the timing system
+    // and the roster state a suffix and they differ, they are two people and
+    // no route may join them.
+    const runGeneration = generationOf(agg.name);
+    const generationCompatible = (b: Bucket | undefined): Bucket | undefined => {
+      if (!b || !runGeneration) return b;
+      const ok = b.matches.filter((m) => {
+        const g = generationOf(m.entry.name);
+        return !g || g === runGeneration;
+      });
+      if (ok.length === b.matches.length) return b;
+      return ok.length > 0 ? { matches: ok } : undefined;
+    };
+
+    // A name that only matches the OTHER points board is not a safe match: a
+    // junior and an adult sharing a name (a father and son) is the commonest
+    // name collision in the division. The cross-board fallback is kept only for
+    // a class whose board is still an auto-guess, where the run's own board is
+    // the thing that may be wrong; once the board has been set on the Class
+    // Setup page it is taken as the truth, and a name on the other board is
+    // reported for a human to rule on instead of being merged.
+    const boardConfigured = config.categoryDivision?.[agg.category] !== undefined;
+    let otherBoard: RosterIndexEntry | null = null;
+
     // Member number straight off the timing data is the strongest automatic
     // route — it survives renumbered cars and re-spelled names alike.
     if (!ref && agg.member_number) {
-      take(resolveBucket(sameDivision(byMember.get(agg.member_number)), teamHint), "member");
+      take(
+        resolveBucket(generationCompatible(sameDivision(byMember.get(agg.member_number))), teamHint),
+        "member",
+      );
     }
     if (!ref && card?.memberNumber) {
-      take(resolveBucket(sameDivision(byMember.get(card.memberNumber)), teamHint), "member");
+      take(
+        resolveBucket(generationCompatible(sameDivision(byMember.get(card.memberNumber))), teamHint),
+        "member",
+      );
     }
     if (!ref) {
-      take(
-        resolveBucket(memberConsistent(byName.get(`${agg.division}|${nameKey}`)), teamHint) ??
-          resolveBucket(memberConsistent(byNameAnyDivision.get(nameKey)), teamHint),
-        "name",
+      const own = resolveBucket(
+        generationCompatible(memberConsistent(byName.get(`${agg.division}|${nameKey}`))),
+        teamHint,
       );
+      const other = own
+        ? null
+        : resolveBucket(
+            generationCompatible(memberConsistent(byNameAnyDivision.get(nameKey))),
+            teamHint,
+          );
+      if (own) take(own, "name");
+      else if (other && other !== "ambiguous" && boardConfigured) otherBoard = other;
+      else take(other, "name");
     }
     // Car numbers repeat across the boards for the same reason — a junior
     // "4ED" and a Super "4ED" are different cars — so the car route stays on
@@ -1134,7 +1296,7 @@ export function computeEtFinalsStandings(
     if (!ref) {
       take(
         resolveBucket(
-          surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`))),
+          generationCompatible(surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`)))),
           teamHint,
         ),
         "car",
@@ -1143,11 +1305,19 @@ export function computeEtFinalsStandings(
     // Last resort: surname plus initials, for a racer the timing system lists
     // under a shortened or differently-spelled first name.
     if (!ref && looseKey) {
-      take(
-        resolveBucket(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`)), teamHint) ??
-          resolveBucket(memberConsistent(byLooseAnyDivision.get(looseKey)), teamHint),
-        "name",
+      const own = resolveBucket(
+        generationCompatible(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`))),
+        teamHint,
       );
+      const other = own
+        ? null
+        : resolveBucket(
+            generationCompatible(memberConsistent(byLooseAnyDivision.get(looseKey))),
+            teamHint,
+          );
+      if (own) take(own, "name");
+      else if (other && other !== "ambiguous" && boardConfigured) otherBoard = otherBoard ?? other;
+      else take(other, "name");
     }
 
     // No roster claims them, but a human picked their team, or their tech card
@@ -1201,7 +1371,14 @@ export function computeEtFinalsStandings(
         category: agg.category,
         division: agg.division,
         roundsWon,
-        reason: sawAmbiguous ? "ambiguous" : "no_roster_entry",
+        reason: sawAmbiguous ? "ambiguous" : otherBoard ? "other_board" : "no_roster_entry",
+        hint: otherBoard
+          ? `${otherBoard.entry.name}${
+              otherBoard.entry.car_number ? ` (${otherBoard.entry.car_number})` : ""
+            } — ${otherBoard.roster.team_name || otherBoard.roster.track_code} · ${
+              otherBoard.entry.division === "jr" ? "Jrs" : "Big Cars"
+            }`
+          : "",
         techTeam: teamHint,
         memberNumber: agg.member_number || card?.memberNumber || "",
         rounds: roundResults,
@@ -1339,7 +1516,20 @@ export function computeEtFinalsStandings(
     if (!team) continue;
 
     const key = s.ref ? entryKey(s.ref.roster, s.ref.entry) : s.tech!.key;
-    const classKey = `${key}|${s.agg.category}`;
+    let classKey = `${key}|${s.agg.category}`;
+    // A row already holding one membership number must not absorb a different
+    // one: one racer holds one NHRA membership, so that is two people sharing a
+    // name, and folding a stranger's round wins into somebody's total hides it.
+    // They get a row of their own on the same team instead, still governed by
+    // the roster row's Earns setting because that seat is all we know about
+    // either of them.
+    const heldBySomeoneElse =
+      !!s.agg.member_number &&
+      (rowByEntryAndClass
+        .get(classKey)
+        ?.matched_from.some((m) => m.member_number && m.member_number !== s.agg.member_number) ??
+        false);
+    if (heldBySomeoneElse) classKey = `${classKey}|${s.agg.member_number}`;
     let racer = rowByEntryAndClass.get(classKey);
 
     if (!racer) {
@@ -1353,6 +1543,9 @@ export function computeEtFinalsStandings(
         racer = { ...placeholder, categories: [], points: 0, roundsWon: 0, status: "not_entered",
           eliminatedIn: null, racedAfterElimination: false, matchedBy: null,
           run_car_number: "", rounds: [], matched_from: [] };
+        // Split off as a different membership: show the name the timing system
+        // gave, since the roster row's name belongs to the other racer.
+        if (heldBySomeoneElse && s.agg.name) racer.name = s.agg.name;
         team.racers.push(racer);
       } else if (s.tech) {
         // First run seen for a tech-card- or hand-placed racer: give them a row.

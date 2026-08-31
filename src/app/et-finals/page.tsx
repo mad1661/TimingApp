@@ -172,7 +172,17 @@ function RoundsDetail({
           const dim = rd.ignored ? "opacity-50 line-through" : "";
           return (
             <tr key={rd.dedup_key || i} className="border-t border-nhra-border/30">
-              <td className={`pl-10 pr-2 py-1 text-gray-300 font-semibold ${dim}`}>{rd.round}</td>
+              <td className={`pl-10 pr-2 py-1 text-gray-300 font-semibold ${dim}`}>
+                {rd.round}
+                {rd.buyback && (
+                  <span
+                    className="ml-1.5 text-[10px] font-normal text-yellow-500"
+                    title="The buy-back, not the main race — this pass never scores"
+                  >
+                    buy-back
+                  </span>
+                )}
+              </td>
               <td className={`px-2 py-1 text-gray-500 ${dim}`}>{rd.category}</td>
               <td className="px-2 py-1">
                 {rd.ignored ? (
@@ -181,7 +191,7 @@ function RoundsDetail({
                   </span>
                 ) : rd.outcome === "win" ? (
                   <span className={rd.scored ? "text-green-400 font-bold" : "text-yellow-500 font-bold"}>
-                    W{rd.scored ? "" : " (no pts)"}
+                    W{rd.scored ? "" : rd.buyback ? " (buy-back)" : " (no pts)"}
                   </span>
                 ) : rd.outcome === "loss" ? (
                   <span className="text-red-400">L</span>
@@ -262,6 +272,22 @@ function RoundsDetail({
   );
 }
 
+/**
+ * Why a row holding two timing-system cars looks like two people rather than
+ * one racer who changed numbers — the phrase names it, or "" when the
+ * combination is unremarkable. Two membership numbers is conclusive (a racer
+ * holds one NHRA membership); two names is a strong hint, since a father and
+ * son are one name to the matcher once the JR / SR suffix is stripped.
+ */
+function combinedLooksWrong(racer: EtRacerPoints): string {
+  if (racer.matched_from.length < 2) return "";
+  const members = new Set(racer.matched_from.map((m) => m.member_number.trim()).filter(Boolean));
+  if (members.size > 1) return "Two different membership numbers";
+  const names = new Set(racer.matched_from.map((m) => normalizeNameKey(m.name)).filter(Boolean));
+  if (names.size > 1) return "Two different names";
+  return "";
+}
+
 /** The timing-system cars combined onto one roster row, each movable. */
 function MatchedFromList({
   racer,
@@ -277,8 +303,15 @@ function MatchedFromList({
   onAssign: (identity: string, target: string) => void;
 }) {
   if (racer.matched_from.length === 0) return null;
+  const mixed = combinedLooksWrong(racer);
   return (
     <div className="pl-10 pr-4 pb-2 space-y-1">
+      {mixed && (
+        <p className="text-xs text-red-400">
+          {mixed} on this row — that is two people, not one. Use <strong>Split off</strong> on the one that
+          doesn&apos;t belong: it moves onto its own row on this team, keeping its points with the team.
+        </p>
+      )}
       {racer.matched_from.map((m) => (
         <div key={m.identity} className="flex items-center gap-2 flex-wrap text-xs text-gray-400">
           <span>
@@ -288,6 +321,22 @@ function MatchedFromList({
             {m.member_number ? <span className="text-gray-600"> · member #{m.member_number}</span> : null}
             <span className="text-gray-600"> · {m.category} · via {m.matchedBy === "manual" ? "pin" : m.matchedBy}</span>
           </span>
+          {/* One click off this roster row onto a row of its own, still on this
+              team — how a wrongly merged pair (a father and son) gets split. */}
+          {racer.matched_from.length > 1 && racer.track_code && (
+            <button
+              disabled={assigning === m.identity}
+              onClick={() => onAssign(m.identity, `${TEAM_MATCH_PREFIX}${racer.track_code}`)}
+              title={`Give this car its own row on ${racer.team_name || racer.track_code} instead of sharing ${racer.name}'s`}
+              className={`px-1.5 py-0.5 rounded border text-xs font-semibold disabled:opacity-40 ${
+                mixed
+                  ? "bg-nhra-red/20 border-nhra-red/50 text-red-300 hover:bg-nhra-red/30"
+                  : "bg-nhra-darker border-nhra-border text-gray-300 hover:text-white"
+              }`}
+            >
+              {assigning === m.identity ? "Splitting…" : "Split off"}
+            </button>
+          )}
           <select
             value=""
             disabled={assigning === m.identity}
@@ -295,6 +344,11 @@ function MatchedFromList({
             className="px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-xs text-gray-300 disabled:opacity-40"
           >
             <option value="">{assigning === m.identity ? "Moving…" : "Move to…"}</option>
+            {racer.track_code && (
+              <option value={`${TEAM_MATCH_PREFIX}${racer.track_code}`}>
+                Own row on {racer.team_name || racer.track_code}
+              </option>
+            )}
             <optgroup label="Teams (no roster row needed)">
               {teamOptions.map((t) => (
                 <option key={`team-${t.code}`} value={`${TEAM_MATCH_PREFIX}${t.code}`}>
@@ -396,14 +450,22 @@ function RacerTable({
                 </td>
                 <td className="px-2 py-1.5 text-white">
                   {r.name}
-                  {r.matched_from.length > 1 && (
-                    <span
-                      className="ml-1.5 text-[11px] text-yellow-600"
-                      title="Runs from more than one car number were combined onto this entry — expand to see and move them"
-                    >
-                      ({r.matched_from.length} combined)
-                    </span>
-                  )}
+                  {r.matched_from.length > 1 &&
+                    (combinedLooksWrong(r) ? (
+                      <span
+                        className="ml-1.5 text-[11px] text-red-400"
+                        title={`${combinedLooksWrong(r)} were combined onto this entry — expand the row to split one off`}
+                      >
+                        ({r.matched_from.length} combined — {combinedLooksWrong(r).toLowerCase()})
+                      </span>
+                    ) : (
+                      <span
+                        className="ml-1.5 text-[11px] text-yellow-600"
+                        title="Runs from more than one car number were combined onto this entry — expand to see and move them"
+                      >
+                        ({r.matched_from.length} combined)
+                      </span>
+                    ))}
                 </td>
                 <td className="px-2 py-1.5 text-gray-400">{r.division === "jr" ? "Jrs" : "Big Cars"}</td>
                 <td className="px-2 py-1.5 text-gray-400">{r.categories.join(", ") || r.roster_category || "—"}</td>
@@ -1556,6 +1618,23 @@ export default function EtFinalsPage() {
     setDraftConfig({ ...base, buybackRounds: next });
   };
 
+  // Every class at a track normally runs its second chance the same way, so one
+  // class's rounds can be pushed onto all of them rather than typed six times.
+  const applyBuybackRoundsToAll = (raw: string) => {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const rounds = raw
+      .split(/[,\s]+/)
+      .map((r) => r.trim().toUpperCase())
+      .filter(Boolean);
+    if (!rounds.length) return;
+    const next = { ...base.buybackRounds };
+    for (const c of data?.categories || []) {
+      if ((base.categoryRoles[c.category] ?? c.role) === "main") next[c.category] = rounds;
+    }
+    setDraftConfig({ ...base, buybackRounds: next });
+  };
+
   // Hand-pin a timing-system racer onto a roster entry. Saved straight away
   // rather than batched with the class setup — it's a one-off correction and
   // waiting on a Save button would strand the fix.
@@ -2123,6 +2202,20 @@ export default function EtFinalsPage() {
 
   const [unmatchedOpen, setUnmatchedOpen] = useState<Set<string>>(new Set());
 
+  // Every row that ended up holding more than one timing-system car, gathered
+  // from all the teams so a wrong merge doesn't have to be hunted for team by
+  // team. The ones that look like two people come first.
+  const combinedRows = useMemo(() => {
+    const rows = (data?.teams || []).flatMap((t) => t.racers.filter((r) => r.matched_from.length > 1));
+    return rows.sort(
+      (a, b) =>
+        Number(!!combinedLooksWrong(b)) - Number(!!combinedLooksWrong(a)) ||
+        a.team_name.localeCompare(b.team_name) ||
+        a.name.localeCompare(b.name),
+    );
+  }, [data]);
+  const combinedSuspect = combinedRows.filter((r) => combinedLooksWrong(r)).length;
+
   const mainCategories = useMemo(
     () => (data?.categories || []).filter((c) => c.role === "main"),
     [data],
@@ -2180,6 +2273,17 @@ export default function EtFinalsPage() {
         (data.roundsScored.length ? ` · Rounds scored: ${data.roundsScored.join(", ")}` : ""),
     );
     if (effectiveConfig?.buybackEarnsPoints) lines.push("Buy-back winners keep earning points");
+    // Where the buy-back is run inside a main class, say so — otherwise a
+    // reader counting round wins off the timing sheet gets a different total.
+    const buybackInRounds = Object.entries(effectiveConfig?.buybackRounds || {}).filter(
+      ([, rounds]) => rounds.length > 0,
+    );
+    if (buybackInRounds.length)
+      lines.push(
+        `Buy-back run inside: ${buybackInRounds
+          .map(([cat, rounds]) => `${cat} ${rounds.join("/")}`)
+          .join("; ")}`,
+      );
     if ((effectiveConfig?.excludedDates || []).length)
       lines.push(`Days not counted: ${(effectiveConfig?.excludedDates || []).join(", ")}`);
     if (Object.keys(effectiveConfig?.dayWindows || {}).length)
@@ -2706,6 +2810,11 @@ export default function EtFinalsPage() {
               Saved against this event and remembered by class name for the rest of the season, so the next race opens
               already set — anything carried over is marked <em>(remembered)</em> and can still be changed here without
               affecting the race it came from.
+              <br />
+              <strong className="text-gray-300">Buy-back rounds</strong> is for a class that runs its own second chance
+              instead of having a separate buy-back class. Put the round it&apos;s run in — usually{" "}
+              <strong className="text-gray-300">E1</strong>, a second session of round 1. Every racer&apos;s first pass
+              in that round still counts as the main race; a second pass is the buy-back and never scores.
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -2776,13 +2885,25 @@ export default function EtFinalsPage() {
                           </div>
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            defaultValue={buyback}
-                            onBlur={(e) => setBuybackRounds(c.category, e.target.value)}
-                            placeholder="e.g. E2"
-                            disabled={role !== "main"}
-                            className="w-24 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 disabled:opacity-30"
-                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              key={`${c.category}|${buyback}`}
+                              defaultValue={buyback}
+                              onBlur={(e) => setBuybackRounds(c.category, e.target.value)}
+                              placeholder="e.g. E1"
+                              disabled={role !== "main"}
+                              className="w-20 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 disabled:opacity-30"
+                            />
+                            {role === "main" && buyback && (
+                              <button
+                                onClick={() => applyBuybackRoundsToAll(buyback)}
+                                title="Use these buy-back rounds for every main-race class"
+                                className="text-[11px] text-nhra-accent hover:underline"
+                              >
+                                all classes
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-2 text-right text-gray-400">{c.runCount}</td>
                       </tr>
@@ -3571,6 +3692,59 @@ export default function EtFinalsPage() {
         onToggleIgnored={toggleRunIgnored}
       />
 
+      {/* ── Combined rows ──────────────────────────────────────────────── */}
+      {combinedRows.length > 0 && (
+        <div
+          className={`mt-8 bg-nhra-card border rounded-xl overflow-hidden ${
+            combinedSuspect > 0 ? "border-nhra-red/40" : "border-nhra-border"
+          }`}
+        >
+          <div
+            className={`px-6 py-3 border-b ${
+              combinedSuspect > 0 ? "bg-nhra-red/10 border-nhra-red/30" : "bg-nhra-darker/50 border-nhra-border"
+            }`}
+          >
+            <h2 className={combinedSuspect > 0 ? "text-red-400 font-bold" : "text-white font-bold"}>
+              {combinedSuspect > 0
+                ? `${combinedSuspect} row${combinedSuspect === 1 ? "" : "s"} may be two people scored as one`
+                : `${combinedRows.length} row${combinedRows.length === 1 ? "" : "s"} holding more than one car`}
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Two cars from the timing system landed on one roster entry, so their points are stacked on one racer.
+              Usually that&apos;s right — a car renumbered mid-event. It&apos;s wrong when the two are different
+              people: two membership numbers is conclusive, and two names usually means a father and son, who are one
+              name here once the JR / SR suffix is stripped. <strong className="text-gray-300">Split off</strong> gives
+              a car its own row on the same team, so the team keeps the points and the racers stop sharing a total.
+            </p>
+          </div>
+          <div className="divide-y divide-nhra-border/60">
+            {combinedRows.map((r) => (
+              <div key={`${r.key}|${r.categories.join(",")}`} className="py-2">
+                <p className="px-6 pb-1 text-xs">
+                  <span className="text-white font-semibold">{r.name}</span>
+                  <span className="text-gray-500">
+                    {" · "}
+                    {r.team_name}
+                    {" · "}
+                    {r.division === "jr" ? "Jrs" : "Big Cars"}
+                    {r.categories.length ? ` · ${r.categories.join(", ")}` : ""}
+                    {" · "}
+                    {r.points} pt{r.points === 1 ? "" : "s"}
+                  </span>
+                </p>
+                <MatchedFromList
+                  racer={r}
+                  rosterOptions={data?.rosterOptions || []}
+                  teamOptions={teamOptions}
+                  assigning={assigning}
+                  onAssign={assignRacer}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Unmatched ──────────────────────────────────────────────────── */}
       {data && data.unmatched.length > 0 && (
         <div className="mt-8 bg-nhra-card border border-yellow-500/30 rounded-xl overflow-hidden">
@@ -3694,7 +3868,19 @@ export default function EtFinalsPage() {
                         </select>
                       </td>
                       <td className="px-6 py-2 text-right text-gray-500 text-xs">
-                        {u.reason === "ambiguous" ? "Matches more than one team" : "No roster entry"}
+                        {u.reason === "ambiguous" ? (
+                          "Matches more than one team"
+                        ) : u.reason === "other_board" ? (
+                          <span
+                            className="text-yellow-600"
+                            title={`Only ${u.hint} carries this name. Either this class is on the wrong points board, or that entry is a different person with the same name — pin them if it's really them.`}
+                          >
+                            Same name on the other board
+                            <span className="block text-gray-600">{u.hint}</span>
+                          </span>
+                        ) : (
+                          "No roster entry"
+                        )}
                       </td>
                     </tr>
                     {unmatchedOpen.has(u.identity) && u.rounds.length > 0 && (
