@@ -22,6 +22,8 @@ Next.js 14 App Router (React 18, TypeScript `strict`), Tailwind CSS v4 (theme to
 
 ## Versioning
 
+**Shipping is part of the job.** The user always wants finished work deployed and should not have to ask: merge the PR into `main` yourself (App Hosting builds and deploys from `main`) and report the version that went out. Don't leave completed work sitting in an open PR.
+
 The app version shows in the navbar footer, sourced from `src/lib/version.ts` (`APP_VERSION`) and mirrored in `package.json` `"version"`. **Bump it on every change shipped to `main`** — patch (`1.1.1`→`1.1.2`) for fixes/small changes, minor (`1.1.x`→`1.2.0`) for features — and keep the two files in sync. This is how the user confirms a new deploy actually rolled out, so it is not optional.
 
 ## Architecture
