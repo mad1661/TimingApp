@@ -629,9 +629,17 @@ function addToBucket(map: Map<string, Bucket>, key: string, val: RosterIndexEntr
  * same generation, on the same team, scoring the same way. Collapsing those is
  * safe because the points land on the team either way. Two rows that differ in
  * any of it are two different people and must never be silently collapsed: a
- * father and son share a name key, a membership, and often a team.
+ * father and son share a name key and often a team.
+ *
+ * Two membership numbers settle it outright — one racer holds one NHRA
+ * membership, so two of them on one name is two people, whatever the names and
+ * suffixes say. (The reverse doesn't hold: a junior races on a parent's
+ * membership, so one number can cover two people.)
  */
 function samePerson(a: RosterIndexEntry, b: RosterIndexEntry): boolean {
+  const memberA = (a.entry.member_number || "").trim();
+  const memberB = (b.entry.member_number || "").trim();
+  if (memberA && memberB && memberA !== memberB) return false;
   return (
     a.roster.track_code === b.roster.track_code &&
     a.eligible === b.eligible &&
@@ -1508,7 +1516,20 @@ export function computeEtFinalsStandings(
     if (!team) continue;
 
     const key = s.ref ? entryKey(s.ref.roster, s.ref.entry) : s.tech!.key;
-    const classKey = `${key}|${s.agg.category}`;
+    let classKey = `${key}|${s.agg.category}`;
+    // A row already holding one membership number must not absorb a different
+    // one: one racer holds one NHRA membership, so that is two people sharing a
+    // name, and folding a stranger's round wins into somebody's total hides it.
+    // They get a row of their own on the same team instead, still governed by
+    // the roster row's Earns setting because that seat is all we know about
+    // either of them.
+    const heldBySomeoneElse =
+      !!s.agg.member_number &&
+      (rowByEntryAndClass
+        .get(classKey)
+        ?.matched_from.some((m) => m.member_number && m.member_number !== s.agg.member_number) ??
+        false);
+    if (heldBySomeoneElse) classKey = `${classKey}|${s.agg.member_number}`;
     let racer = rowByEntryAndClass.get(classKey);
 
     if (!racer) {
@@ -1522,6 +1543,9 @@ export function computeEtFinalsStandings(
         racer = { ...placeholder, categories: [], points: 0, roundsWon: 0, status: "not_entered",
           eliminatedIn: null, racedAfterElimination: false, matchedBy: null,
           run_car_number: "", rounds: [], matched_from: [] };
+        // Split off as a different membership: show the name the timing system
+        // gave, since the roster row's name belongs to the other racer.
+        if (heldBySomeoneElse && s.agg.name) racer.name = s.agg.name;
         team.racers.push(racer);
       } else if (s.tech) {
         // First run seen for a tech-card- or hand-placed racer: give them a row.
