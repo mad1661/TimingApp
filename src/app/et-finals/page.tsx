@@ -287,8 +287,15 @@ function MatchedFromList({
   onAssign: (identity: string, target: string) => void;
 }) {
   if (racer.matched_from.length === 0) return null;
+  const combinedNames = new Set(racer.matched_from.map((m) => normalizeNameKey(m.name)).filter(Boolean));
   return (
     <div className="pl-10 pr-4 pb-2 space-y-1">
+      {combinedNames.size > 1 && (
+        <p className="text-xs text-red-400">
+          Two different names are on this row — they are probably two people (a father and son share a name).
+          Split one off with <span className="text-gray-300">Move to… → Own row</span>.
+        </p>
+      )}
       {racer.matched_from.map((m) => (
         <div key={m.identity} className="flex items-center gap-2 flex-wrap text-xs text-gray-400">
           <span>
@@ -305,6 +312,13 @@ function MatchedFromList({
             className="px-1.5 py-0.5 bg-nhra-darker border border-nhra-border rounded text-xs text-gray-300 disabled:opacity-40"
           >
             <option value="">{assigning === m.identity ? "Moving…" : "Move to…"}</option>
+            {/* Off this roster row onto a row of its own, still on this team —
+                how a wrongly merged pair (a father and son) gets separated. */}
+            {racer.track_code && (
+              <option value={`${TEAM_MATCH_PREFIX}${racer.track_code}`}>
+                Own row on {racer.team_name || racer.track_code}
+              </option>
+            )}
             <optgroup label="Teams (no roster row needed)">
               {teamOptions.map((t) => (
                 <option key={`team-${t.code}`} value={`${TEAM_MATCH_PREFIX}${t.code}`}>
@@ -406,14 +420,22 @@ function RacerTable({
                 </td>
                 <td className="px-2 py-1.5 text-white">
                   {r.name}
-                  {r.matched_from.length > 1 && (
-                    <span
-                      className="ml-1.5 text-[11px] text-yellow-600"
-                      title="Runs from more than one car number were combined onto this entry — expand to see and move them"
-                    >
-                      ({r.matched_from.length} combined)
-                    </span>
-                  )}
+                  {r.matched_from.length > 1 &&
+                    (new Set(r.matched_from.map((m) => normalizeNameKey(m.name)).filter(Boolean)).size > 1 ? (
+                      <span
+                        className="ml-1.5 text-[11px] text-red-400"
+                        title="Two different names were combined onto this entry — expand to split one off"
+                      >
+                        ({r.matched_from.length} combined — different names)
+                      </span>
+                    ) : (
+                      <span
+                        className="ml-1.5 text-[11px] text-yellow-600"
+                        title="Runs from more than one car number were combined onto this entry — expand to see and move them"
+                      >
+                        ({r.matched_from.length} combined)
+                      </span>
+                    ))}
                 </td>
                 <td className="px-2 py-1.5 text-gray-400">{r.division === "jr" ? "Jrs" : "Big Cars"}</td>
                 <td className="px-2 py-1.5 text-gray-400">{r.categories.join(", ") || r.roster_category || "—"}</td>
@@ -3749,7 +3771,19 @@ export default function EtFinalsPage() {
                         </select>
                       </td>
                       <td className="px-6 py-2 text-right text-gray-500 text-xs">
-                        {u.reason === "ambiguous" ? "Matches more than one team" : "No roster entry"}
+                        {u.reason === "ambiguous" ? (
+                          "Matches more than one team"
+                        ) : u.reason === "other_board" ? (
+                          <span
+                            className="text-yellow-600"
+                            title={`Only ${u.hint} carries this name. Either this class is on the wrong points board, or that entry is a different person with the same name — pin them if it's really them.`}
+                          >
+                            Same name on the other board
+                            <span className="block text-gray-600">{u.hint}</span>
+                          </span>
+                        ) : (
+                          "No roster entry"
+                        )}
                       </td>
                     </tr>
                     {unmatchedOpen.has(u.identity) && u.rounds.length > 0 && (

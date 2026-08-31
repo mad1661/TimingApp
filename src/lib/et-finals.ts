@@ -311,7 +311,14 @@ export interface EtUnmatchedRacer {
   category: string;
   division: EtDivision;
   roundsWon: number;
-  reason: "no_roster_entry" | "ambiguous";
+  /**
+   * "other_board": the only roster entry with this name is on the other points
+   * board. Either this class's board is set wrong, or it's a same-named father
+   * and son — which is why the match wasn't made automatically.
+   */
+  reason: "no_roster_entry" | "ambiguous" | "other_board";
+  /** The entry behind an "other_board" reason ("Josh Levan — South Mountain"). */
+  hint: string;
   /** Track code from the racer's tech card, when one was found. A suggestion
    *  for the picker — the roster still decides where the points land. */
   techTeam: string;
@@ -429,6 +436,32 @@ export function surnameOf(raw: string | null | undefined): string {
   const tokens = nameTokens(raw);
   if (tokens.length === 0) return "";
   return tokens.reduce((a, b) => (b.length > a.length ? b : a));
+}
+
+// Roman-numeral and single-letter suffixes are ambiguous against a middle
+// initial, so only the ones that unmistakably mark a generation count.
+const GENERATION_SUFFIXES = new Set(["JR", "SR", "II", "III"]);
+
+/**
+ * The generational suffix on a name ("JR", "SR", "III"), or "" when there is
+ * none. A father and son entered on the same roster are the same name to every
+ * other key in this module — the suffix is the only thing separating them, and
+ * juniors race under a parent's membership so the member number doesn't either.
+ *
+ * The suffix stays OUT of the name keys, because one source routinely writes it
+ * and the other doesn't; it is used as a veto instead, and only where both
+ * sides state one.
+ */
+export function generationOf(raw: string | null | undefined): string {
+  const tokens = (raw || "")
+    .toUpperCase()
+    .replace(/[^A-Z\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const t of tokens) {
+    if (GENERATION_SUFFIXES.has(t)) return t;
+  }
+  return "";
 }
 
 export function looseNameKey(raw: string | null | undefined): string {
@@ -592,15 +625,31 @@ function addToBucket(map: Map<string, Bucket>, key: string, val: RosterIndexEntr
 }
 
 /**
+ * Two roster rows that are the same racer entered twice — the same name, the
+ * same generation, on the same team, scoring the same way. Collapsing those is
+ * safe because the points land on the team either way. Two rows that differ in
+ * any of it are two different people and must never be silently collapsed: a
+ * father and son share a name key, a membership, and often a team.
+ */
+function samePerson(a: RosterIndexEntry, b: RosterIndexEntry): boolean {
+  return (
+    a.roster.track_code === b.roster.track_code &&
+    a.eligible === b.eligible &&
+    normalizeNameKey(a.entry.name) === normalizeNameKey(b.entry.name) &&
+    generationOf(a.entry.name) === generationOf(b.entry.name)
+  );
+}
+
+/**
  * Resolve a bucket to a single roster entry. Several roster rows can share a
  * key legitimately — one racer entered in two Summit categories, say — and that
- * is fine as long as they all belong to the same team with the same
- * eligibility, because the points land on the team either way.
+ * is fine as long as every candidate is that same racer.
  *
- * A key that spans teams is genuinely ambiguous. `teamHint` (the track code on
- * the racer's tech card) narrows it when exactly one candidate is on that team;
- * with no hint, or a hint that doesn't single one out, the racer is left
- * unmatched for a human to pin rather than guessed at.
+ * A key held by two different people, or one that spans teams, is genuinely
+ * ambiguous. `teamHint` (the track code on the racer's tech card) narrows it
+ * when exactly one candidate is on that team; with no hint, or a hint that
+ * doesn't single one out, the racer is left unmatched for a human to pin rather
+ * than guessed at.
  */
 function resolveBucket(
   b: Bucket | undefined,
@@ -609,12 +658,7 @@ function resolveBucket(
   if (!b || b.matches.length === 0) return null;
   if (b.matches.length === 1) return b.matches[0];
   const first = b.matches[0];
-  const uniform = b.matches.every(
-    (m) =>
-      m.roster.track_code === first.roster.track_code &&
-      m.eligible === first.eligible,
-  );
-  if (uniform) return first;
+  if (b.matches.every((m) => samePerson(m, first))) return first;
   if (teamHint) {
     const onHinted = b.matches.filter(
       (m) => m.roster.track_code.toUpperCase() === teamHint.toUpperCase(),
@@ -622,7 +666,7 @@ function resolveBucket(
     if (onHinted.length === 1) return onHinted[0];
     if (onHinted.length > 1) {
       const h = onHinted[0];
-      if (onHinted.every((m) => m.eligible === h.eligible)) return h;
+      if (onHinted.every((m) => samePerson(m, h))) return h;
     }
   }
   return "ambiguous";
@@ -1183,20 +1227,60 @@ export function computeEtFinalsStandings(
       return ok.length > 0 ? { matches: ok } : undefined;
     };
 
+    // A father and son entered at the same track are one name to every key
+    // here — the JR / SR suffix is all that separates them, and a shared
+    // membership means the member number doesn't. Where both the timing system
+    // and the roster state a suffix and they differ, they are two people and
+    // no route may join them.
+    const runGeneration = generationOf(agg.name);
+    const generationCompatible = (b: Bucket | undefined): Bucket | undefined => {
+      if (!b || !runGeneration) return b;
+      const ok = b.matches.filter((m) => {
+        const g = generationOf(m.entry.name);
+        return !g || g === runGeneration;
+      });
+      if (ok.length === b.matches.length) return b;
+      return ok.length > 0 ? { matches: ok } : undefined;
+    };
+
+    // A name that only matches the OTHER points board is not a safe match: a
+    // junior and an adult sharing a name (a father and son) is the commonest
+    // name collision in the division. The cross-board fallback is kept only for
+    // a class whose board is still an auto-guess, where the run's own board is
+    // the thing that may be wrong; once the board has been set on the Class
+    // Setup page it is taken as the truth, and a name on the other board is
+    // reported for a human to rule on instead of being merged.
+    const boardConfigured = config.categoryDivision?.[agg.category] !== undefined;
+    let otherBoard: RosterIndexEntry | null = null;
+
     // Member number straight off the timing data is the strongest automatic
     // route — it survives renumbered cars and re-spelled names alike.
     if (!ref && agg.member_number) {
-      take(resolveBucket(sameDivision(byMember.get(agg.member_number)), teamHint), "member");
+      take(
+        resolveBucket(generationCompatible(sameDivision(byMember.get(agg.member_number))), teamHint),
+        "member",
+      );
     }
     if (!ref && card?.memberNumber) {
-      take(resolveBucket(sameDivision(byMember.get(card.memberNumber)), teamHint), "member");
+      take(
+        resolveBucket(generationCompatible(sameDivision(byMember.get(card.memberNumber))), teamHint),
+        "member",
+      );
     }
     if (!ref) {
-      take(
-        resolveBucket(memberConsistent(byName.get(`${agg.division}|${nameKey}`)), teamHint) ??
-          resolveBucket(memberConsistent(byNameAnyDivision.get(nameKey)), teamHint),
-        "name",
+      const own = resolveBucket(
+        generationCompatible(memberConsistent(byName.get(`${agg.division}|${nameKey}`))),
+        teamHint,
       );
+      const other = own
+        ? null
+        : resolveBucket(
+            generationCompatible(memberConsistent(byNameAnyDivision.get(nameKey))),
+            teamHint,
+          );
+      if (own) take(own, "name");
+      else if (other && other !== "ambiguous" && boardConfigured) otherBoard = other;
+      else take(other, "name");
     }
     // Car numbers repeat across the boards for the same reason — a junior
     // "4ED" and a Super "4ED" are different cars — so the car route stays on
@@ -1204,7 +1288,7 @@ export function computeEtFinalsStandings(
     if (!ref) {
       take(
         resolveBucket(
-          surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`))),
+          generationCompatible(surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`)))),
           teamHint,
         ),
         "car",
@@ -1213,11 +1297,19 @@ export function computeEtFinalsStandings(
     // Last resort: surname plus initials, for a racer the timing system lists
     // under a shortened or differently-spelled first name.
     if (!ref && looseKey) {
-      take(
-        resolveBucket(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`)), teamHint) ??
-          resolveBucket(memberConsistent(byLooseAnyDivision.get(looseKey)), teamHint),
-        "name",
+      const own = resolveBucket(
+        generationCompatible(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`))),
+        teamHint,
       );
+      const other = own
+        ? null
+        : resolveBucket(
+            generationCompatible(memberConsistent(byLooseAnyDivision.get(looseKey))),
+            teamHint,
+          );
+      if (own) take(own, "name");
+      else if (other && other !== "ambiguous" && boardConfigured) otherBoard = otherBoard ?? other;
+      else take(other, "name");
     }
 
     // No roster claims them, but a human picked their team, or their tech card
@@ -1271,7 +1363,14 @@ export function computeEtFinalsStandings(
         category: agg.category,
         division: agg.division,
         roundsWon,
-        reason: sawAmbiguous ? "ambiguous" : "no_roster_entry",
+        reason: sawAmbiguous ? "ambiguous" : otherBoard ? "other_board" : "no_roster_entry",
+        hint: otherBoard
+          ? `${otherBoard.entry.name}${
+              otherBoard.entry.car_number ? ` (${otherBoard.entry.car_number})` : ""
+            } — ${otherBoard.roster.team_name || otherBoard.roster.track_code} · ${
+              otherBoard.entry.division === "jr" ? "Jrs" : "Big Cars"
+            }`
+          : "",
         techTeam: teamHint,
         memberNumber: agg.member_number || card?.memberNumber || "",
         rounds: roundResults,
