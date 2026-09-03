@@ -19,8 +19,9 @@ export async function OPTIONS() {
 
 export async function GET(request: NextRequest) {
   try {
-    const username = process.env.NHRA_USERNAME;
-    const password = process.env.NHRA_PASSWORD;
+    // Secrets can carry a trailing newline from Secret Manager — trim them.
+    const username = process.env.NHRA_USERNAME?.trim();
+    const password = process.env.NHRA_PASSWORD?.trim();
     if (!username || !password) {
       return NextResponse.json({ error: "Server credentials not configured" }, { status: 500, headers: CORS });
     }

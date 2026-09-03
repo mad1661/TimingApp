@@ -20,8 +20,9 @@ function parseStartDate(s: string | null | undefined): number {
  */
 export async function POST(req: NextRequest) {
   try {
-    const username = process.env.NHRA_USERNAME;
-    const password = process.env.NHRA_PASSWORD;
+    // Secrets can carry a trailing newline from Secret Manager — trim them.
+    const username = process.env.NHRA_USERNAME?.trim();
+    const password = process.env.NHRA_PASSWORD?.trim();
     if (!username || !password) {
       return NextResponse.json(
         { error: "Server credentials not configured (NHRA_USERNAME / NHRA_PASSWORD)" },

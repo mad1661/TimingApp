@@ -28,8 +28,9 @@ export async function POST(request: NextRequest) {
     let source: "live" | "stored" = "stored";
     let liveError: string | null = null;
     if (!skipLive) {
-      const username = process.env.NHRA_USERNAME;
-      const password = process.env.NHRA_PASSWORD;
+      // Secrets can carry a trailing newline from Secret Manager — trim them.
+      const username = process.env.NHRA_USERNAME?.trim();
+      const password = process.env.NHRA_PASSWORD?.trim();
       const event = (await getEvents()).find((e) => e.event_code === eventCode && e.season === season);
       if (username && password && event) {
         try {
