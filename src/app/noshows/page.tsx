@@ -41,6 +41,27 @@ function downloadCsv(filename: string, header: string[], rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
+interface TechNoShowRow {
+  category: string;
+  car_number: string;
+  name: string;
+  cls: string;
+  member: string;
+  phone: string;
+}
+
+interface TechNoShowReport {
+  noRuns: TechNoShowRow[];
+  missedE1: TechNoShowRow[];
+  categoriesInTiming: string[];
+  categoriesWithE1: string[];
+  techCardCounts: Record<string, number>;
+  runCount: number;
+  techCardCount: number;
+  source?: "live" | "stored";
+  liveError?: string | null;
+}
+
 export default function NoShowsPage() {
   const live = useLiveData();
   const selectedEvent = live.config?.eventCode || "";
@@ -56,6 +77,11 @@ export default function NoShowsPage() {
   const [missing, setMissing] = useState<MissingEntry[]>([]);
   const [missingLoading, setMissingLoading] = useState(false);
   const [missingSearched, setMissingSearched] = useState(false);
+
+  const [techFile, setTechFile] = useState<File | null>(null);
+  const [techReport, setTechReport] = useState<TechNoShowReport | null>(null);
+  const [techLoading, setTechLoading] = useState(false);
+  const [techError, setTechError] = useState<string | null>(null);
 
   // Categories the user has chosen to HIDE. Persisted per-event in
   // localStorage so the same toggles stick when they come back.
@@ -125,6 +151,27 @@ export default function NoShowsPage() {
     if (missingSearched) searchMissing();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live.dataVersion]);
+
+  async function runTechReport() {
+    if (!techFile || !selectedEvent || !selectedSeason) return;
+    setTechLoading(true);
+    setTechError(null);
+    try {
+      const form = new FormData();
+      form.append("file", techFile);
+      form.append("event_code", selectedEvent);
+      form.append("season", selectedSeason);
+      const res = await fetch("/api/tech-noshows", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Report failed");
+      setTechReport(data);
+    } catch (err) {
+      setTechError(err instanceof Error ? err.message : "Report failed");
+      setTechReport(null);
+    } finally {
+      setTechLoading(false);
+    }
+  }
 
   // Pull every category that shows up across both result sets so the
   // checkbox bar is stable regardless of which sections are populated.
@@ -277,6 +324,133 @@ export default function NoShowsPage() {
                 </label>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ===== TECH CARD REPORT ===== */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-8">
+        <h2 className="text-white font-bold text-lg mb-1">Tech Card Report</h2>
+        <p className="text-gray-400 text-sm mb-4">
+          Upload the TCND tech card export to find (1) tech cards that never went down the track and (2) cars that ran time trials but are missing from E1.
+          The latest timing data is pulled straight from getresults automatically — no CSV import needed.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4">
+          <label className="flex-1 px-4 py-3 bg-nhra-darker border border-dashed border-nhra-border rounded-lg text-gray-300 text-sm cursor-pointer hover:border-orange-500 transition-colors truncate">
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(e) => { setTechFile(e.target.files?.[0] || null); setTechReport(null); setTechError(null); }}
+            />
+            {techFile ? techFile.name : "Choose tech card .xlsx"}
+          </label>
+          <button
+            onClick={runTechReport}
+            disabled={techLoading || !techFile || !selectedEvent}
+            className="px-6 py-3 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+          >
+            {techLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            Run Tech Card Report
+          </button>
+        </div>
+        {techError && <p className="text-red-400 text-sm mt-3">{techError}</p>}
+      </div>
+
+      {techReport && (
+        <div className="space-y-8 mb-8">
+          <div className="bg-nhra-darker border border-nhra-border rounded-xl px-6 py-3 text-sm text-gray-400">
+            {techReport.runCount} runs ({techReport.source === "live" ? "pulled live from getresults" : "stored data"}) · {techReport.techCardCount} tech cards · categories in timing:{" "}
+            <span className="text-white font-semibold">{techReport.categoriesInTiming.join(", ") || "none"}</span>
+            {" "}· E1 run so far:{" "}
+            <span className="text-white font-semibold">{techReport.categoriesWithE1.join(", ") || "none"}</span>
+            {techReport.liveError && (
+              <span className="text-yellow-500"> · live pull failed, used stored runs: {techReport.liveError}</span>
+            )}
+          </div>
+
+          {/* List 1: tech card, no runs */}
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <h2 className="text-white font-bold text-lg">Tech Card — Never Went Down the Track</h2>
+              <span className="px-2.5 py-0.5 bg-orange-500/20 text-orange-400 text-xs font-bold rounded-full">
+                {techReport.noRuns.length}
+              </span>
+            </div>
+            {techReport.categoriesInTiming.map((cat) => {
+              const rows = techReport.noRuns.filter((r) => r.category === cat);
+              const total = techReport.techCardCounts[cat] || 0;
+              return (
+                <div key={cat} className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-3">
+                  <div className="px-6 py-3 bg-nhra-darker border-b border-nhra-border flex items-center gap-3">
+                    <h3 className="text-white font-bold">{cat}</h3>
+                    <span className="text-xs text-gray-400">
+                      {rows.length === 0 ? `all ${total} tech cards ran` : `${rows.length} no-show of ${total} tech cards`}
+                    </span>
+                  </div>
+                  {rows.length > 0 && (
+                    <div className="divide-y divide-nhra-border">
+                      {rows.map((r) => (
+                        <div key={`${cat}-${r.car_number}`} className="px-6 py-3 flex items-center justify-between">
+                          <div>
+                            <span className="text-nhra-accent font-bold mr-3">#{r.car_number}</span>
+                            <span className="text-white font-semibold">{r.name}</span>
+                            {r.cls && <span className="text-gray-500 text-sm ml-3">{r.cls}</span>}
+                          </div>
+                          <span className="text-gray-500 text-sm">{r.phone}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* List 2: ran TT, missing from E1 */}
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <h2 className="text-white font-bold text-lg">Ran Time Trials — Missing From E1</h2>
+              <span className="px-2.5 py-0.5 bg-red-500/20 text-red-400 text-xs font-bold rounded-full">
+                {techReport.missedE1.length}
+              </span>
+            </div>
+            {techReport.categoriesWithE1.length === 0 ? (
+              <p className="text-gray-500 text-sm">E1 has not run yet for any category in the timing data.</p>
+            ) : (
+              techReport.categoriesWithE1.map((cat) => {
+                const rows = techReport.missedE1.filter((r) => r.category === cat);
+                return (
+                  <div key={cat} className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-3">
+                    <div className="px-6 py-3 bg-nhra-darker border-b border-nhra-border flex items-center gap-3">
+                      <h3 className="text-white font-bold">{cat}</h3>
+                      <span className="text-xs text-gray-400">
+                        {rows.length === 0 ? "everyone who ran TT made E1" : `${rows.length} ran TT but missing from E1`}
+                      </span>
+                    </div>
+                    {rows.length > 0 && (
+                      <div className="divide-y divide-nhra-border">
+                        {rows.map((r) => (
+                          <div key={`${cat}-${r.car_number}`} className="px-6 py-3 flex items-center justify-between">
+                            <div>
+                              <span className="text-nhra-accent font-bold mr-3">#{r.car_number}</span>
+                              <span className="text-white font-semibold">{r.name}</span>
+                              {r.cls && <span className="text-gray-500 text-sm ml-3">{r.cls}</span>}
+                            </div>
+                            <span className="text-gray-500 text-sm">{r.phone}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+            {techReport.categoriesInTiming.filter((c) => !techReport.categoriesWithE1.includes(c)).length > 0 && (
+              <p className="text-gray-500 text-xs mt-2">
+                E1 not run yet: {techReport.categoriesInTiming.filter((c) => !techReport.categoriesWithE1.includes(c)).join(", ")}
+              </p>
+            )}
           </div>
         </div>
       )}
