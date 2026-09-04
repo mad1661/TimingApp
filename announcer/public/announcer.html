@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Announcer — Timing Talk</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a111d'/%3E%3Ctext x='8' y='12' font-size='10' font-family='monospace' font-weight='bold' fill='%238fb8e0' text-anchor='middle'%3ETT%3C/text%3E%3C/svg%3E">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap');
 
@@ -590,12 +591,14 @@ function setSplit(side, key, value, opts = {}) {
   const el = $(`svv-${side}-${key}`);
   if (!wrap || !el) return;
   const display = value == null ? "\u2014" : value;
-  if (el.textContent === display) return;
-  el.textContent = display;
+  const changed = el.textContent !== display;
+  if (changed) el.textContent = display;
+  // Classes always sync: win/neg can arrive after the value itself (e.g. the
+  // winner is only known once MOV lands, but the ET text hasn't changed).
   wrap.classList.toggle("empty", value == null);
   wrap.classList.toggle("neg", value != null && key === "rt" && String(value).startsWith("-"));
   wrap.classList.toggle("win", !!opts.win);
-  if (value != null && opts.flash) {
+  if (changed && value != null && opts.flash) {
     wrap.classList.remove("flash");
     void wrap.offsetWidth;
     wrap.classList.add("flash");
@@ -1041,6 +1044,11 @@ function subscribe(deviceId) {
     $("live-dot").classList.toggle("on", !!st.online);
     $("track-name").textContent = fmt(st.trackName) || fmt(st.raceName) || "";
     $("foot-right").textContent = `${deviceId} \u00b7 ${fmt(st.serialStatus) || (st.online ? "online" : "offline")}`;
+    // Fallback event title while the getresults event list is unreachable.
+    if (!state.histEvent) {
+      const fallback = [fmt(st.promoter), fmt(st.raceName) || fmt(st.trackName)].filter(Boolean).join(" \u00b7 ");
+      if (fallback) $("event-name").textContent = fallback;
+    }
   });
   onValue(ref(rtdb, `/devices/${deviceId}/raceState/current`), (snap) => {
     const race = snap.val();
