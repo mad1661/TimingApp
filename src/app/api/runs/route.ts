@@ -8,7 +8,16 @@ const NO_STORE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
   "Pragma": "no-cache",
   "Expires": "0",
+  // Read-only history for the standalone announcer site (getresults = history
+  // only; live timing comes from RTDB). Same open-CORS precedent as /api/live-runs.
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: NO_STORE_HEADERS });
+}
 
 export async function GET(request: NextRequest) {
   try {

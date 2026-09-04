@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "nhra-timing-api"
+  },
+  "targets": {
+    "nhra-timing-api": {
+      "hosting": {
+        "announcer": ["tt-announcer"]
+      }
+    }
+  }
+}

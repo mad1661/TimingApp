@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Announcer — Timing Talk</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap');
+
+/* ════ Omarchy Dark Mawson palette ════ */
+:root {
+  --bg: #0a111d;
+  --panel: #0c1524;
+  --panel2: #0e1a2c;
+  --line: #1a2a42;
+  --lbl: #5d81a8;          /* steel-blue labels */
+  --lbl-dim: #3b5878;
+  --val: #e8eef6;
+  --white: #ffffff;
+  --btn-bg: #b9d2ec;
+  --btn-fg: #0a1626;
+  --accent: #8fb8e0;
+  --red: #ff5560;
+  --green: #38d17c;
+  --gold: #ffd166;
+  --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--bg); }
+body {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--val);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+button { font-family: var(--mono); cursor: pointer; }
+.hidden { display: none !important; }
+
+@keyframes flashIn {
+  0%   { color: var(--gold); text-shadow: 0 0 22px rgba(255,209,102,0.9); }
+  100% { color: inherit; text-shadow: none; }
+}
+.flash { animation: flashIn 0.5s ease-out; }
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+
+.lbl {
+  color: var(--lbl); font-size: 0.62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.14em;
+}
+.dim { color: var(--lbl-dim); }
+.neg { color: var(--red) !important; }
+
+/* ════ Control bar ════ */
+.ctrlbar {
+  order: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 0.4rem;
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.ctrl-group { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+.cbtn {
+  background: var(--btn-bg); color: var(--btn-fg);
+  border: 1px solid transparent; border-radius: 3px;
+  padding: 0.42rem 0.8rem; min-height: 34px;
+  font-size: 0.68rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  transition: filter 0.12s, background 0.12s;
+}
+.cbtn:hover { filter: brightness(1.1); }
+.cbtn.on { background: var(--white); box-shadow: inset 0 0 0 2px var(--accent); }
+.cbtn.warn.on { background: var(--gold); }
+.cbtn:disabled { opacity: 0.35; cursor: default; }
+.cbtn.ghost {
+  background: transparent; color: var(--lbl);
+  border-color: var(--line);
+}
+.cbtn.ghost:hover { color: var(--val); border-color: var(--lbl-dim); }
+.mode-note {
+  color: var(--lbl); font-size: 0.66rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.14em;
+  margin-left: 0.4rem;
+}
+.mode-note b { color: var(--val); font-weight: 800; }
+.ctrl-right { display: flex; align-items: center; gap: 0.7rem; }
+#track-name { color: var(--lbl); font-size: 0.68rem; letter-spacing: 0.06em; }
+#clock { color: var(--val); font-size: 0.72rem; font-weight: 700; }
+#live-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--red); display: inline-block; flex-shrink: 0;
+}
+#live-dot.on { background: var(--green); box-shadow: 0 0 8px rgba(56,209,124,0.8); animation: pulse 2s infinite; }
+
+/* ════ Event header ════ */
+.eventbar {
+  order: 1;
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: 0.3rem 1rem;
+  padding: 0.45rem 0.8rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.eventbar-left { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.event-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
+#event-name { color: var(--white); font-weight: 800; font-size: 0.95rem; }
+#hdr-category { color: var(--white); font-weight: 800; font-size: 0.95rem; }
+#hdr-round { color: var(--gold); font-weight: 800; font-size: 0.95rem; }
+
+/* ════ Lane panels ════ */
+#lanes {
+  order: 3;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  min-height: 0;
+}
+#lanes.wide4 { grid-template-columns: repeat(4, 1fr); }
+.lane {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0.8rem 0.7rem;
+  display: flex; flex-direction: column; gap: 0.55rem;
+  min-width: 0;
+}
+.lane:last-child { border-right: none; }
+.lane-tag { display: flex; align-items: center; gap: 0.5rem; }
+.lane-tag .win-tag {
+  color: var(--btn-fg); background: var(--gold); border-radius: 2px;
+  font-size: 0.58rem; font-weight: 800; padding: 0.05rem 0.4rem;
+  letter-spacing: 0.12em;
+}
+
+.lane-top { display: flex; gap: 0.8rem; align-items: flex-start; }
+.photo-box { width: 46%; max-width: 340px; flex-shrink: 0; }
+#lanes.wide4 .photo-box { display: none; }
+.photo-frame {
+  width: 100%; aspect-ratio: 16/10;
+  background: var(--panel2); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; position: relative;
+}
+.photo-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-frame svg { width: 42px; height: 42px; opacity: 0.18; }
+.photo-cap {
+  margin-top: 0.2rem;
+  color: var(--lbl-dim); font-size: 0.56rem;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.photo-btns { display: flex; gap: 0.35rem; margin-top: 0.3rem; }
+.pbtn {
+  background: var(--panel2); border: 1px solid var(--line);
+  color: var(--val); border-radius: 2px;
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em;
+  padding: 0.35rem 0.55rem; min-height: 30px;
+  text-transform: uppercase;
+}
+.pbtn:hover { border-color: var(--lbl-dim); }
+.pbtn.notthem { color: var(--red); }
+
+.driver-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.18rem; }
+.drv-name { color: var(--white); font-weight: 800; font-size: 1.15rem; line-height: 1.2; }
+.drv-sub { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; }
+.drv-car { color: var(--accent); font-weight: 800; font-size: 0.9rem; }
+.drv-class { color: var(--white); font-weight: 700; font-size: 0.85rem; }
+.drv-cat { color: var(--lbl); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.drv-dialround { color: var(--lbl); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.drv-dialround b { color: var(--val); }
+.drv-status { color: var(--green); font-size: 0.66rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.1rem; }
+
+.copy-block { display: flex; flex-direction: column; gap: 0.15rem; }
+.copy-lines { color: var(--val); font-size: 0.86rem; font-weight: 600; line-height: 1.45; }
+.copy-lines.empty { color: var(--lbl-dim); font-weight: 400; }
+.copy-combo { color: var(--val); font-size: 0.78rem; font-weight: 700; }
+.copy-combo .lbl { margin-right: 0.5rem; }
+
+.tc-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 0.15rem 1.2rem;
+}
+.tc-row { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+.tc-row .lbl { flex: 0 0 4.6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-row .tcv {
+  color: var(--val); font-size: 0.78rem; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.oldruns table { width: 100%; border-collapse: collapse; margin-top: 0.15rem; }
+.oldruns th {
+  color: var(--lbl); font-size: 0.56rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  text-align: right; padding: 0.12rem 0.3rem;
+  border-bottom: 1px solid var(--line);
+}
+.oldruns th:first-child, .oldruns td:first-child { text-align: left; padding-left: 0; }
+.oldruns td {
+  color: var(--val); font-size: 0.7rem; font-weight: 600;
+  text-align: right; padding: 0.14rem 0.3rem; white-space: nowrap;
+}
+.oldruns td.w { color: var(--green); font-weight: 800; }
+.oldruns td.l { color: var(--red); }
+.oldruns .or-empty { color: var(--lbl-dim); font-size: 0.66rem; padding: 0.3rem 0; }
+.oldruns-scroll { max-height: 9.2rem; overflow-y: auto; scrollbar-width: thin; }
+
+/* ════ Live splits board ════ */
+#splits-sec {
+  order: 4;
+  border-top: 2px solid var(--line);
+  background: var(--panel);
+  padding: 0.5rem 0.8rem 0.6rem;
+}
+.splits-head { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 0.45rem; }
+#splits {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 0.4rem 0.5rem;
+}
+.split-cell { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; min-width: 0; }
+.sv {
+  color: var(--val); font-weight: 800;
+  font-size: clamp(1.05rem, 2.1vw, 1.9rem);
+  line-height: 1.1; white-space: nowrap;
+  display: flex; align-items: baseline; gap: 0.25rem;
+}
+.sv.empty { color: var(--lbl-dim); font-weight: 400; }
+.sv .lt { color: var(--lbl-dim); font-size: 0.55em; font-weight: 700; }
+.sv.et-val { font-size: clamp(1.2rem, 2.5vw, 2.2rem); color: var(--white); }
+.sv.win { color: var(--gold); }
+.sl {
+  color: var(--lbl); font-size: 0.6rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  border-top: 1px solid var(--line);
+  padding-top: 0.25rem; width: 100%; text-align: center;
+  white-space: nowrap;
+}
+
+/* ════ Weather band ════ */
+#weather-sec {
+  order: 5;
+  border-top: 1px solid var(--line);
+  padding: 0.5rem 0.8rem 0.55rem;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.4rem 0.8rem;
+}
+.wx-cell { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.wx-val { color: var(--white); font-weight: 800; font-size: clamp(1.1rem, 2vw, 1.7rem); white-space: nowrap; }
+.wx-val.empty { color: var(--lbl-dim); font-weight: 400; }
+
+/* ════ Footer ════ */
+#footer {
+  order: 6;
+  border-top: 1px solid var(--line);
+  padding: 0.3rem 0.8rem;
+  color: var(--lbl-dim); font-size: 0.62rem; letter-spacing: 0.08em;
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;
+}
+
+/* ════ Settings popover ════ */
+#settings-pop {
+  position: fixed; top: 52px; right: 10px; z-index: 50;
+  background: var(--panel2); border: 1px solid var(--lbl-dim); border-radius: 4px;
+  padding: 0.8rem; width: min(340px, calc(100vw - 20px));
+  display: flex; flex-direction: column; gap: 0.7rem;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+}
+#settings-pop select, #settings-pop input {
+  width: 100%; background: var(--bg); color: var(--val);
+  border: 1px solid var(--line); border-radius: 3px;
+  font-family: var(--mono); font-size: 0.72rem; padding: 0.4rem 0.5rem;
+  min-height: 34px;
+}
+.set-row { display: flex; flex-direction: column; gap: 0.25rem; }
+.set-inline { display: flex; gap: 0.35rem; }
+.set-note { color: var(--lbl-dim); font-size: 0.6rem; line-height: 1.4; }
+
+/* ════ Setup / no-device overlay ════ */
+#nodevice {
+  order: 2;
+  padding: 1.2rem 0.8rem; text-align: center;
+  color: var(--lbl); font-size: 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ════ Responsive — tablet (≤900px) ════ */
+@media (max-width: 900px) {
+  #lanes, #lanes.wide4 { grid-template-columns: 1fr; }
+  .lane { border-right: none; }
+  #lanes.wide4 .photo-box { display: block; }
+  /* splits move directly under the header on small screens */
+  #splits-sec { order: 2; border-top: none; border-bottom: 2px solid var(--line); }
+  #splits { grid-template-columns: repeat(5, 1fr); }
+  .sv { font-size: clamp(1.1rem, 4.5vw, 1.7rem); }
+  .sv.et-val { font-size: clamp(1.25rem, 5.5vw, 2rem); }
+  #weather-sec { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ════ Responsive — phone (≤480px) ════ */
+@media (max-width: 480px) {
+  .cbtn { flex: 1 1 calc(50% - 0.45rem); min-height: 44px; font-size: 0.7rem; }
+  .ctrl-group { width: 100%; }
+  .mode-note { margin: 0.15rem 0 0; width: 100%; }
+  .ctrl-right { width: 100%; justify-content: space-between; }
+  #splits { grid-template-columns: repeat(5, 1fr); gap: 0.3rem 0.25rem; }
+  .sl { font-size: 0.5rem; letter-spacing: 0.06em; }
+  .lane-top { flex-direction: column; }
+  .photo-box { width: 100%; max-width: none; }
+  .pbtn { min-height: 44px; flex: 1; }
+  .tc-grid { grid-template-columns: 1fr; }
+  #weather-sec { grid-template-columns: repeat(2, 1fr); }
+  .drv-name { font-size: 1.05rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- ════ Control bar ════ -->
+<header class="ctrlbar">
+  <div class="ctrl-group">
+    <button class="cbtn" id="btn-prev">Previous Run</button>
+    <button class="cbtn" id="btn-current">Current</button>
+    <button class="cbtn warn" id="btn-hold">Hold Screen</button>
+    <button class="cbtn on" id="btn-live">Live Timing</button>
+    <span class="mode-note" id="mode-note"><b>LIVE TIMING</b> &middot; WAITING</span>
+  </div>
+  <div class="ctrl-right">
+    <span id="live-dot" title="device online"></span>
+    <span id="track-name"></span>
+    <span id="clock"></span>
+    <button class="cbtn ghost" id="btn-refresh">Refresh</button>
+    <button class="cbtn ghost" id="btn-settings" title="Settings">&#9881;</button>
+  </div>
+</header>
+
+<!-- ════ Event / category / round header ════ -->
+<div class="eventbar">
+  <div class="eventbar-left">
+    <span class="lbl">Announcer</span>
+    <div class="event-line">
+      <span id="event-name">&mdash;</span>
+      <span id="hdr-category"></span>
+      <span id="hdr-round"></span>
+    </div>
+  </div>
+</div>
+
+<div id="nodevice" class="hidden">
+  No timing device selected &mdash; open <b>&#9881; settings</b> (top right) and pick a device.
+</div>
+
+<!-- ════ Lane panels (built by JS) ════ -->
+<main id="lanes"></main>
+
+<!-- ════ Live splits ════ -->
+<section id="splits-sec">
+  <div class="splits-head">
+    <span class="lbl">Live Splits</span>
+    <span class="lbl dim">&middot; Timing Talk</span>
+  </div>
+  <div id="splits"></div>
+</section>
+
+<!-- ════ Weather ════ -->
+<section id="weather-sec">
+  <div class="wx-cell"><span class="wx-val empty" id="wx-da">&mdash;</span><span class="lbl">Density Altitude</span></div>
+  <div class="wx-cell"><span class="wx-val empty" id="wx-temp">&mdash;</span><span class="lbl">Temp</span></div>
+  <div class="wx-cell"><span class="wx-val empty" id="wx-hum">&mdash;</span><span class="lbl">Humidity</span></div>
+  <div class="wx-cell"><span class="wx-val empty" id="wx-wind">&mdash;</span><span class="lbl">Wind</span></div>
+  <div class="wx-cell"><span class="wx-val empty" id="wx-baro">&mdash;</span><span class="lbl">Baro</span></div>
+</section>
+
+<footer id="footer">
+  <span id="foot-left">timing-talk &middot; announcer</span>
+  <span id="foot-right"></span>
+</footer>
+
+<!-- ════ Settings ════ -->
+<div id="settings-pop" class="hidden">
+  <div class="set-row">
+    <span class="lbl">Timing Device (live)</span>
+    <select id="set-device"><option value="">loading&hellip;</option></select>
+  </div>
+  <div class="set-row">
+    <span class="lbl">History Event (getresults)</span>
+    <select id="set-event"><option value="">auto (latest)</option></select>
+    <span class="set-note">History powers OLD RUNS + PREVIOUS RUN. Live timing is never taken from here.</span>
+  </div>
+  <div class="set-row">
+    <span class="lbl">Weather Location</span>
+    <div class="set-inline">
+      <input id="set-loc" type="text" placeholder="city, or lat,lon (e.g. Clermont IN)">
+      <button class="cbtn" id="set-loc-btn">Set</button>
+    </div>
+    <span class="set-note" id="set-loc-note">no location set &mdash; weather stays blank</span>
+  </div>
+  <div class="set-row">
+    <span class="lbl">Test (local only, no data written)</span>
+    <div class="set-inline">
+      <button class="cbtn ghost" id="btn-test2" style="flex:1">2-Wide Test</button>
+      <button class="cbtn ghost" id="btn-test4" style="flex:1">4-Wide Test</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-database.js";
+
+/* ─────────────────────────────────────────────────────────────
+   DATA RULE (Mark, 2026-09):
+   • LIVE Timing Talk (RTDB raceState/current) = ONLY the next
+     pair on the line and their times down the track.
+   • getresults (history API) = history ONLY — old runs, previous
+     results, past pairs. Never drives who is on the line.
+   ───────────────────────────────────────────────────────────── */
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCDfI8vVi4VjPYAmT7nNL4RvzB15livS54",
+  authDomain: "nhra-timing-api.firebaseapp.com",
+  databaseURL: "https://nhra-timing-api-default-rtdb.firebaseio.com",
+  projectId: "nhra-timing-api",
+  storageBucket: "nhra-timing-api.firebasestorage.app",
+  messagingSenderId: "1043698542673",
+  appId: "1:1043698542673:web:8d98acb05415ed51e1b070",
+};
+
+// Timing Talk API (tech cards, device directory) — CORS-open.
+const TT_API = localStorage.getItem("tt-ann-tt-api") || "https://nhra-timing-api.web.app/api";
+// getresults history API (TimingApp Next.js app) — HISTORY ONLY.
+const HIST_API = localStorage.getItem("tt-ann-history-api") || "https://timingapp--nhra-timing-app.us-east4.hosted.app/api";
+// Keyless CC image search used for extra driver photo candidates.
+const PHOTO_API = "https://api.openverse.org/v1/images/";
+
+const app = initializeApp(FIREBASE_CONFIG);
+const rtdb = getDatabase(app);
+const $ = (id) => document.getElementById(id);
+
+const SPLIT_FIELDS = [
+  { key: "dial_in",     label: "Dial" },
+  { key: "rt",          label: "R/T" },
+  { key: "sixty",       label: "60" },
+  { key: "three30",     label: "330" },
+  { key: "six60",       label: "660" },
+  { key: "six60_speed", label: "660 MPH" },
+  { key: "thousand",    label: "1000" },
+  { key: "et",          label: "E.T.", et: true },
+  { key: "speed",       label: "MPH" },
+  { key: "mov",         label: "MOV" },
+];
+const SIDES2 = ["left", "right"];
+const SIDES4 = ["left", "right", "lane3", "lane4"];
+const SIDE_TAG = { left: "L", right: "R", lane3: "3", lane4: "4" };
+const SIDE_NAME = { left: "LEFT", right: "RIGHT", lane3: "LANE 3", lane4: "LANE 4" };
+
+/* ════ State ════ */
+const state = {
+  deviceId: new URLSearchParams(location.search).get("device") || localStorage.getItem("tt-selected-device") || "",
+  mode: "live",            // live | hold | history | off
+  liveOn: true,
+  latestRace: null,        // freshest RTDB race (always tracked)
+  displayedRace: null,
+  pairKey: "",
+  wide4: false,
+  prevVals: {},            // side -> {field: value} for flash detection
+  histPairs: null,         // built from getresults; null = not loaded
+  histIdx: -1,
+  histEvent: null,         // {event_code, season, event_name}
+  loadToken: 0,            // invalidates stale async lane loads
+  photos: {},              // side -> {list:[{url,source}], idx, name}
+  testTimers: [],
+};
+
+/* ════ Helpers ════ */
+function fmt(v) {
+  const s = (v == null ? "" : String(v)).trim();
+  return s === "" ? null : s;
+}
+function num(v) {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+function fx(v, d) { const n = num(v); return n == null ? null : n.toFixed(d); }
+async function getJSON(url, ms = 15000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+  finally { clearTimeout(t); }
+}
+
+/* ════ Build lane panels ════ */
+function lanePanelHTML(side) {
+  return `
+  <div class="lane" id="lane-${side}">
+    <div class="lane-tag">
+      <span class="lbl">${SIDE_NAME[side]}</span>
+      <span class="win-tag hidden" id="wintag-${side}">WIN</span>
+    </div>
+    <div class="lane-top">
+      <div class="photo-box">
+        <div class="photo-frame" id="photo-${side}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M5.5 21a6.5 6.5 0 0113 0"/></svg>
+        </div>
+        <div class="photo-cap" id="photocap-${side}">no photo</div>
+        <div class="photo-btns">
+          <button class="pbtn" id="pnext-${side}">Next</button>
+          <button class="pbtn notthem" id="preject-${side}">Not Them</button>
+        </div>
+      </div>
+      <div class="driver-block">
+        <span class="drv-name" id="name-${side}">&mdash;</span>
+        <div class="drv-sub">
+          <span class="drv-car" id="car-${side}"></span>
+          <span class="drv-class" id="class-${side}"></span>
+        </div>
+        <span class="drv-cat" id="cat-${side}"></span>
+        <span class="drv-dialround" id="dialround-${side}"></span>
+        <span class="drv-status" id="status-${side}"></span>
+      </div>
+    </div>
+    <div class="copy-block">
+      <span class="lbl">Announcer Copy</span>
+      <div class="copy-lines empty" id="copy-${side}">no lines on card</div>
+      <div class="copy-combo hidden" id="combo-${side}"><span class="lbl">Combo</span><span id="combov-${side}"></span></div>
+    </div>
+    <div>
+      <span class="lbl">Tech Card</span>
+      <div class="tc-grid" id="tc-${side}">
+        <div class="tc-row"><span class="lbl">Car</span><span class="tcv" id="tc-car-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Class</span><span class="tcv" id="tc-class-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Category</span><span class="tcv" id="tc-cat-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Dial</span><span class="tcv" id="tc-dial-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Round</span><span class="tcv" id="tc-round-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Lane</span><span class="tcv" id="tc-lane-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Best ET</span><span class="tcv" id="tc-bestet-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Best RT</span><span class="tcv" id="tc-bestrt-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Top MPH</span><span class="tcv" id="tc-topmph-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Member</span><span class="tcv" id="tc-member-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Combo</span><span class="tcv" id="tc-combo-${side}">&mdash;</span></div>
+        <div class="tc-row"><span class="lbl">Hometown</span><span class="tcv" id="tc-home-${side}">&mdash;</span></div>
+      </div>
+    </div>
+    <div class="oldruns">
+      <span class="lbl">Old Runs</span>
+      <div class="oldruns-scroll">
+        <table>
+          <thead><tr><th>When</th><th>Rnd</th><th>Ln</th><th>Cl</th><th>RT</th><th>ET</th><th>MPH</th><th>W/L</th></tr></thead>
+          <tbody id="oldruns-${side}"><tr><td colspan="8" class="or-empty">no history yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+function splitCellHTML(field, sides) {
+  const values = sides.map((s) =>
+    `<span class="sv empty${field.et ? " et-val" : ""}" id="sv-${s}-${field.key}"><span class="lt">${SIDE_TAG[s]}</span><span id="svv-${s}-${field.key}">&mdash;</span></span>`
+  ).join("");
+  return `<div class="split-cell">${values}<span class="sl">${field.label}</span></div>`;
+}
+
+function buildBoard(wide4) {
+  state.wide4 = wide4;
+  const sides = wide4 ? SIDES4 : SIDES2;
+  const lanes = $("lanes");
+  lanes.classList.toggle("wide4", wide4);
+  lanes.innerHTML = sides.map(lanePanelHTML).join("");
+  $("splits").innerHTML = SPLIT_FIELDS.map((f) => splitCellHTML(f, sides)).join("");
+  sides.forEach((side) => {
+    $(`pnext-${side}`).addEventListener("click", () => photoNext(side, false));
+    $(`preject-${side}`).addEventListener("click", () => photoNext(side, true));
+  });
+  state.prevVals = {};
+  state.photos = {};
+}
+
+function activeSides() { return state.wide4 ? SIDES4 : SIDES2; }
+
+/* ════ Splits rendering ════ */
+function setSplit(side, key, value, opts = {}) {
+  const wrap = $(`sv-${side}-${key}`);
+  const el = $(`svv-${side}-${key}`);
+  if (!wrap || !el) return;
+  const display = value == null ? "\u2014" : value;
+  if (el.textContent === display) return;
+  el.textContent = display;
+  wrap.classList.toggle("empty", value == null);
+  wrap.classList.toggle("neg", value != null && key === "rt" && String(value).startsWith("-"));
+  wrap.classList.toggle("win", !!opts.win);
+  if (value != null && opts.flash) {
+    wrap.classList.remove("flash");
+    void wrap.offsetWidth;
+    wrap.classList.add("flash");
+  }
+}
+
+function clearSplits() {
+  activeSides().forEach((side) => {
+    SPLIT_FIELDS.forEach((f) => setSplit(side, f.key, null));
+    const wt = $(`wintag-${side}`);
+    if (wt) wt.classList.add("hidden");
+  });
+  state.prevVals = {};
+}
+
+function winnerSide(race) {
+  const w = (fmt(race.winner) || "").toLowerCase();
+  if (!w) return null;
+  if (w === "left" || w === "right" || w === "lane3" || w === "lane4") return w;
+  for (const s of activeSides()) {
+    if ((fmt((race[s] || {}).name) || "").toLowerCase() === w) return s;
+  }
+  return null;
+}
+
+function renderSplits(race, { flash }) {
+  const win = winnerSide(race);
+  activeSides().forEach((side) => {
+    const lane = race[side] || {};
+    const prev = state.prevVals[side] || (state.prevVals[side] = {});
+    SPLIT_FIELDS.forEach((f) => {
+      const v = fmt(lane[f.key]);
+      const doFlash = flash && v != null && prev[f.key] !== v;
+      setSplit(side, f.key, v, {
+        flash: doFlash,
+        win: !!win && side === win && (f.key === "et" || f.key === "mov"),
+      });
+      prev[f.key] = v;
+    });
+    const wt = $(`wintag-${side}`);
+    if (wt) wt.classList.toggle("hidden", side !== win);
+  });
+}
+
+/* ════ Lane status ════ */
+function laneStatus(lane, complete) {
+  const has = (k) => fmt(lane[k]) != null;
+  if (complete || has("et")) return "RUN COMPLETE";
+  if (has("sixty") || has("three30") || has("six60") || has("thousand")) return "DOWN TRACK";
+  if (has("rt")) return "LAUNCHED";
+  return "ON THE LINE";
+}
+
+/* ════ Header + driver identity (live pair — RTDB only) ════ */
+function renderIdentity(race) {
+  $("hdr-category").textContent = fmt(race.category) || "";
+  $("hdr-round").textContent = fmt(race.round) || "";
+  activeSides().forEach((side) => {
+    const lane = race[side] || {};
+    $(`name-${side}`).textContent = fmt(lane.name) || "\u2014";
+    $(`car-${side}`).textContent = fmt(lane.car_num) ? `#${fmt(lane.car_num)}` : "";
+    $(`class-${side}`).textContent = fmt(lane.class_name) || "";
+    $(`cat-${side}`).textContent = fmt(race.category) || "";
+    const dial = fmt(lane.dial_in);
+    const dr = $(`dialround-${side}`);
+    dr.innerHTML = "";
+    const dlbl = document.createElement("span");
+    dlbl.textContent = "DIAL ";
+    const dv = document.createElement("b");
+    dv.textContent = dial || "\u2014";
+    const rlbl = document.createElement("span");
+    rlbl.textContent = `\u2003${fmt(race.round) || ""}`;
+    dr.append(dlbl, dv, rlbl);
+    $(`status-${side}`).textContent = laneStatus(lane, !!race.complete);
+    $(`tc-car-${side}`).textContent = fmt(lane.car_num) || "\u2014";
+    $(`tc-class-${side}`).textContent = fmt(lane.class_name) || "\u2014";
+    $(`tc-cat-${side}`).textContent = fmt(race.category) || "\u2014";
+    $(`tc-dial-${side}`).textContent = dial || "\u2014";
+    $(`tc-round-${side}`).textContent = fmt(race.round) || "\u2014";
+    $(`tc-lane-${side}`).textContent = SIDE_NAME[side];
+    $(`tc-member-${side}`).textContent = fmt(lane.member_num) || "\u2014";
+  });
+}
+
+/* ════ Tech cards + announcer copy (Timing Talk API) ════ */
+const tcCache = {};
+const CAT_CODES = {
+  "TOP SPORTSMAN": "TS", "TOP DRAGSTER": "TD", "SUPER STOCK": "SS",
+  "STOCK ELIMINATOR": "STK", "SUPER COMP": "SC", "SUPER GAS": "SG",
+  "SUPER STREET": "SST", "COMPETITION ELIMINATOR": "COMP",
+  "FACTORY STOCK SHOWDOWN": "FSS", "FACTORY X": "FX",
+};
+async function fetchTechCard(member) {
+  if (!member) return null;
+  if (member in tcCache) return tcCache[member];
+  const data = await getJSON(`${TT_API}/tech-cards/${encodeURIComponent(member)}`);
+  tcCache[member] = data && !data.error ? data : null;
+  return tcCache[member];
+}
+
+function renderTechCard(side, tc, category) {
+  const copyEl = $(`copy-${side}`);
+  const comboWrap = $(`combo-${side}`);
+  if (!tc) {
+    copyEl.textContent = "no lines on card";
+    copyEl.classList.add("empty");
+    comboWrap.classList.add("hidden");
+    $(`tc-combo-${side}`).textContent = "\u2014";
+    $(`tc-home-${side}`).textContent = "\u2014";
+    return;
+  }
+  // COPY: tech card line1–line6, only when present. Never invented.
+  const lines = [tc.line1, tc.line2, tc.line3, tc.line4, tc.line5, tc.line6]
+    .map(fmt).filter(Boolean);
+  copyEl.innerHTML = "";
+  if (lines.length) {
+    copyEl.classList.remove("empty");
+    lines.forEach((l) => {
+      const div = document.createElement("div");
+      div.textContent = l;
+      copyEl.appendChild(div);
+    });
+  } else {
+    copyEl.classList.add("empty");
+    copyEl.textContent = "no lines on card";
+  }
+  // Engine combo from Engine Make / Year / CUI-CC / HP — hidden when blank.
+  const code = CAT_CODES[(category || "").toUpperCase()] || "";
+  const entries = tc.entries || [];
+  const entry = entries.find((e) => e.category === code) || entries[0] || {};
+  const combo = [entry.engine_make, entry.engine_year, entry.cui_cc, entry.hp ? `${entry.hp}HP` : ""]
+    .map(fmt).filter(Boolean).join(" ");
+  if (combo) {
+    comboWrap.classList.remove("hidden");
+    $(`combov-${side}`).textContent = combo;
+    $(`tc-combo-${side}`).textContent = combo;
+  } else {
+    comboWrap.classList.add("hidden");
+    $(`tc-combo-${side}`).textContent = "\u2014";
+  }
+  const home = [fmt(tc.city), fmt(tc.state)].filter(Boolean).join(", ");
+  $(`tc-home-${side}`).textContent = home || "\u2014";
+  if (fmt(tc.member_num)) $(`tc-member-${side}`).textContent = fmt(tc.member_num);
+}
+
+/* ════ Old runs + bests (getresults history ONLY) ════ */
+function histQS() {
+  const ev = state.histEvent;
+  if (!ev) return null;
+  return `event_code=${encodeURIComponent(ev.event_code)}&season=${encodeURIComponent(ev.season)}`;
+}
+
+function fmtWhen(ts) {
+  // "09/03/2026 11:23:23 AM" -> "09/03 11:23A"
+  const m = /^(\d{2}\/\d{2})\/\d{4} (\d{1,2}:\d{2}):\d{2} ([AP])M$/.exec(ts || "");
+  return m ? `${m[1]} ${m[2]}${m[3]}` : (ts || "");
+}
+
+async function fetchLaneHistory(lane, category) {
+  const qs = histQS();
+  if (!qs) return [];
+  const car = fmt(lane.car_num);
+  const name = fmt(lane.name);
+  const cat = category ? `&category=${encodeURIComponent(category)}` : "";
+  let rows = [];
+  if (car) {
+    const d = await getJSON(`${HIST_API}/runs?${qs}${cat}&car_number=${encodeURIComponent(car)}&limit=25`);
+    rows = (d && d.runs) || [];
+  }
+  if (!rows.length && name) {
+    const d = await getJSON(`${HIST_API}/runs?${qs}${cat}&name=${encodeURIComponent(name)}&limit=25`);
+    rows = (d && d.runs) || [];
+  }
+  return rows;
+}
+
+function renderOldRuns(side, rows) {
+  const tbody = $(`oldruns-${side}`);
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 8; td.className = "or-empty";
+    td.textContent = "no history yet";
+    tr.appendChild(td); tbody.appendChild(tr);
+  } else {
+    rows.slice(0, 10).forEach((r) => {
+      const tr = document.createElement("tr");
+      const wl = (r.result || "").trim().toUpperCase() || (r.is_winner ? "W" : "");
+      const cells = [
+        fmtWhen(r.timestamp), r.round || "", r.lane || "", r.class_index || "",
+        fx(r.rt, 3) ?? "", fx(r.ft1320, 3) ?? "", fx(r.mph_1320, 0) ?? "", wl,
+      ];
+      cells.forEach((c, i) => {
+        const td = document.createElement("td");
+        td.textContent = c;
+        if (i === 4 && num(r.rt) != null && num(r.rt) < 0) td.classList.add("l");
+        if (i === 7) td.classList.add(wl === "W" ? "w" : wl ? "l" : "x");
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+  // Bests derived from the same history rows
+  const ets = rows.map((r) => num(r.ft1320)).filter((n) => n != null && n > 0);
+  const rts = rows.map((r) => num(r.rt)).filter((n) => n != null && n >= 0);
+  const mphs = rows.map((r) => num(r.mph_1320)).filter((n) => n != null && n > 0);
+  $(`tc-bestet-${side}`).textContent = ets.length ? Math.min(...ets).toFixed(3) : "\u2014";
+  $(`tc-bestrt-${side}`).textContent = rts.length ? Math.min(...rts).toFixed(3) : "\u2014";
+  $(`tc-topmph-${side}`).textContent = mphs.length ? String(Math.round(Math.max(...mphs))) : "\u2014";
+}
+
+/* ════ Photos: tech card photo + CC image search; NEXT / NOT THEM ════ */
+function photoRejects() {
+  try { return JSON.parse(localStorage.getItem("tt-ann-photo-rejects") || "{}"); }
+  catch { return {}; }
+}
+function rejectPhoto(name, url) {
+  const all = photoRejects();
+  (all[name] = all[name] || []).push(url);
+  localStorage.setItem("tt-ann-photo-rejects", JSON.stringify(all));
+}
+
+async function loadPhotos(side, name, tc, token) {
+  const st = { list: [], idx: 0, name: name || "" };
+  state.photos[side] = st;
+  renderPhoto(side);
+  if (tc && fmt(tc.photo_url)) st.list.push({ url: tc.photo_url, source: "tech card" });
+  if (name) {
+    const q = encodeURIComponent(`${name} drag racing`);
+    const d = await getJSON(`${PHOTO_API}?q=${q}&page_size=20`, 10000);
+    if (token !== state.loadToken || state.photos[side] !== st) return;
+    const rejected = new Set(photoRejects()[name] || []);
+    ((d && d.results) || []).forEach((r) => {
+      if (r.url && !rejected.has(r.url)) st.list.push({ url: r.url, source: r.source || "web" });
+    });
+  }
+  renderPhoto(side);
+}
+
+function renderPhoto(side) {
+  const st = state.photos[side];
+  const frame = $(`photo-${side}`);
+  const cap = $(`photocap-${side}`);
+  if (!frame || !cap) return;
+  if (!st || !st.list.length) {
+    frame.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M5.5 21a6.5 6.5 0 0113 0"/></svg>';
+    cap.textContent = "no photo";
+    return;
+  }
+  st.idx = ((st.idx % st.list.length) + st.list.length) % st.list.length;
+  const p = st.list[st.idx];
+  frame.innerHTML = "";
+  const img = document.createElement("img");
+  img.alt = st.name;
+  img.src = p.url;
+  img.onerror = () => {
+    // dead link — drop it (session only) and advance
+    st.list.splice(st.idx, 1);
+    renderPhoto(side);
+  };
+  frame.appendChild(img);
+  cap.textContent = `PHOTO ${st.idx + 1}/${st.list.length} \u00b7 ${p.source}`;
+}
+
+function photoNext(side, reject) {
+  const st = state.photos[side];
+  if (!st || !st.list.length) return;
+  if (reject) {
+    const p = st.list[st.idx];
+    if (st.name && p.source !== "tech card") rejectPhoto(st.name, p.url);
+    st.list.splice(st.idx, 1);
+  } else {
+    st.idx += 1;
+  }
+  renderPhoto(side);
+}
+
+/* ════ Pair change orchestration ════ */
+function pairKeyOf(race) {
+  const parts = [race.category, race.round];
+  activeSides().forEach((s) => parts.push((race[s] || {}).car_num, (race[s] || {}).name));
+  return parts.map((p) => fmt(p) || "").join("|");
+}
+
+function is4Wide(race) {
+  return [race.lane3, race.lane4].some((l) => l && (fmt(l.name) || fmt(l.car_num) || fmt(l.rt) || fmt(l.et)));
+}
+
+async function loadLaneExtras(race, token) {
+  // tech cards + photos + old runs, per lane — all async, token-guarded
+  const category = fmt(race.category) || "";
+  await Promise.all(activeSides().map(async (side) => {
+    const lane = race[side] || {};
+    const tc = await fetchTechCard(fmt(lane.member_num));
+    if (token !== state.loadToken) return;
+    renderTechCard(side, tc, category);
+    loadPhotos(side, fmt(lane.name), tc, token);
+    const rows = await fetchLaneHistory(lane, category);
+    if (token !== state.loadToken) return;
+    renderOldRuns(side, rows);
+  }));
+}
+
+function renderRace(race, { flash }) {
+  const wide4 = is4Wide(race);
+  if (wide4 !== state.wide4) buildBoard(wide4);
+  state.displayedRace = race;
+  const key = pairKeyOf(race);
+  if (key !== state.pairKey) {
+    state.pairKey = key;
+    clearSplits();
+    renderIdentity(race);
+    state.loadToken += 1;
+    loadLaneExtras(race, state.loadToken);
+  } else {
+    renderIdentity(race); // dial/status can fill in after first sight of pair
+  }
+  renderSplits(race, { flash });
+}
+
+/* ════ Mode machine ════ */
+function setModeNote() {
+  const note = $("mode-note");
+  const race = state.displayedRace;
+  const lane = race ? (race.left || {}) : {};
+  if (state.mode === "live") {
+    const st = race ? laneStatus(lane, !!race.complete) : "WAITING";
+    note.innerHTML = `<b>LIVE TIMING</b> \u00b7 ${st}`;
+  } else if (state.mode === "hold") {
+    note.innerHTML = `<b>HOLD SCREEN</b> \u00b7 frozen \u2014 press again or CURRENT to release`;
+  } else if (state.mode === "history") {
+    const n = state.histPairs ? state.histPairs.length : 0;
+    note.innerHTML = `<b>PREVIOUS RUN</b> \u00b7 ${state.histIdx + 1}/${n} \u00b7 getresults history`;
+  } else {
+    note.innerHTML = `<b>LIVE TIMING OFF</b>`;
+  }
+  $("btn-hold").classList.toggle("on", state.mode === "hold");
+  $("btn-live").classList.toggle("on", state.liveOn && state.mode !== "history");
+}
+
+function goLive() {
+  state.mode = "live";
+  state.liveOn = true;
+  state.histIdx = -1;
+  if (state.latestRace) renderRace(state.latestRace, { flash: false });
+  setModeNote();
+}
+
+$("btn-current").addEventListener("click", goLive);
+
+$("btn-hold").addEventListener("click", () => {
+  if (state.mode === "hold") { goLive(); return; }
+  state.mode = "hold";
+  setModeNote();
+});
+
+$("btn-live").addEventListener("click", () => {
+  if (state.mode === "history" || state.mode === "hold" || !state.liveOn) { goLive(); return; }
+  state.liveOn = false;
+  state.mode = "off";
+  setModeNote();
+});
+
+$("btn-prev").addEventListener("click", async () => {
+  const pairs = await ensureHistPairs();
+  if (!pairs.length) {
+    $("mode-note").innerHTML = `<b>PREVIOUS RUN</b> \u00b7 no getresults history yet`;
+    return;
+  }
+  state.histIdx = state.mode === "history" ? Math.min(state.histIdx + 1, pairs.length - 1) : 0;
+  state.mode = "history";
+  renderRace(pairs[state.histIdx], { flash: false });
+  setModeNote();
+});
+
+/* ════ getresults history pairs (PREVIOUS RUN) ════ */
+function rowToLaneObj(r) {
+  return {
+    name: r.name || "", car_num: r.car_number || "", class_name: r.class_index || "",
+    member_num: r.member_number || "", qual: r.qual_pos != null ? String(r.qual_pos) : "",
+    dial_in: fx(r.dial_in, 2) || "", rt: fx(r.rt, 3) || "",
+    sixty: fx(r.ft60, 3) || "", three30: fx(r.ft330, 3) || "",
+    six60: fx(r.ft660, 3) || "", six60_speed: fx(r.mph_660, 2) || "",
+    thousand: fx(r.ft1000, 3) || "", et: fx(r.ft1320, 3) || "",
+    speed: fx(r.mph_1320, 2) || "", mov: fx(r.mov, 4) || "",
+  };
+}
+
+let histPairsAt = 0;
+async function ensureHistPairs() {
+  if (state.histPairs && Date.now() - histPairsAt < 60000) return state.histPairs;
+  const qs = histQS();
+  if (!qs) return state.histPairs || [];
+  const d = await getJSON(`${HIST_API}/runs?${qs}&limit=140&sort_by=timestamp&sort_dir=DESC`);
+  const rows = (d && d.runs) || [];
+  const groups = new Map();
+  rows.forEach((r) => {
+    const k = `${r.timestamp}|${r.round}|${r.category}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  });
+  const pairs = [];
+  for (const rows2 of groups.values()) {
+    if (!rows2.some((r) => r.name || r.car_number)) continue;
+    const race = { category: rows2[0].category || "", round: rows2[0].round || "", complete: true, winner: "", timestamp: rows2[0].timestamp || "" };
+    const unplaced = [];
+    rows2.forEach((r) => {
+      const ln = (r.lane || "").trim().toUpperCase();
+      if (ln === "L" || ln === "1") race.left = rowToLaneObj(r);
+      else if (ln === "R" || ln === "2") race.right = rowToLaneObj(r);
+      else if (ln === "3") race.lane3 = rowToLaneObj(r);
+      else if (ln === "4") race.lane4 = rowToLaneObj(r);
+      else unplaced.push(r);
+      const wl = (r.result || "").trim().toUpperCase();
+      if (wl === "W" || r.is_winner) {
+        race.winner = ln === "R" || ln === "2" ? "right" : ln === "3" ? "lane3" : ln === "4" ? "lane4" : "left";
+      }
+    });
+    unplaced.forEach((r) => {
+      if (!race.left) race.left = rowToLaneObj(r);
+      else if (!race.right) race.right = rowToLaneObj(r);
+    });
+    race.left = race.left || {};
+    race.right = race.right || {};
+    pairs.push(race);
+  }
+  state.histPairs = pairs; // already newest-first (rows sorted DESC)
+  histPairsAt = Date.now();
+  return pairs;
+}
+
+/* ════ Live subscription (RTDB — the ONLY live source) ════ */
+function subscribe(deviceId) {
+  if (!deviceId) {
+    $("nodevice").classList.remove("hidden");
+    return;
+  }
+  $("nodevice").classList.add("hidden");
+  onValue(ref(rtdb, `/devices/${deviceId}/status`), (snap) => {
+    const st = snap.val() || {};
+    $("live-dot").classList.toggle("on", !!st.online);
+    $("track-name").textContent = fmt(st.trackName) || fmt(st.raceName) || "";
+    $("foot-right").textContent = `${deviceId} \u00b7 ${fmt(st.serialStatus) || (st.online ? "online" : "offline")}`;
+  });
+  onValue(ref(rtdb, `/devices/${deviceId}/raceState/current`), (snap) => {
+    const race = snap.val();
+    if (!race) return;
+    state.latestRace = race;
+    if (state.mode === "live") {
+      renderRace(race, { flash: true });
+      setModeNote();
+    }
+    // hold / history / off: keep tracking, never overwrite the screen
+  });
+}
+
+/* ════ Event header from history events (name only — not live data) ════ */
+async function loadEventHeader() {
+  const d = await getJSON(`${HIST_API}/runs`);
+  const events = (d && d.filters && d.filters.events) || [];
+  if (!events.length) return;
+  const today = new Date();
+  const yyyymmdd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+  const sorted = events.filter((e) => e.start_date).sort((a, b) => (b.start_date || "").localeCompare(a.start_date || ""));
+  const saved = localStorage.getItem("tt-ann-event");
+  let ev = null;
+  if (saved) ev = events.find((e) => `${e.event_code}_${e.season}` === saved) || null;
+  if (!ev) ev = sorted.find((e) => e.start_date <= yyyymmdd) || sorted[0];
+  if (!ev) return;
+  state.histEvent = ev;
+  const cleanName = (ev.event_name || "").replace(/\s+\d{2}\/\d{2}\/\d{4}\s*$/, "");
+  $("event-name").textContent = `${cleanName} (${ev.event_code})`;
+  // settings dropdown
+  const sel = $("set-event");
+  sel.innerHTML = '<option value="">auto (latest)</option>';
+  sorted.slice(0, 40).forEach((e) => {
+    const o = document.createElement("option");
+    o.value = `${e.event_code}_${e.season}`;
+    o.textContent = `${(e.event_name || e.event_code).slice(0, 44)}`;
+    if (saved === o.value) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+/* ════ Device directory (settings) ════ */
+async function loadDevices() {
+  const d = await getJSON(`${TT_API}/tracks`);
+  const tracks = (d && d.tracks) || [];
+  const sel = $("set-device");
+  sel.innerHTML = '<option value="">\u2014 select device \u2014</option>';
+  tracks.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  tracks.forEach((t) => {
+    const o = document.createElement("option");
+    o.value = t.deviceId || t.id;
+    o.textContent = `${t.online ? "\u25cf " : "\u25cb "}${t.trackName || t.name || t.deviceId}`;
+    if (o.value === state.deviceId) o.selected = true;
+    sel.appendChild(o);
+  });
+  // Auto-pick: freshest online device when nothing selected yet
+  if (!state.deviceId) {
+    const online = tracks.filter((t) => t.online);
+    if (online.length) {
+      state.deviceId = online[0].deviceId || online[0].id;
+      localStorage.setItem("tt-selected-device", state.deviceId);
+      sel.value = state.deviceId;
+      subscribe(state.deviceId);
+    }
+  }
+}
+
+/* ════ Weather (Open-Meteo, keyless) + density altitude ════ */
+function densityAltitudeFt(tempF, rh, stationHpa) {
+  const tc = (tempF - 32) / 1.8;
+  const es = 6.1078 * Math.pow(10, (7.5 * tc) / (237.3 + tc));
+  const e = (rh / 100) * es;
+  const tvK = (tc + 273.15) / (1 - (e / stationHpa) * (1 - 0.622));
+  const tvR = tvK * 1.8; // Kelvin -> Rankine
+  const pInHg = stationHpa * 0.02953;
+  return 145442.16 * (1 - Math.pow((17.326 * pInHg) / tvR, 0.235));
+}
+
+const WIND_ARROWS = ["\u2193","\u2199","\u2190","\u2196","\u2191","\u2197","\u2192","\u2198"]; // wind FROM dir -> blowing-to arrow
+function windArrow(deg) { return WIND_ARROWS[Math.round(((deg % 360) / 45)) % 8]; }
+
+function getLoc() {
+  try { return JSON.parse(localStorage.getItem("tt-ann-location") || "null"); }
+  catch { return null; }
+}
+
+async function refreshWeather() {
+  const loc = getLoc();
+  const note = $("set-loc-note");
+  if (note) note.textContent = loc ? `location: ${loc.name}` : "no location set \u2014 weather stays blank";
+  if (!loc) return;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
+    `&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m` +
+    `&temperature_unit=fahrenheit&wind_speed_unit=mph`;
+  const d = await getJSON(url);
+  if (!d || !d.current) return;
+  const c = d.current;
+  const set = (id, v) => { const el = $(id); el.textContent = v; el.classList.remove("empty"); };
+  set("wx-temp", `${Math.round(c.temperature_2m)}\u00b0F`);
+  set("wx-hum", `${Math.round(c.relative_humidity_2m)}%`);
+  set("wx-wind", `${windArrow(c.wind_direction_10m)}${Math.round(c.wind_speed_10m)}`);
+  set("wx-baro", `${(c.surface_pressure * 0.02953).toFixed(2)}"`);
+  const da = densityAltitudeFt(c.temperature_2m, c.relative_humidity_2m, c.surface_pressure);
+  set("wx-da", `DA ${Math.round(da).toLocaleString()}\u2032`);
+}
+
+async function setLocation(text) {
+  const note = $("set-loc-note");
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(text);
+  let loc = null;
+  if (m) {
+    loc = { name: `${m[1]},${m[2]}`, lat: parseFloat(m[1]), lon: parseFloat(m[2]) };
+  } else if (text.trim()) {
+    const d = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(text.trim())}&count=1`);
+    const r = d && d.results && d.results[0];
+    if (r) loc = { name: [r.name, r.admin1, r.country_code].filter(Boolean).join(", "), lat: r.latitude, lon: r.longitude };
+  }
+  if (!loc) { if (note) note.textContent = "location not found"; return; }
+  localStorage.setItem("tt-ann-location", JSON.stringify(loc));
+  refreshWeather();
+}
+
+/* ════ Settings UI ════ */
+$("btn-settings").addEventListener("click", () => $("settings-pop").classList.toggle("hidden"));
+document.addEventListener("click", (e) => {
+  const pop = $("settings-pop");
+  if (!pop.classList.contains("hidden") && !pop.contains(e.target) && e.target !== $("btn-settings")) {
+    pop.classList.add("hidden");
+  }
+});
+$("set-device").addEventListener("change", (e) => {
+  const id = e.target.value;
+  if (!id) return;
+  localStorage.setItem("tt-selected-device", id);
+  location.reload(); // simplest way to re-subscribe cleanly
+});
+$("set-event").addEventListener("change", (e) => {
+  if (e.target.value) localStorage.setItem("tt-ann-event", e.target.value);
+  else localStorage.removeItem("tt-ann-event");
+  state.histPairs = null;
+  loadEventHeader();
+});
+$("set-loc-btn").addEventListener("click", () => setLocation($("set-loc").value));
+$("set-loc").addEventListener("keydown", (e) => { if (e.key === "Enter") setLocation(e.target.value); });
+
+$("btn-refresh").addEventListener("click", () => {
+  state.histPairs = null;
+  Object.keys(tcCache).forEach((k) => delete tcCache[k]);
+  state.pairKey = ""; // force full reload of lane extras
+  if (state.mode === "live" && state.latestRace) renderRace(state.latestRace, { flash: false });
+  else if (state.displayedRace) renderRace(state.displayedRace, { flash: false });
+  loadEventHeader();
+  refreshWeather();
+});
+
+/* ════ Test runs (local simulation, writes nothing) ════ */
+function clearTest() {
+  state.testTimers.forEach(clearTimeout);
+  state.testTimers = [];
+}
+function testPair(nLanes) {
+  clearTest();
+  state.mode = "hold"; // simulate on a frozen screen so real live data can't interleave
+  setModeNote();
+  $("mode-note").innerHTML = `<b>TEST RUN</b> \u00b7 simulated \u00b7 press CURRENT for live`;
+  const mk = (i) => {
+    const dial = 8.9 + i * 0.45 + Math.random() * 0.4;
+    const et = dial + (Math.random() * 0.35 - 0.1);
+    return {
+      name: `TEST DRIVER ${String.fromCharCode(65 + i)}`, car_num: `${100 * (i + 1)}X`,
+      class_name: "TEST", member_num: "",
+      dial_in: dial.toFixed(2), rt: (Math.random() * 0.12).toFixed(3),
+      sixty: (dial * 0.141).toFixed(3), three30: (dial * 0.385).toFixed(3),
+      six60: (dial * 0.6).toFixed(3), six60_speed: (100 + Math.random() * 30).toFixed(2),
+      thousand: (dial * 0.78).toFixed(3), et: et.toFixed(3),
+      speed: (120 + Math.random() * 40).toFixed(2), mov: "",
+    };
+  };
+  const sides = nLanes === 4 ? SIDES4 : SIDES2;
+  const full = { category: "TEST CATEGORY", round: "E1", complete: false, winner: "" };
+  sides.forEach((s, i) => { full[s] = mk(i); });
+  const seq = ["rt", "sixty", "three30", "six60", "six60_speed", "thousand", "et", "speed", "mov"];
+  const stage = (upTo) => {
+    const r = JSON.parse(JSON.stringify(full));
+    sides.forEach((s) => {
+      seq.forEach((f, fi) => { if (fi > upTo) r[s][f] = ""; });
+    });
+    if (upTo >= seq.length - 1) {
+      r.complete = true;
+      const ets = sides.map((s) => parseFloat(full[s].et) - parseFloat(full[s].dial_in) + parseFloat(full[s].rt));
+      const wi = ets.indexOf(Math.min(...ets));
+      r.winner = sides[wi];
+      r[sides[wi]].mov = (Math.random() * 0.2).toFixed(4);
+    }
+    return r;
+  };
+  renderRace(stage(-1), { flash: true }); // pair on the line, dials only
+  seq.forEach((_, i) => {
+    state.testTimers.push(setTimeout(() => {
+      if (state.mode !== "hold") return; // user bailed to live
+      renderRace(stage(i), { flash: true });
+    }, 1600 + i * 900));
+  });
+}
+$("btn-test2").addEventListener("click", () => { $("settings-pop").classList.add("hidden"); testPair(2); });
+$("btn-test4").addEventListener("click", () => { $("settings-pop").classList.add("hidden"); testPair(4); });
+
+/* ════ Clock + boot ════ */
+setInterval(() => {
+  $("clock").textContent = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  $("foot-left").textContent = `timing-talk \u00b7 announcer \u00b7 ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+}, 1000);
+
+buildBoard(false);
+setModeNote();
+subscribe(state.deviceId);
+loadDevices();
+loadEventHeader();
+refreshWeather();
+setInterval(refreshWeather, 10 * 60 * 1000);
+</script>
+</body>
+</html>
