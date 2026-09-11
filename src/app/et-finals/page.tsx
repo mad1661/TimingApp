@@ -1308,12 +1308,14 @@ function TeamPanel({
   rank,
   view,
   onAdjustPoints,
+  onHideTeam,
   ...handlers
 }: {
   team: EtTeamStanding;
   rank: number;
   view: ViewMode;
   onAdjustPoints: (trackCode: string, big: number, jr: number, note: string) => void;
+  onHideTeam: (trackCode: string) => void;
 } & RacerTableHandlers) {
   const hasAdjustment = team.bigAdjustment !== 0 || team.jrAdjustment !== 0 || !!team.adjustmentNote;
   const [showAdjust, setShowAdjust] = useState(hasAdjustment);
@@ -1368,12 +1370,29 @@ function TeamPanel({
               <div className="text-xs uppercase tracking-wider text-gray-500">Total</div>
               <div className="text-xl font-bold text-nhra-red">{team.totalPoints}</div>
             </div>
-            <button
-              onClick={() => setShowAdjust((v) => !v)}
-              className="self-start text-xs text-gray-500 hover:text-white underline decoration-dotted underline-offset-2"
-            >
-              {showAdjust ? "hide" : "Adjust points"}
-            </button>
+            <div className="self-start flex flex-col items-end gap-1.5">
+              <button
+                onClick={() => setShowAdjust((v) => !v)}
+                className="text-xs text-gray-500 hover:text-white underline decoration-dotted underline-offset-2"
+              >
+                {showAdjust ? "hide" : "Adjust points"}
+              </button>
+              <button
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Hide ${team.team_name} from the standings?\n\nIts racers keep their matches and points — the team just isn't shown or ranked. You can bring it back from the Hidden teams list under the standings table.`,
+                    )
+                  )
+                    onHideTeam(team.track_code);
+                }}
+                disabled={handlers.assigning === `hide-${team.track_code}`}
+                className="text-xs text-gray-500 hover:text-yellow-400 underline decoration-dotted underline-offset-2 disabled:opacity-50"
+                title="Keep this team off the standings — for a team that doesn't belong at this event"
+              >
+                Hide team
+              </button>
+            </div>
           </div>
         </div>
         {showAdjust && (
@@ -1784,6 +1803,18 @@ export default function EtFinalsPage() {
     if (!big && !jr && !note.trim()) delete next[trackCode];
     else next[trackCode] = { big, jr, note: note.trim() };
     await savePointsRule({ pointsAdjustments: next }, `adjust-${trackCode}`);
+  }
+
+  // Keep a team off the board, or put it back. The team's racers stay matched
+  // to it either way — hiding only changes what's shown and ranked.
+  async function setTeamHidden(trackCode: string, hidden: boolean) {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const code = trackCode.trim().toUpperCase();
+    const current = (base.hiddenTeams || []).map((c) => c.trim().toUpperCase()).filter(Boolean);
+    const next = hidden ? Array.from(new Set([...current, code])) : current.filter((c) => c !== code);
+    if (hidden && teamTab === trackCode) setTeamTab("all");
+    await savePointsRule({ hiddenTeams: next }, `hide-${trackCode}`);
   }
 
   // Throw a pass out (rerun — it doesn't count) or make it count again.
@@ -3542,6 +3573,7 @@ export default function EtFinalsPage() {
           teamOptions={teamOptions}
           onAssign={assignRacer}
           onAdjustPoints={adjustTeamPoints}
+          onHideTeam={(code) => setTeamHidden(code, true)}
         />
       ) : (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
@@ -3622,7 +3654,45 @@ export default function EtFinalsPage() {
           </div>
           <div className="px-4 py-2.5 border-t border-nhra-border text-xs text-gray-500">
             Click a team — or its tab above — for the full roster split into who&apos;s gaining points and who isn&apos;t.
+            Open a team to hide it from the board if it doesn&apos;t belong at this event.
           </div>
+        </div>
+      )}
+
+      {/* ── Hidden teams ───────────────────────────────────────────────── */}
+      {!activeTeam && (data?.hiddenTeams?.length || 0) > 0 && (
+        <div className="mt-4 bg-nhra-card border border-nhra-border/60 rounded-xl px-4 py-3">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <h3 className="text-gray-300 font-semibold text-sm">
+              Hidden teams{" "}
+              <span className="text-gray-500 font-normal">({data!.hiddenTeams.length})</span>
+            </h3>
+            <p className="text-xs text-gray-500">
+              Kept off the standings and out of the totals, exports and outlook. Their racers are still matched to
+              them, so nothing spills into Unmatched.
+            </p>
+          </div>
+          <ul className="mt-2 divide-y divide-nhra-border/40">
+            {data!.hiddenTeams.map((t) => (
+              <li key={t.track_code} className="py-2 flex items-center justify-between gap-3 text-sm">
+                <div>
+                  <span className="text-gray-300">{t.team_name}</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {t.track_code} · {t.totalPoints} pt{t.totalPoints === 1 ? "" : "s"} · {t.racers.length} racer
+                    {t.racers.length === 1 ? "" : "s"}
+                    {!t.hasRoster && " · tech cards only"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setTeamHidden(t.track_code, false)}
+                  disabled={assigning === `hide-${t.track_code}`}
+                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-50"
+                >
+                  Show on standings
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
