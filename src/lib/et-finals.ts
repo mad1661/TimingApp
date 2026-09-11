@@ -145,6 +145,14 @@ export interface EtFinalsConfig {
    * computed points and always shown as an adjustment, never silently.
    */
   pointsAdjustments: Record<string, EtPointsAdjustment>;
+  /**
+   * Team codes kept off the standings (a team that doesn't belong at this
+   * event — a stale roster, a tech-card code nobody races under). Their
+   * racers still match to them, so nothing lands on the wrong team or in the
+   * unmatched list; the team just isn't shown or ranked. Hidden teams are
+   * returned separately so they can be brought back.
+   */
+  hiddenTeams: string[];
 }
 
 export interface EtPointsAdjustment {
@@ -166,6 +174,7 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     excludedDates: [],
     dayWindows: {},
     pointsAdjustments: {},
+    hiddenTeams: [],
   };
 }
 
@@ -339,6 +348,8 @@ export const TEAM_MATCH_PREFIX = "TEAM|";
 
 export interface EtFinalsStandings {
   teams: EtTeamStanding[];
+  /** Teams kept off the board by `config.hiddenTeams`, unranked. */
+  hiddenTeams: EtTeamStanding[];
   unmatched: EtUnmatchedRacer[];
   /** Every category present in the runs, with the role actually applied. */
   categories: {
@@ -1722,9 +1733,17 @@ export function computeEtFinalsStandings(
     );
   }
 
-  const standings = Array.from(teams.values()).sort(
-    (a, b) => b.totalPoints - a.totalPoints || a.team_name.localeCompare(b.team_name),
+  // A hidden team keeps its racers and points (so nothing shifts onto another
+  // team or into Unmatched) but leaves the board: it isn't ranked, doesn't
+  // count in the totals, and doesn't figure in anyone's outlook.
+  const hiddenCodes = new Set(
+    (config.hiddenTeams || []).map((c) => (c || "").trim().toUpperCase()).filter(Boolean),
   );
+  const byPoints = (a: EtTeamStanding, b: EtTeamStanding) =>
+    b.totalPoints - a.totalPoints || a.team_name.localeCompare(b.team_name);
+  const allTeams = Array.from(teams.values());
+  const standings = allTeams.filter((t) => !hiddenCodes.has(t.track_code.toUpperCase())).sort(byPoints);
+  const hiddenStandings = allTeams.filter((t) => hiddenCodes.has(t.track_code.toUpperCase())).sort(byPoints);
   let rank = 0;
   let lastPoints: number | null = null;
   standings.forEach((t, i) => {
@@ -1842,6 +1861,7 @@ export function computeEtFinalsStandings(
 
   return {
     teams: standings,
+    hiddenTeams: hiddenStandings,
     unmatched,
     categories,
     rosterOptions,

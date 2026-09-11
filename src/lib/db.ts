@@ -3438,6 +3438,7 @@ async function getEtFinalsConfigWithMeta(
         dayWindows: (data.dayWindows as EtFinalsConfig["dayWindows"]) || {},
         pointsAdjustments:
           (data.pointsAdjustments as EtFinalsConfig["pointsAdjustments"]) || {},
+        hiddenTeams: Array.isArray(data.hiddenTeams) ? (data.hiddenTeams as string[]) : [],
       },
       hasBuybackRule: typeof data.buybackEarnsPoints === "boolean",
     };
@@ -3531,6 +3532,7 @@ export async function saveEtFinalsSetup(
       excludedDates: config.excludedDates || [],
       dayWindows: config.dayWindows || {},
       pointsAdjustments: config.pointsAdjustments || {},
+      hiddenTeams: config.hiddenTeams || [],
     },
     saved_at: new Date().toISOString(),
   });
@@ -3635,6 +3637,7 @@ export async function saveEtFinalsConfig(
     excludedDates: config.excludedDates || [],
     dayWindows: config.dayWindows || {},
     pointsAdjustments: config.pointsAdjustments || {},
+    hiddenTeams: config.hiddenTeams || [],
     updated_at: new Date().toISOString(),
   });
 }
