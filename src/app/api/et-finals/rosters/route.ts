@@ -5,7 +5,7 @@ import {
   recodeEtFinalsRoster,
   saveEtFinalsRoster,
 } from "@/lib/db";
-import { parseEtFinalsRosterWorkbook } from "@/lib/et-finals-parse";
+import { parseEtFinalsRosterWorkbooks } from "@/lib/et-finals-parse";
 
 export const dynamic = "force-dynamic";
 
@@ -44,31 +44,40 @@ export async function POST(request: NextRequest) {
     if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const roster = parseEtFinalsRosterWorkbook(buffer, {
+    // One workbook is one team on the per-track template, but the divisional
+    // flat sheet carries every team in the division at once.
+    const rosters = parseEtFinalsRosterWorkbooks(buffer, {
       fileName: file.name,
       trackCode: (formData.get("track_code") as string) || undefined,
       teamName: (formData.get("team_name") as string) || undefined,
       season: (formData.get("season") as string) || undefined,
-    });
+    }).filter((r) => r.entries.length > 0);
 
-    if (roster.entries.length === 0) {
+    if (rosters.length === 0) {
       return NextResponse.json(
-        { error: "No roster entries found — is this the combined ET Finals / JDRL template?" },
+        { error: "No roster entries found — is this the ET Finals roster template?" },
         { status: 400 },
       );
     }
 
-    const id = await saveEtFinalsRoster(roster);
-    return NextResponse.json({
-      success: true,
-      id,
-      track_code: roster.track_code,
-      team_name: roster.team_name,
-      season: roster.season,
-      bigEntries: roster.entries.filter((e) => e.division === "big").length,
-      jrEntries: roster.entries.filter((e) => e.division === "jr").length,
-      jrPointsEntries: roster.entries.filter((e) => e.division === "jr" && e.points_eligible).length,
-    });
+    const saved = [];
+    for (const roster of rosters) {
+      const id = await saveEtFinalsRoster(roster);
+      saved.push({
+        id,
+        track_code: roster.track_code,
+        track_name: roster.track_name,
+        team_name: roster.team_name,
+        season: roster.season,
+        bigEntries: roster.entries.filter((e) => e.division === "big").length,
+        jrEntries: roster.entries.filter((e) => e.division === "jr").length,
+        jrPointsEntries: roster.entries.filter((e) => e.division === "jr" && e.points_eligible).length,
+        warnings: roster.warnings || [],
+      });
+    }
+    // Top-level fields describe the first team so older callers still read
+    // a single-team upload the same way; `rosters` lists every team saved.
+    return NextResponse.json({ success: true, ...saved[0], rosters: saved });
   } catch (err) {
     console.error("ET Finals roster upload error:", err);
     return NextResponse.json({ error: "Failed to process roster file" }, { status: 500 });

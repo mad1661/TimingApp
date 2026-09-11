@@ -73,6 +73,8 @@ export interface EtFinalsRoster {
   sheets_used?: string[];
   /** Every sheet in the uploaded workbook, for when none looked like a roster. */
   sheets_seen?: string[];
+  /** Rows the parser had doubts about (no car number, mis-coded team). */
+  warnings?: string[];
 }
 
 export interface EtFinalsConfig {
@@ -438,6 +440,21 @@ export function surnameOf(raw: string | null | undefined): string {
   return tokens.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
+/**
+ * Whether two names could be the same surname. The longest-token guess ties
+ * on names like "Aaron Jones" — both five letters — and the two sources write
+ * the parts in opposite orders, so the guess from one side is checked against
+ * ALL the tokens of the other rather than against its own guess. A blank on
+ * either side is no evidence and passes.
+ */
+export function surnamesCompatible(a: string | null | undefined, b: string | null | undefined): boolean {
+  const sa = surnameOf(a);
+  const sb = surnameOf(b);
+  if (!sa || !sb) return true;
+  if (sa === sb) return true;
+  return nameTokens(b).includes(sa) || nameTokens(a).includes(sb);
+}
+
 // Roman-numeral and single-letter suffixes are ambiguous against a middle
 // initial, so only the ones that unmistakably mark a generation count.
 const GENERATION_SUFFIXES = new Set(["JR", "SR", "II", "III"]);
@@ -462,6 +479,33 @@ export function generationOf(raw: string | null | undefined): string {
     if (GENERATION_SUFFIXES.has(t)) return t;
   }
   return "";
+}
+
+/**
+ * How well a roster class label fits a timing-system category, as the share
+ * of words the two have in common: "Super Pro" against "SUPER PRO" is 1,
+ * against "PRO ET" is 1/3, against "SPORTSMAN" is 0. Word-based rather than
+ * exact because the roster writes "Pro ET" where the timing system may write
+ * "PRO ET BRACKET".
+ */
+export function categoryAffinity(rosterCategory: string, runCategory: string): number {
+  const words = (s: string): Set<string> => {
+    const all = (s || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    // Filler words every class carries tell the classes apart no better than
+    // nothing — unless they are all a label has.
+    const telling = all.filter((w) => w !== "ET" && w !== "BRACKET" && w !== "FINALS");
+    return new Set(telling.length ? telling : all);
+  };
+  const a = words(rosterCategory);
+  const b = words(runCategory);
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return shared / (a.size + b.size - shared);
 }
 
 export function looseNameKey(raw: string | null | undefined): string {
@@ -1224,13 +1268,9 @@ export function computeEtFinalsStandings(
       return ok.length > 0 ? { matches: ok } : undefined;
     };
 
-    const runSurname = surnameOf(agg.name);
     const surnameCompatible = (b: Bucket | undefined): Bucket | undefined => {
-      if (!b || !runSurname) return b;
-      const ok = b.matches.filter((m) => {
-        const entrySurname = surnameOf(m.entry.name);
-        return !entrySurname || entrySurname === runSurname;
-      });
+      if (!b || !surnameOf(agg.name)) return b;
+      const ok = b.matches.filter((m) => surnamesCompatible(agg.name, m.entry.name));
       if (ok.length === b.matches.length) return b;
       return ok.length > 0 ? { matches: ok } : undefined;
     };
@@ -1251,6 +1291,25 @@ export function computeEtFinalsStandings(
       return ok.length > 0 ? { matches: ok } : undefined;
     };
 
+    // The divisional roster puts one racer on two teams in two classes — Pro
+    // ET on A1, Super Pro on A2 — so a name or member number legitimately
+    // spans teams and the class the pass was run in is what says which team
+    // earns it. Keep only the entries whose class fits the run's category
+    // best; a preference, not a veto, so a bucket with no class information
+    // (or every class fitting equally) passes through untouched.
+    const classPreferred = (b: Bucket | undefined): Bucket | undefined => {
+      if (!b || b.matches.length < 2) return b;
+      let best = 0;
+      const scores = b.matches.map((m) => {
+        const s = categoryAffinity(m.entry.category, agg.category);
+        if (s > best) best = s;
+        return s;
+      });
+      if (best === 0) return b;
+      const ok = b.matches.filter((_, i) => scores[i] === best);
+      return ok.length === b.matches.length ? b : { matches: ok };
+    };
+
     // A name that only matches the OTHER points board is not a safe match: a
     // junior and an adult sharing a name (a father and son) is the commonest
     // name collision in the division. The cross-board fallback is kept only for
@@ -1265,25 +1324,31 @@ export function computeEtFinalsStandings(
     // route — it survives renumbered cars and re-spelled names alike.
     if (!ref && agg.member_number) {
       take(
-        resolveBucket(generationCompatible(sameDivision(byMember.get(agg.member_number))), teamHint),
+        resolveBucket(
+          classPreferred(generationCompatible(sameDivision(byMember.get(agg.member_number)))),
+          teamHint,
+        ),
         "member",
       );
     }
     if (!ref && card?.memberNumber) {
       take(
-        resolveBucket(generationCompatible(sameDivision(byMember.get(card.memberNumber))), teamHint),
+        resolveBucket(
+          classPreferred(generationCompatible(sameDivision(byMember.get(card.memberNumber)))),
+          teamHint,
+        ),
         "member",
       );
     }
     if (!ref) {
       const own = resolveBucket(
-        generationCompatible(memberConsistent(byName.get(`${agg.division}|${nameKey}`))),
+        classPreferred(generationCompatible(memberConsistent(byName.get(`${agg.division}|${nameKey}`)))),
         teamHint,
       );
       const other = own
         ? null
         : resolveBucket(
-            generationCompatible(memberConsistent(byNameAnyDivision.get(nameKey))),
+            classPreferred(generationCompatible(memberConsistent(byNameAnyDivision.get(nameKey)))),
             teamHint,
           );
       if (own) take(own, "name");
@@ -1296,7 +1361,9 @@ export function computeEtFinalsStandings(
     if (!ref) {
       take(
         resolveBucket(
-          generationCompatible(surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`)))),
+          classPreferred(
+            generationCompatible(surnameCompatible(memberConsistent(byCar.get(`${agg.division}|${carKey}`)))),
+          ),
           teamHint,
         ),
         "car",
@@ -1306,13 +1373,13 @@ export function computeEtFinalsStandings(
     // under a shortened or differently-spelled first name.
     if (!ref && looseKey) {
       const own = resolveBucket(
-        generationCompatible(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`))),
+        classPreferred(generationCompatible(memberConsistent(byLoose.get(`${agg.division}|${looseKey}`)))),
         teamHint,
       );
       const other = own
         ? null
         : resolveBucket(
-            generationCompatible(memberConsistent(byLooseAnyDivision.get(looseKey))),
+            classPreferred(generationCompatible(memberConsistent(byLooseAnyDivision.get(looseKey)))),
             teamHint,
           );
       if (own) take(own, "name");
