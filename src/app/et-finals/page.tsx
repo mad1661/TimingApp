@@ -2129,10 +2129,26 @@ export default function EtFinalsPage() {
         const res = await fetch("/api/et-finals/rosters", { method: "POST", body: form });
         const body = await res.json();
         if (!res.ok) results.push(`${file.name}: ${body.error || "failed"}`);
-        else
-          results.push(
-            `${body.team_name || body.track_code} (${body.track_code}): ${body.bigEntries} big cars, ${body.jrPointsEntries} of ${body.jrEntries} jrs scoring`,
-          );
+        else {
+          type SavedTeam = {
+            track_code: string;
+            team_name: string;
+            bigEntries: number;
+            jrEntries: number;
+            jrPointsEntries: number;
+            warnings?: string[];
+          };
+          const teams: SavedTeam[] = Array.isArray(body.rosters) && body.rosters.length ? body.rosters : [body];
+          if (teams.length > 1) {
+            const racers = teams.reduce((s, t) => s + t.bigEntries + t.jrEntries, 0);
+            results.push(`${file.name}: ${teams.length} teams, ${racers} entries`);
+          }
+          for (const t of teams) {
+            const jr = t.jrEntries ? `, ${t.jrPointsEntries} of ${t.jrEntries} jrs scoring` : "";
+            results.push(`${teams.length > 1 ? "  " : ""}${t.team_name || t.track_code} (${t.track_code}): ${t.bigEntries} big cars${jr}`);
+            for (const w of t.warnings || []) results.push(`    ! ${w}`);
+          }
+        }
       } catch {
         results.push(`${file.name}: network error`);
       }

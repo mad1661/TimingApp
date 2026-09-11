@@ -251,6 +251,283 @@ function baseName(fileName: string): string {
     .trim();
 }
 
+// ── Divisional flat roster (one sheet, every team) ──────────────────────────
+//
+// Division 4 files its ET Finals rosters the other way round: instead of one
+// workbook per track, the division keeps ONE sheet ("Main Event") listing every
+// racer in the division, with a TEAM CODE column saying which team each entry
+// belongs to. A track can field several teams (Ardmore is A1 and A2, Concho C1
+// and C2), and the same racer is routinely on two of them in two different
+// classes — Pro ET on A1, Super Pro on A2 — so the team code, not the track, is
+// the team identity and the class rides along on each entry.
+//
+// The workbook also carries a printable per-track tab (with a copy of the same
+// rows), an Index tab, a Race of Champions tab and a Jr Street / High School /
+// Managers tab. None of those are team rosters: reading them as well would
+// triple-count every racer, which is exactly what the per-workbook path did
+// when this layout first arrived.
+
+const TEAM_CODE_COLS = ["team code", "team"];
+
+/**
+ * Column lookup by meaning with an exclusion, for headers where the loose
+ * substring match misfires: "car" lands on "Tech Card", "member" on the
+ * membership expiration date.
+ */
+function findCol(cols: Map<string, number>, needles: string[], exclude?: RegExp): number | undefined {
+  for (const needle of needles) {
+    const target = norm(needle);
+    for (const [header, idx] of cols) {
+      if (exclude && exclude.test(header)) continue;
+      if (header === target || header.includes(target)) return idx;
+    }
+  }
+  return undefined;
+}
+
+/** "Logan (2)" / "Dillon(2)" / "Mclearen (2)" — Excel's mark on a racer's second entry, not a second person. */
+function stripEntryOrdinal(s: string): string {
+  return (s || "").replace(/\s*\(\s*\d+\s*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Cells the template's fillers use for "nothing here". */
+const PLACEHOLDER_RE = /^(n\/?a|none|open|tbd|no\s+et|pending|-+|\?+)$/i;
+function cleanValue(v: string): string {
+  const t = (v || "").trim();
+  return PLACEHOLDER_RE.test(t) ? "" : t;
+}
+
+interface DivisionalPlan extends SheetPlan {
+  teamCol: number;
+  dataRows: number;
+}
+
+/**
+ * Find the divisional flat sheet, if the workbook has one: a roster-shaped
+ * header that also names a TEAM CODE column, taking the one with the most
+ * racers under it. The per-track tabs carry the same header in their "TRACK
+ * TEAM LIST" blocks, so several sheets qualify — the division-wide one is the
+ * one with hundreds of rows rather than thirty.
+ */
+function findDivisionalSheet(workbook: XLSX.WorkBook): DivisionalPlan | null {
+  let best: DivisionalPlan | null = null;
+  for (const plan of findRosterSheets(workbook)) {
+    let teamCol: number | undefined;
+    for (const [header, idx] of plan.cols) {
+      if (TEAM_CODE_COLS.some((t) => header === norm(t) || header.includes(norm(t)))) {
+        // "team captain" / "team name" are label columns, not the code.
+        if (/captain|name|manager/.test(header)) continue;
+        teamCol = idx;
+        break;
+      }
+    }
+    if (teamCol === undefined) continue;
+    let dataRows = 0;
+    for (let i = plan.headerRow + 1; i < plan.grid.length; i++) {
+      const row = plan.grid[i] || [];
+      if ((row[teamCol] || "").trim() && (row.some((c, j) => j !== teamCol && c.trim()))) dataRows++;
+    }
+    if (dataRows === 0) continue;
+    if (!best || dataRows > best.dataRows) best = { ...plan, teamCol, dataRows };
+  }
+  return best;
+}
+
+/**
+ * The printable per-track tab for a track, found by its "TRACK:" label. Only
+ * the header block is read from it (manager, captain, event title).
+ */
+function findTrackInfoSheet(workbook: XLSX.WorkBook, trackName: string, exclude: string): Grid | null {
+  const want = norm(trackName);
+  if (!want) return null;
+  for (const sheetName of workbook.SheetNames) {
+    if (sheetName === exclude) continue;
+    const grid = readGrid(workbook, sheetName);
+    for (const row of grid.slice(0, 15)) {
+      for (let c = 0; c < row.length - 1; c++) {
+        if (norm(row[c]) !== "track") continue;
+        for (let n = c + 1; n < Math.min(row.length, c + 4); n++) {
+          if (norm(row[n]) === want) return grid;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** "2026 Texas Motorplex ET Finals Rosters" — the title the per-track tabs open with. */
+function findEventTitle(workbook: XLSX.WorkBook): string {
+  for (const sheetName of workbook.SheetNames) {
+    const grid = readGrid(workbook, sheetName);
+    for (const row of grid.slice(0, 8)) {
+      for (const cell of row) {
+        if (/\b20\d{2}\b/.test(cell) && /finals|roster/i.test(cell) && cell.length < 80) return cell.trim();
+      }
+    }
+  }
+  return "";
+}
+
+function parseDivisionalWorkbook(
+  workbook: XLSX.WorkBook,
+  plan: DivisionalPlan,
+  opts: ParseOptions,
+): EtFinalsRoster[] {
+  const eventName = findEventTitle(workbook);
+  const fileLabel = baseName(opts.fileName || "");
+  const season =
+    (opts.season || "").trim() ||
+    (eventName.match(/\b(20\d{2})\b/)?.[1] ?? fileLabel.match(/\b(20\d{2})\b/)?.[1] ?? String(new Date().getFullYear()));
+  const uploadedAt = new Date().toISOString();
+
+  interface TeamAcc {
+    code: string;
+    entries: EtRosterEntry[];
+    trackNames: Map<string, number>;
+    /** The track each row named, by entry, for the mis-coded-row warning. */
+    rowTrack: Map<EtRosterEntry, string>;
+    warnings: string[];
+  }
+  const teams = new Map<string, TeamAcc>();
+  const sheetWarnings: string[] = [];
+  let skippedNoTeam = 0;
+  let skippedPlaceholder = 0;
+
+  const carCol = findCol(plan.cols, ["competition", ...VEHICLE_COLS], /card|tech|check/);
+  const memberCol = findCol(plan.cols, MEMBER_COLS, /expir|date/);
+  const trackNameCol = findCol(plan.cols, ["track name", "track"], /code|team/);
+  const cell = (row: string[], idx: number | undefined): string =>
+    idx === undefined ? "" : (row[idx] || "").trim();
+
+  for (let i = plan.headerRow + 1; i < plan.grid.length; i++) {
+    const row = plan.grid[i] || [];
+    const get = colGetter(row, plan.cols);
+
+    const rawLast = get(...LAST_NAME_COLS);
+    const rawFirst = get(...FIRST_NAME_COLS);
+    let name: string;
+    if (rawLast || rawFirst) {
+      const last = stripEntryOrdinal(cleanValue(rawLast));
+      const first = stripEntryOrdinal(cleanValue(rawFirst));
+      name = [last, first].filter(Boolean).join(", ");
+    } else {
+      name = stripEntryOrdinal(cleanValue(get(...NAME_COLS)));
+    }
+    // A row that is only a track name or a numbered blank is template padding;
+    // an "Open"/"N/A" name is a slot nobody filled.
+    if (!name) {
+      if ((rawLast || rawFirst) && !cleanValue(rawLast) && !cleanValue(rawFirst)) skippedPlaceholder++;
+      continue;
+    }
+
+    const code = (row[plan.teamCol] || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+    if (!code) {
+      skippedNoTeam++;
+      continue;
+    }
+
+    const rawCategory = get(...CATEGORY_COLS);
+    const category = repairAgeGroup(cleanValue(rawCategory));
+    const division: EtDivision = JR_CATEGORY_RE.test(category) ? "jr" : "big";
+    const trackName = cleanValue(cell(row, trackNameCol));
+    const car = cleanValue(cell(row, carCol)).toUpperCase().replace(/\s+/g, "");
+    const member = cleanValue(cell(row, memberCol)).replace(/\s+/g, "");
+
+    let team = teams.get(code);
+    if (!team) {
+      teams.set(code, (team = { code, entries: [], trackNames: new Map(), rowTrack: new Map(), warnings: [] }));
+    }
+    if (trackName) team.trackNames.set(trackName, (team.trackNames.get(trackName) || 0) + 1);
+
+    const slot = team.entries.length + 1;
+    const entry: EtRosterEntry = {
+      division,
+      slot,
+      roster_role: "",
+      // Every divisional entry earns; the sheet has no non-points rows.
+      points_eligible: true,
+      category,
+      // Divisional car numbers are the racer's real competition number, not a
+      // vehicle number that takes a track suffix.
+      vehicle_number: car,
+      track_code: code,
+      car_number: car,
+      name,
+      city: get("city"),
+      state: get("state"),
+      member_number: member,
+      license_number: get("nhra et license", "license"),
+      phone: get("phone"),
+      email: get("email"),
+    };
+    team.entries.push(entry);
+    team.rowTrack.set(entry, trackName);
+    if (!car) team.warnings.push(`${name} (${category || "no class"}) has no car number — matches by name only`);
+  }
+
+  if (skippedNoTeam) sheetWarnings.push(`${skippedNoTeam} row(s) skipped: no team code`);
+  if (skippedPlaceholder) sheetWarnings.push(`${skippedPlaceholder} placeholder row(s) skipped`);
+
+  // How many teams each track fields decides how a team is named: a lone team
+  // is just the track; a track with two is "Ardmore Dragway A1" / "... A2".
+  const teamsPerTrack = new Map<string, number>();
+  const trackOf = new Map<string, string>();
+  for (const team of teams.values()) {
+    let trackName = "";
+    let top = 0;
+    for (const [t, n] of team.trackNames) {
+      if (n > top) [trackName, top] = [t, n];
+    }
+    trackOf.set(team.code, trackName);
+    if (trackName) teamsPerTrack.set(trackName, (teamsPerTrack.get(trackName) || 0) + 1);
+    // A row whose track disagrees with the rest of its team code is most
+    // likely a mis-typed code. Flag it; the code still decides.
+    for (const [entry, t] of team.rowTrack) {
+      if (t && trackName && t !== trackName) {
+        team.warnings.push(
+          `${entry.name} (${entry.category || "no class"}) is coded ${team.code} but listed under "${t}" — the rest of ${team.code} is "${trackName}"; check the team code`,
+        );
+      }
+    }
+  }
+
+  const rosters: EtFinalsRoster[] = [];
+  for (const team of Array.from(teams.values()).sort((a, b) => a.code.localeCompare(b.code))) {
+    const trackName = trackOf.get(team.code) || "";
+    const multi = (teamsPerTrack.get(trackName) || 0) > 1;
+    const info = trackName ? findTrackInfoSheet(workbook, trackName, plan.sheetName) : null;
+    rosters.push({
+      id: `${season}_${team.code}`,
+      track_code: team.code,
+      track_name: trackName || team.code,
+      team_name: trackName ? (multi ? `${trackName} ${team.code}` : trackName) : team.code,
+      captain: info ? labelValue(info, "team captain", "captain") : "",
+      captain_phone: "",
+      captain_email: "",
+      event_name: eventName,
+      season,
+      entries: team.entries,
+      source_file: opts.fileName || "",
+      uploaded_at: uploadedAt,
+      sheets_used: [`${plan.sheetName} (divisional, ${teams.size} teams)`],
+      sheets_seen: workbook.SheetNames,
+      warnings: [...sheetWarnings, ...team.warnings],
+    });
+  }
+  return rosters;
+}
+
+/**
+ * Parse an uploaded roster workbook into one roster per team. A per-track
+ * template yields one; the divisional flat sheet yields one per team code.
+ */
+export function parseEtFinalsRosterWorkbooks(buffer: Buffer, opts: ParseOptions = {}): EtFinalsRoster[] {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const divisional = findDivisionalSheet(workbook);
+  if (divisional) return parseDivisionalWorkbook(workbook, divisional, opts);
+  return [parseEtFinalsRosterWorkbook(buffer, opts)];
+}
+
 export function parseEtFinalsRosterWorkbook(buffer: Buffer, opts: ParseOptions = {}): EtFinalsRoster {
   const workbook = XLSX.read(buffer, { type: "buffer" });
 
