@@ -3446,6 +3446,8 @@ async function getEtFinalsConfigWithMeta(
         pointsAdjustments:
           (data.pointsAdjustments as EtFinalsConfig["pointsAdjustments"]) || {},
         hiddenTeams: Array.isArray(data.hiddenTeams) ? (data.hiddenTeams as string[]) : [],
+        carSuffixNamesTeam:
+          typeof data.carSuffixNamesTeam === "boolean" ? (data.carSuffixNamesTeam as boolean) : null,
       },
       hasBuybackRule: typeof data.buybackEarnsPoints === "boolean",
     };
@@ -3540,6 +3542,7 @@ export async function saveEtFinalsSetup(
       dayWindows: config.dayWindows || {},
       pointsAdjustments: config.pointsAdjustments || {},
       hiddenTeams: config.hiddenTeams || [],
+      carSuffixNamesTeam: typeof config.carSuffixNamesTeam === "boolean" ? config.carSuffixNamesTeam : null,
     },
     saved_at: new Date().toISOString(),
   });
@@ -3645,6 +3648,7 @@ export async function saveEtFinalsConfig(
     dayWindows: config.dayWindows || {},
     pointsAdjustments: config.pointsAdjustments || {},
     hiddenTeams: config.hiddenTeams || [],
+    carSuffixNamesTeam: typeof config.carSuffixNamesTeam === "boolean" ? config.carSuffixNamesTeam : null,
     updated_at: new Date().toISOString(),
   });
 }
