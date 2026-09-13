@@ -3672,6 +3672,7 @@ async function buildEtTechCardRefs(): Promise<EtTechCardRef[]> {
       refs.push({
         memberNumber,
         trackTeam: (card.track_team || "").trim().toUpperCase(),
+        name,
         carKey: normalizeCarKey(card.car_number),
         nameKey: normalizeNameKey(name),
         looseKey: looseNameKey(name),
