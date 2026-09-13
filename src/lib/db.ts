@@ -1,5 +1,5 @@
 import { getDb } from "./firebase-admin";
-import { normalizeRacerSearch } from "./run-finish";
+import { normalizeRacerSearch, finishEt } from "./run-finish";
 import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
 import {
   categoryKindFor,
@@ -2113,18 +2113,20 @@ export async function getBestLosingPackage(
   const roundSet = new Set(rounds);
   const categorySet = new Set(categories);
 
-  // Filter to elimination losers with valid data
+  // Filter to elimination losers with valid data. Eighth-mile classes finish
+  // at 660', so the ET comes from finishEt(), not ft1320 alone.
   const losers = allRuns.filter((r) => {
     if (!r.round || !roundSet.has(r.round)) return false;
     if (!r.category || !categorySet.has(r.category)) return false;
     if (r.is_winner === 1) return false;
     if (r.rt === null || r.rt === undefined || r.rt < 0) return false;
-    if (!r.ft1320 || r.ft1320 <= 0) return false;
+    const et = finishEt(r);
+    if (!et || et <= 0) return false;
     // Use dial_in if available, otherwise try parsing class_index as a number
     const dialValue = (r.dial_in != null && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : NaN);
     if (isNaN(dialValue) || dialValue <= 0) return false;
     // Exclude breakouts (ran faster than dial-in)
-    if (r.ft1320 < dialValue) return false;
+    if (et < dialValue) return false;
     (r as RunRow & { _dialValue?: number })._dialValue = dialValue;
     return true;
   });
@@ -2136,14 +2138,15 @@ export async function getBestLosingPackage(
       .filter((r) => r.category === cat)
       .map((r) => {
         const dialValue = (r as RunRow & { _dialValue?: number })._dialValue ?? r.dial_in!;
-        const diff = r.ft1320! - dialValue;
+        const et = finishEt(r)!;
+        const diff = et - dialValue;
         return {
           name: r.name || "Unknown",
           car_number: r.car_number || "",
           category: cat,
           round: r.round!,
           rt: r.rt!,
-          ft1320: r.ft1320!,
+          ft1320: et,
           dial_in: dialValue,
           diff: Math.round(diff * 10000) / 10000,
           package: Math.round((r.rt! + diff) * 10000) / 10000,
@@ -2198,7 +2201,8 @@ export async function getEventWinners(
 
   return Array.from(winnerMap.values()).map((r) => {
     const dialValue = (r.dial_in && r.dial_in > 0) ? r.dial_in : (r.class_index ? parseFloat(r.class_index) : 0);
-    const diff = (r.ft1320 && dialValue > 0) ? r.ft1320 - dialValue : 0;
+    const et = finishEt(r);
+    const diff = (et && dialValue > 0) ? et - dialValue : 0;
     const pkg = (r.rt != null && r.rt >= 0 && diff >= 0) ? r.rt + diff : 0;
     return {
       name: r.name || "Unknown",
@@ -2206,7 +2210,7 @@ export async function getEventWinners(
       category: r.category!,
       round: r.round!,
       rt: r.rt || 0,
-      ft1320: r.ft1320 || 0,
+      ft1320: et || 0,
       dial_in: dialValue,
       package: Math.round(pkg * 10000) / 10000,
       timestamp: r.timestamp || "",
@@ -2252,9 +2256,11 @@ export async function getPerfectReactionTimes(
     if (!((types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT))) return false;
 
     // Perfect RT is exactly 0.000 — must be non-negative, within tolerance,
-    // and the run must have a valid finish time (excludes resets with rt=0 but no ET)
+    // and the run must have a valid finish time (excludes resets with rt=0 but
+    // no ET). Eighth-mile passes carry their finish at 660'.
     if (r.rt < 0 || r.rt >= 0.0005) return false;
-    if (r.ft1320 == null || r.ft1320 <= 0) return false;
+    const et = finishEt(r);
+    if (et == null || et <= 0) return false;
     return true;
   });
 
@@ -2268,7 +2274,7 @@ export async function getPerfectReactionTimes(
       category: cat,
       round: r.round!,
       rt: r.rt!,
-      ft1320: r.ft1320,
+      ft1320: finishEt(r),
       is_winner: r.is_winner,
       timestamp: r.timestamp || "",
     };
@@ -2306,10 +2312,11 @@ export async function getDeadOnRuns(
     const rd = (r.round || "").toUpperCase();
     if (!rd.startsWith("E") && !rd.startsWith("R") && !rd.startsWith("C") && rd !== "F" && rd !== "FINAL") return false;
     if (!r.category) return false;
-    if (!r.ft1320 || r.ft1320 <= 0) return false;
+    const et = finishEt(r); // eighth-mile passes finish at 660'
+    if (!et || et <= 0) return false;
     if (!r.dial_in || r.dial_in <= 0) return false;
     // Dead on = ET matches dial-in to the thousandth
-    return Math.round(r.ft1320 * 1000) === Math.round(r.dial_in * 1000);
+    return Math.round(et * 1000) === Math.round(r.dial_in * 1000);
   });
 
   const result: Record<string, DeadOnEntry[]> = {};
@@ -2322,7 +2329,7 @@ export async function getDeadOnRuns(
       category: cat,
       round: r.round!,
       rt: r.rt,
-      ft1320: r.ft1320!,
+      ft1320: finishEt(r)!,
       dial_in: r.dial_in!,
       is_winner: r.is_winner,
       timestamp: r.timestamp || "",
