@@ -243,6 +243,8 @@ export interface EtMatchedIdentity {
   category: string;
   car_number: string;
   name: string;
+  /** The timing system showed no driver; `name` came from the tech card on this car number. */
+  nameFromTechCard: boolean;
   member_number: string;
   matchedBy: "car" | "name" | "member" | "manual";
   points: number;
@@ -347,6 +349,8 @@ export interface EtUnmatchedRacer {
   /** Stable handle for this racer, to hand back as a manual match. */
   identity: string;
   name: string;
+  /** The timing system showed no driver; `name` is the tech card's, a likely name. */
+  nameFromTechCard: boolean;
   car_number: string;
   category: string;
   division: EtDivision;
@@ -770,6 +774,12 @@ function resolveBucket(
 
 interface RunnerAggregate {
   name: string;
+  /**
+   * The timing system showed this car with no driver name (a car not in its
+   * database) and the name was taken from the tech card filed under the same
+   * car number — a likely name, not a confirmed one.
+   */
+  nameFromTechCard: boolean;
   car_number: string;
   /** NHRA member number when the timing data carries one (EData always, the
    *  API and some getresults grids). The strongest identity there is. */
@@ -791,6 +801,8 @@ export interface EtTechCardRef {
   memberNumber: string;
   /** Track code, uppercased. A hint only — the roster decides team membership. */
   trackTeam: string;
+  /** Driver name as written on the card, for a car the timing system shows nameless. */
+  name?: string;
   carKey: string;
   nameKey: string;
   looseKey: string;
@@ -1001,6 +1013,7 @@ export function computeEtFinalsStandings(
         key,
         (agg = {
           name: (run.name || "").trim(),
+          nameFromTechCard: false,
           car_number: (run.car_number || "").trim(),
           member_number: (run.member_number || "").trim(),
           category: cat,
@@ -1235,6 +1248,19 @@ export function computeEtFinalsStandings(
     // that some other racer is now running would put that racer's round wins on
     // the wrong team's board. A manual pin set on the page beats all of it.
     const carKey = normalizeCarKey(agg.car_number);
+    // A car the timing system's database doesn't know comes through as a bare
+    // number with no driver. The tech card filed under that number is the best
+    // guess at who it is: take its name so the racer reads as a person and can
+    // still find their roster row by name — flagged, since it's a likely name
+    // rather than one the timing data confirmed.
+    if (!agg.name) {
+      const byNumber =
+        (agg.member_number ? tech.byMember.get(agg.member_number) : undefined) || tech.byCar.get(carKey);
+      if (byNumber?.name) {
+        agg.name = byNumber.name;
+        agg.nameFromTechCard = true;
+      }
+    }
     const nameKey = normalizeNameKey(agg.name);
     const looseKey = looseNameKey(agg.name);
     let ref: RosterIndexEntry | "ambiguous" | null = null;
@@ -1481,6 +1507,7 @@ export function computeEtFinalsStandings(
       unmatched.push({
         identity: `${agg.category}|${agg.identity}`,
         name: agg.name,
+        nameFromTechCard: agg.nameFromTechCard,
         car_number: agg.car_number,
         category: agg.category,
         division: agg.division,
@@ -1713,6 +1740,7 @@ export function computeEtFinalsStandings(
       category: s.agg.category,
       car_number: s.agg.car_number,
       name: s.agg.name,
+      nameFromTechCard: s.agg.nameFromTechCard,
       member_number: s.agg.member_number,
       matchedBy: s.matchedBy,
       points: award,

@@ -344,6 +344,12 @@ function MatchedFromList({
             {racer.matched_from.length > 1 ? "Combined: " : "Matched: "}
             <span className="text-gray-300 font-mono">{m.car_number || "—"}</span>
             {m.name ? <span className="text-gray-300"> {m.name}</span> : null}
+            {m.nameFromTechCard && (
+              <span className="text-yellow-500" title="The timing system showed this car with no driver; the name is from the tech card on this car number">
+                {" "}
+                (name from tech card)
+              </span>
+            )}
             {m.member_number ? <span className="text-gray-600"> · member #{m.member_number}</span> : null}
             <span className="text-gray-600"> · {m.category} · via {m.matchedBy === "manual" ? "pin" : m.matchedBy}</span>
           </span>
@@ -4011,6 +4017,14 @@ export default function EtFinalsPage() {
                       <td className="px-2 py-2 text-gray-300">{u.car_number || "—"}</td>
                       <td className="px-3 py-2 text-white">
                         {u.name || "—"}
+                        {u.nameFromTechCard && (
+                          <span
+                            className="block text-[11px] text-yellow-500"
+                            title="The timing system showed this car with no driver name; this is the name on the tech card filed under the same car number"
+                          >
+                            probably — name from tech card
+                          </span>
+                        )}
                         {u.memberNumber && (
                           <span className="block text-[11px] text-gray-500">member #{u.memberNumber}</span>
                         )}
