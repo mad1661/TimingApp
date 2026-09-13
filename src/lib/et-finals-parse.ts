@@ -334,6 +334,57 @@ function findDivisionalSheet(workbook: XLSX.WorkBook): DivisionalPlan | null {
 }
 
 /**
+ * The column that spells the team out in words. The Compulink tech-card export
+ * of the divisional roster has no track column at all: the team is written as
+ * "Tulsa Raceway Park-Team 1-TR1" in a repurposed field (Crew Chief, as it
+ * happens), so rather than trust any header, take the column whose values end
+ * in the row's own team code on most rows. A header that says "team name" is
+ * taken first when one exists.
+ */
+function findTeamLabelCol(plan: DivisionalPlan, codeOf: (row: string[]) => string): number | undefined {
+  const named = findCol(plan.cols, ["team name", "team label"], /code/);
+  if (named !== undefined && named !== plan.teamCol) return named;
+  const hits = new Map<number, number>();
+  let coded = 0;
+  for (let i = plan.headerRow + 1; i < plan.grid.length; i++) {
+    const row = plan.grid[i] || [];
+    const code = codeOf(row);
+    if (!code) continue;
+    coded++;
+    row.forEach((v, idx) => {
+      if (idx === plan.teamCol) return;
+      const flat = (v || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+      if (flat.length > code.length + 2 && flat.endsWith(code) && /[A-Z]{3,}/.test(flat)) {
+        hits.set(idx, (hits.get(idx) || 0) + 1);
+      }
+    });
+  }
+  let best: number | undefined;
+  let top = 0;
+  for (const [idx, n] of hits) if (n > top) [best, top] = [idx, n];
+  return coded > 0 && top >= coded / 2 ? best : undefined;
+}
+
+/**
+ * "Ardmore Dragway-Team 1-A1" → track "Ardmore Dragway", team "Team 1". The
+ * trailing code is dropped; the team part is only split off when it reads like
+ * one, so a hyphenated track name survives intact.
+ */
+function splitTeamLabel(label: string, code: string): { track: string; team: string } {
+  let s = (label || "").trim();
+  if (!s) return { track: "", team: "" };
+  if (code) {
+    const tail = new RegExp(`[\\s\\-–—/|(]*${code.split("").join("[\\s\\-]*")}[)\\s]*$`, "i");
+    s = s.replace(tail, "").trim();
+  }
+  const m = s.match(/^(.*?)\s*[-–—/|,]\s*((?:team|squad)\s*[a-z0-9]{1,3}|[a-z0-9]{1,3}\s*(?:team|squad))\s*$/i);
+  if (m && m[1].trim()) {
+    return { track: m[1].trim(), team: m[2].replace(/\s+/g, " ").trim().replace(/^\w/, (c) => c.toUpperCase()) };
+  }
+  return { track: s.replace(/[\s\-–—/|,]+$/, "").trim(), team: "" };
+}
+
+/**
  * The printable per-track tab for a track, found by its "TRACK:" label. Only
  * the header block is read from it (manager, captain, event title).
  */
@@ -384,6 +435,8 @@ function parseDivisionalWorkbook(
     code: string;
     entries: EtRosterEntry[];
     trackNames: Map<string, number>;
+    /** "Team 1" / "Team 2" — the team part of a "Track-Team N-CODE" label. */
+    teamParts: Map<string, number>;
     /** The track each row named, by entry, for the mis-coded-row warning. */
     rowTrack: Map<EtRosterEntry, string>;
     warnings: string[];
@@ -393,11 +446,20 @@ function parseDivisionalWorkbook(
   let skippedNoTeam = 0;
   let skippedPlaceholder = 0;
 
-  const carCol = findCol(plan.cols, ["competition", ...VEHICLE_COLS], /card|tech|check/);
+  // "Car Number" must win over "Vehicle Model" / "Body Type" — the Compulink
+  // export carries all three, and the loose "vehicle" alias lands on the model.
+  const carCol = findCol(
+    plan.cols,
+    ["competition", "car number", "car no", "car #", "vehicle number", "vehicle no", "vehicle #", ...VEHICLE_COLS],
+    /card|tech|check|model|make|year|type|body|engine|owner/,
+  );
   const memberCol = findCol(plan.cols, MEMBER_COLS, /expir|date/);
   const trackNameCol = findCol(plan.cols, ["track name", "track"], /code|team/);
   const cell = (row: string[], idx: number | undefined): string =>
     idx === undefined ? "" : (row[idx] || "").trim();
+  const codeOf = (row: string[]): string =>
+    (row[plan.teamCol] || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  const teamLabelCol = findTeamLabelCol(plan, codeOf);
 
   for (let i = plan.headerRow + 1; i < plan.grid.length; i++) {
     const row = plan.grid[i] || [];
@@ -420,7 +482,7 @@ function parseDivisionalWorkbook(
       continue;
     }
 
-    const code = (row[plan.teamCol] || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+    const code = codeOf(row);
     if (!code) {
       skippedNoTeam++;
       continue;
@@ -429,15 +491,20 @@ function parseDivisionalWorkbook(
     const rawCategory = get(...CATEGORY_COLS);
     const category = repairAgeGroup(cleanValue(rawCategory));
     const division: EtDivision = JR_CATEGORY_RE.test(category) ? "jr" : "big";
-    const trackName = cleanValue(cell(row, trackNameCol));
+    const label = splitTeamLabel(cleanValue(cell(row, teamLabelCol)), code);
+    const trackName = cleanValue(cell(row, trackNameCol)) || label.track;
     const car = cleanValue(cell(row, carCol)).toUpperCase().replace(/\s+/g, "");
     const member = cleanValue(cell(row, memberCol)).replace(/\s+/g, "");
 
     let team = teams.get(code);
     if (!team) {
-      teams.set(code, (team = { code, entries: [], trackNames: new Map(), rowTrack: new Map(), warnings: [] }));
+      teams.set(
+        code,
+        (team = { code, entries: [], trackNames: new Map(), teamParts: new Map(), rowTrack: new Map(), warnings: [] }),
+      );
     }
     if (trackName) team.trackNames.set(trackName, (team.trackNames.get(trackName) || 0) + 1);
+    if (label.team) team.teamParts.set(label.team, (team.teamParts.get(label.team) || 0) + 1);
 
     const slot = team.entries.length + 1;
     const entry: EtRosterEntry = {
@@ -496,11 +563,23 @@ function parseDivisionalWorkbook(
     const trackName = trackOf.get(team.code) || "";
     const multi = (teamsPerTrack.get(trackName) || 0) > 1;
     const info = trackName ? findTrackInfoSheet(workbook, trackName, plan.sheetName) : null;
+    let teamPart = "";
+    let topPart = 0;
+    for (const [p, n] of team.teamParts) {
+      if (n > topPart) [teamPart, topPart] = [p, n];
+    }
+    // A lone team is just its track; where a track fields two, the sheet's own
+    // "Team 1" / "Team 2" wording is used when it has one, else the code.
+    const teamName = !trackName
+      ? team.code
+      : multi
+        ? `${trackName} ${teamPart || team.code}`
+        : trackName;
     rosters.push({
       id: `${season}_${team.code}`,
       track_code: team.code,
       track_name: trackName || team.code,
-      team_name: trackName ? (multi ? `${trackName} ${team.code}` : trackName) : team.code,
+      team_name: teamName,
       captain: info ? labelValue(info, "team captain", "captain") : "",
       captain_phone: "",
       captain_email: "",
