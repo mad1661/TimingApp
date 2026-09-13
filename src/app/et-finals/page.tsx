@@ -28,6 +28,32 @@ interface TrackName {
   team_name: string;
 }
 
+// Extensions and MIME types the roster and tech-card boxes take. Both are
+// listed because pickers differ: desktop browsers filter on the extension,
+// iOS filters on the type and greys every file out when only extensions are
+// given. The server parses whatever arrives, so the check here is lenient —
+// it exists to give a useful message, not to guard the parser.
+const SPREADSHEET_EXTS = new Set(["xlsx", "xlsm", "xlsb", "xls", "csv", "numbers"]);
+const SPREADSHEET_ACCEPT = [
+  ...Array.from(SPREADSHEET_EXTS).map((e) => `.${e}`),
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-excel.sheet.macroEnabled.12",
+  "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+  "application/vnd.apple.numbers",
+  "text/csv",
+].join(",");
+
+function isSpreadsheetFile(f: File): boolean {
+  const ext = f.name.includes(".") ? f.name.split(".").pop()!.toLowerCase() : "";
+  if (ext && SPREADSHEET_EXTS.has(ext)) return true;
+  const type = (f.type || "").toLowerCase();
+  if (/spreadsheet|excel|numbers|csv/.test(type)) return true;
+  // A file shared from a phone often arrives with no extension and a generic
+  // type; let the server's parser be the judge rather than refuse it here.
+  return !ext && (type === "" || type === "application/octet-stream");
+}
+
 type StandingsResponse = EtFinalsStandings & {
   config: EtFinalsConfig;
   rosterCount: number;
@@ -2001,9 +2027,11 @@ export default function EtFinalsPage() {
   }
 
   async function handleTechCardUpload(files: File[]) {
-    const valid = files.filter((f) => ["xlsx", "xls", "csv"].includes(f.name.split(".").pop()?.toLowerCase() || ""));
+    const valid = files.filter(isSpreadsheetFile);
     if (valid.length === 0) {
-      setTechMsg("Tech card exports are .xlsx / .xls / .csv.");
+      setTechMsg(
+        `Not a spreadsheet: ${files.map((f) => f.name || "(unnamed)").join(", ") || "no file received"}. Tech card exports are .xlsx / .xlsm / .xls / .csv.`,
+      );
       return;
     }
     setTechUploading(true);
@@ -2146,11 +2174,15 @@ export default function EtFinalsPage() {
   }
 
   async function handleUpload(files: File[]) {
-    const valid = files.filter((f) =>
-      ["xlsx", "xls", "numbers"].includes(f.name.split(".").pop()?.toLowerCase() || ""),
-    );
+    if (files.length === 0) {
+      setUploadMsg("No file was received — try dropping it onto the box instead of the picker.");
+      return;
+    }
+    const valid = files.filter(isSpreadsheetFile);
     if (valid.length === 0) {
-      setUploadMsg("Upload rosters as .xlsx, .xls or Apple .numbers files.");
+      setUploadMsg(
+        `Not a spreadsheet: ${files.map((f) => `${f.name || "(unnamed)"}${f.type ? ` [${f.type}]` : ""}`).join(", ")}. Upload rosters as .xlsx, .xlsm, .xls, .csv or Apple .numbers files.`,
+      );
       return;
     }
     setUploading(true);
@@ -3135,16 +3167,25 @@ export default function EtFinalsPage() {
                 ref={fileRef}
                 type="file"
                 multiple
-                accept=".xlsx,.xls,.numbers"
+                accept={SPREADSHEET_ACCEPT}
                 className="hidden"
-                onChange={(e) => handleUpload(Array.from(e.target.files || []))}
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files || []);
+                  // Clear the input so picking the SAME file again (after
+                  // fixing it in Excel) fires change — a browser reports no
+                  // change for an unchanged selection and the upload would
+                  // silently never happen.
+                  e.target.value = "";
+                  handleUpload(picked);
+                }}
               />
               <p className="text-white font-medium mb-1">
                 {uploading ? "Uploading…" : "Drop team roster files here"}
               </p>
               <p className="text-xs text-gray-500">
-                One file per track (e.g. LV.xlsx, Numidia.xlsx, NED.numbers) — .xlsx, .xls and Apple .numbers all work,
-                and several files can be dropped at once. Re-uploading a track replaces its roster.
+                One file per track (e.g. LV.xlsx, Numidia.xlsx, NED.numbers), or the division&apos;s single workbook with
+                every team on one sheet — .xlsx, .xlsm, .xls, .csv and Apple .numbers all work, and several files can be
+                dropped at once. Re-uploading replaces each team it names, so upload the same file again after fixing it.
               </p>
             </div>
 
@@ -3260,9 +3301,13 @@ export default function EtFinalsPage() {
                 ref={techRef}
                 type="file"
                 multiple
-                accept=".xlsx,.xls,.csv"
+                accept={SPREADSHEET_ACCEPT}
                 className="hidden"
-                onChange={(e) => handleTechCardUpload(Array.from(e.target.files || []))}
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files || []);
+                  e.target.value = "";
+                  handleTechCardUpload(picked);
+                }}
               />
               <p className="text-white font-medium mb-1">
                 {techUploading ? "Uploading…" : "Drop tech card exports here"}
@@ -3345,9 +3390,13 @@ export default function EtFinalsPage() {
                 ref={edataRef}
                 type="file"
                 multiple
-                accept=".txt,.TXT,.dat,.DAT"
+                accept=".txt,.TXT,.dat,.DAT,text/plain"
                 className="hidden"
-                onChange={(e) => handleEdataUpload(Array.from(e.target.files || []))}
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files || []);
+                  e.target.value = "";
+                  handleEdataUpload(picked);
+                }}
               />
               <p className="text-white font-medium mb-1">
                 {edataUploading ? "Importing…" : "Drop EData files here"}
