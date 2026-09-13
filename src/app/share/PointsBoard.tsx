@@ -50,9 +50,11 @@ function Board({
   const [data, setData] = useState<ShareData | null>(null);
   const [error, setError] = useState("");
   const [updated, setUpdated] = useState<Date | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     if (!eventCode || !season) return;
+    setRefreshing(true);
     try {
       const res = await fetch(
         `/api/et-finals?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}`,
@@ -65,6 +67,8 @@ function Board({
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't load the points");
+    } finally {
+      setRefreshing(false);
     }
   }, [eventCode, season]);
 
@@ -151,13 +155,27 @@ function Board({
           </ol>
         )}
 
-        <p className="text-center text-xs text-gray-600 mt-4 sm:mt-6">
-          {updated
-            ? `Updated ${updated.toLocaleTimeString()} · refreshes every ${
-                every % 60 === 0 ? `${every / 60} min` : `${every} sec`
-              }`
-            : ""}
-        </p>
+        <div className="flex flex-col items-center gap-2 mt-4 sm:mt-6">
+          <button
+            type="button"
+            onClick={load}
+            disabled={refreshing}
+            className="px-4 py-2 bg-nhra-card border border-nhra-border text-gray-200 rounded-lg text-sm font-semibold hover:text-white hover:border-gray-500 disabled:opacity-50 inline-flex items-center gap-2"
+            title="Re-read the standings now"
+          >
+            <span className={refreshing ? "inline-block animate-spin" : "inline-block"} aria-hidden>
+              ↻
+            </span>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+          <p className="text-center text-xs text-gray-600">
+            {updated
+              ? `Updated ${updated.toLocaleTimeString()} · refreshes every ${
+                  every % 60 === 0 ? `${every / 60} min` : `${every} sec`
+                }`
+              : ""}
+          </p>
+        </div>
       </div>
     </div>
   );
