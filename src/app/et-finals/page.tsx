@@ -1557,6 +1557,8 @@ export default function EtFinalsPage() {
   const [draftConfig, setDraftConfig] = useState<EtFinalsConfig | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [assigning, setAssigning] = useState<string | null>(null);
+  // Days whose counting-hours inputs are open without a time set yet.
+  const [hoursOpen, setHoursOpen] = useState<Set<string>>(new Set());
 
   const [showTechCards, setShowTechCards] = useState(false);
   const [techUploading, setTechUploading] = useState(false);
@@ -1916,6 +1918,21 @@ export default function EtFinalsPage() {
     else windows[date] = cur;
     if (commit) savePointsRule({ dayWindows: windows }, `window-${date}`);
     else setDraftConfig({ ...base, dayWindows: windows });
+  }
+
+  // Back to counting the whole day. A separate action because a cleared
+  // <input type="time"> is awkward to reach on a phone.
+  function clearDayWindow(date: string) {
+    const base = draftConfig ?? data?.config;
+    if (!base) return;
+    const windows = { ...(base.dayWindows || {}) };
+    delete windows[date];
+    setHoursOpen((prev) => {
+      const next = new Set(prev);
+      next.delete(date);
+      return next;
+    });
+    savePointsRule({ dayWindows: windows }, `window-${date}`);
   }
 
   // Lock out everything already run: every pass on file right now is thrown
@@ -3506,9 +3523,9 @@ export default function EtFinalsPage() {
             <span className="text-white text-sm font-semibold">Days &amp; hours that count for points</span>
             <span className="block text-xs text-gray-500 mt-0.5 mb-2 leading-relaxed">
               Practice days run through the timing system labelled E1, exactly like the real race — turn them off and
-              nothing from those days earns. A race running past midnight spills into the next date: set counting
-              hours (from / until) on a day to keep those small-hours passes out. Pick, then hit Save. A new day
-              counts automatically.
+              nothing from those days earns. Every counted day counts in full unless you limit its hours: only for a
+              race running past midnight (or a day that doubled as test time) hit &quot;limit hours&quot; and set from /
+              until; &quot;whole day&quot; clears them again. Pick days, then hit Save. A new day counts automatically.
             </span>
             <div className="space-y-1.5">
               {(data.runDates || []).map((d) => {
@@ -3538,7 +3555,21 @@ export default function EtFinalsPage() {
                       {counts ? "✓ " : "✕ "}
                       {label}
                     </button>
-                    {counts && (
+                    {counts && !(w.from || w.to) && !hoursOpen.has(d) && (
+                      <span className="inline-flex items-center gap-2 text-xs text-gray-500">
+                        whole day counts
+                        <button
+                          type="button"
+                          disabled={savingConfig}
+                          onClick={() => setHoursOpen((prev) => new Set(prev).add(d))}
+                          className="text-gray-500 hover:text-white underline decoration-dotted underline-offset-2 disabled:opacity-40"
+                          title="Count only part of this day"
+                        >
+                          limit hours
+                        </button>
+                      </span>
+                    )}
+                    {counts && (w.from || w.to || hoursOpen.has(d)) && (
                       <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
                         from
                         <input
@@ -3563,6 +3594,16 @@ export default function EtFinalsPage() {
                             only {w.from || "start"}–{w.to || "end"} counts
                           </span>
                         )}
+                        <button
+                          type="button"
+                          disabled={savingConfig || assigning === `window-${d}`}
+                          onClick={() => clearDayWindow(d)}
+                          className="px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-gray-300 hover:text-white disabled:opacity-40"
+                          title="Clear the hours — the whole day counts again"
+                        >
+                          ✕ whole day
+                        </button>
+                        {assigning === `window-${d}` && <span>saving…</span>}
                       </span>
                     )}
                   </div>
