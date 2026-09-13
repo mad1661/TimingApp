@@ -153,6 +153,16 @@ export interface EtFinalsConfig {
    * returned separately so they can be brought back.
    */
   hiddenTeams: string[];
+  /**
+   * Whether the letters on the end of a car number name the racer's team
+   * ("40ID" → team ID), the Division 1 convention where the number is the
+   * vehicle number plus the track code. Divisional rosters (D4) use the
+   * racer's real competition number, whose trailing letter means nothing —
+   * left on, every "…R" car lands on a team "R" that doesn't exist. Null =
+   * decide from the rosters: on when they use suffixed numbers, off when they
+   * don't.
+   */
+  carSuffixNamesTeam: boolean | null;
 }
 
 export interface EtPointsAdjustment {
@@ -175,7 +185,26 @@ export function emptyEtFinalsConfig(): EtFinalsConfig {
     dayWindows: {},
     pointsAdjustments: {},
     hiddenTeams: [],
+    carSuffixNamesTeam: null,
   };
+}
+
+/**
+ * Whether this event's rosters number cars the Division 1 way — vehicle number
+ * plus track code, so "1" at Lebanon Valley runs as "1LV". True when any
+ * roster entry's displayed number is longer than its vehicle number by a code;
+ * a divisional roster stores the same competition number in both. With no
+ * rosters at all there is nothing to contradict the convention, so it holds.
+ */
+export function rostersUseSuffixedNumbers(rosters: EtFinalsRoster[]): boolean {
+  if (rosters.length === 0) return true;
+  return rosters.some((r) =>
+    r.entries.some((e) => {
+      const car = normalizeCarKey(e.car_number);
+      const veh = normalizeCarKey(e.vehicle_number);
+      return !!car && !!veh && car !== veh && car.startsWith(veh);
+    }),
+  );
 }
 
 export type EtRacerStatus =
@@ -350,6 +379,10 @@ export interface EtFinalsStandings {
   teams: EtTeamStanding[];
   /** Teams kept off the board by `config.hiddenTeams`, unranked. */
   hiddenTeams: EtTeamStanding[];
+  /** The car-suffix rule as applied: the config's choice, or the auto-detected one. */
+  carSuffixNamesTeam: boolean;
+  /** What auto-detection from the rosters would choose, for the toggle's label. */
+  carSuffixAuto: boolean;
   unmatched: EtUnmatchedRacer[];
   /** Every category present in the runs, with the role actually applied. */
   categories: {
@@ -887,6 +920,9 @@ export function computeEtFinalsStandings(
   for (const c of techCards) {
     if (c.trackTeam) knownTrackCodes.add(c.trackTeam);
   }
+  const carSuffixAuto = rostersUseSuffixedNumbers(rosters);
+  const carSuffixNamesTeam =
+    typeof config.carSuffixNamesTeam === "boolean" ? config.carSuffixNamesTeam : carSuffixAuto;
 
   // Roster entry -> its stable key, so eligibility overrides and manual pins
   // can be looked up by the same handle everywhere below.
@@ -1421,7 +1457,7 @@ export function computeEtFinalsStandings(
       // The car number's track-code suffix names the team straight from the
       // timing system, which is the most reliable thing available; the tech
       // card's team code is the fallback.
-      const carTeam = trackCodeFromCarNumber(agg.car_number, knownTrackCodes);
+      const carTeam = carSuffixNamesTeam ? trackCodeFromCarNumber(agg.car_number, knownTrackCodes) : "";
       const placeCode = carTeam || teamHint;
       if (placeCode) {
         const key = `TECH|${placeCode}|${agg.division}|${agg.identity}`;
@@ -1862,6 +1898,8 @@ export function computeEtFinalsStandings(
   return {
     teams: standings,
     hiddenTeams: hiddenStandings,
+    carSuffixNamesTeam,
+    carSuffixAuto,
     unmatched,
     categories,
     rosterOptions,

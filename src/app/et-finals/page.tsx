@@ -1850,6 +1850,12 @@ export default function EtFinalsPage() {
     await savePointsRule({ buybackEarnsPoints: earns }, "buyback-policy");
   }
 
+  // Whether a car number's trailing letters name the team. Null hands the
+  // decision back to the rosters.
+  async function setCarSuffixNamesTeam(value: boolean | null) {
+    await savePointsRule({ carSuffixNamesTeam: value }, "car-suffix-policy");
+  }
+
   // Choose whether a day's passes count for points. Toggles are local and
   // instant — nothing saves until "Save Days" — so the boxes can't flicker
   // against in-flight reloads. Exclusions are stored by date, so a day nobody
@@ -3411,7 +3417,43 @@ export default function EtFinalsPage() {
               </span>
             </span>
           </label>
-          <div className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
+          <label className="flex items-start gap-3 bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 accent-red-600"
+              checked={effectiveConfig?.carSuffixNamesTeam ?? data.carSuffixNamesTeam}
+              disabled={assigning === "car-suffix-policy"}
+              onChange={(e) => setCarSuffixNamesTeam(e.target.checked)}
+            />
+            <span className="min-w-0">
+              <span className="text-white text-sm font-semibold">
+                Letters on a car number name the team
+                {typeof effectiveConfig?.carSuffixNamesTeam === "boolean" ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCarSuffixNamesTeam(null);
+                    }}
+                    className="ml-2 text-xs text-gray-500 hover:text-white underline decoration-dotted underline-offset-2"
+                    title="Let the rosters decide again"
+                  >
+                    reset to auto ({data.carSuffixAuto ? "on" : "off"})
+                  </button>
+                ) : (
+                  <span className="ml-2 text-xs text-gray-500">auto: {data.carSuffixAuto ? "on" : "off"}</span>
+                )}
+                {assigning === "car-suffix-policy" && <span className="ml-2 text-xs text-gray-500">saving…</span>}
+              </span>
+              <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">
+                Division 1 style: the number is the vehicle number plus the track code, so a car nobody&apos;s roster
+                claims still lands on its team (&quot;40ID&quot; → ID). Turn it off where numbers are the racer&apos;s
+                real competition number — otherwise every &quot;…R&quot; car ends up on a team &quot;R&quot;. Auto
+                reads it off the uploaded rosters.
+              </span>
+            </span>
+          </label>
+          <div className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3 sm:col-span-2">
             <span className="text-white text-sm font-semibold">Days &amp; hours that count for points</span>
             <span className="block text-xs text-gray-500 mt-0.5 mb-2 leading-relaxed">
               Practice days run through the timing system labelled E1, exactly like the real race — turn them off and
