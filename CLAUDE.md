@@ -79,6 +79,7 @@ Team points for the Summit Racing Series E.T. Finals / JDRL divisional champions
 - Twelve comma-separated fields: car, member #, class, qual pos, driver, city/state, vehicle, engine, RT, dial/index, ET, MPH. Files are DOS-era (CRLF plus `0x1A` padding) and read as **latin1**.
 - EData has **no clock times and no lanes**, but the rest of the app identifies a pass by its timestamp (dedup keys, pair grouping, ordering all use it). Each pass therefore gets a *synthetic* timestamp derived only from round + pair position + a per-category offset, so both cars in a pair share one and a re-import reproduces it exactly (idempotent). These are ordering markers, not wall-clock times — the page says so.
 - **`dataSource: "edata"`** (LiveConfig, switchable in the navbar or on the page) stops `LiveDataProvider` polling entirely, so nothing from getresults or the API can overwrite the imported rounds.
+- The same page also **exports** the other way: `buildEdataExport` (`src/lib/edata-export.ts`, pure) turns the event's stored elim rounds into one `C#EDAT.TXT` per class (served as JSON by `GET /api/edata-export`, zipped client-side into `RACEDATA.zip` with fflate). Pairs are written **left lane then right** — matching the getresults→EDAT conversions, not winner-first — except rows without lanes (EData-imported) which fall back to winner-first. Only rounds on file are written; `F` becomes `FINALS`, `E<n>` becomes `ROUND n`.
 
 ### Track directory
 

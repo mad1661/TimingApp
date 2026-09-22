@@ -1204,6 +1204,17 @@ export async function getEliminationRuns(eventCode: string, season: string, cate
     });
 }
 
+/**
+ * Every elimination-round run (E1…En and F) for an event, all categories,
+ * with AM/PM-tagged timestamps so pairs group correctly. Feeds the EDAT
+ * export (src/lib/edata-export.ts).
+ */
+export async function getElimRunsForEvent(eventCode: string, season: string): Promise<RunRow[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+  return allRuns.filter((r) => !!r.round && (/^E\d+$/.test(r.round) || r.round === "F"));
+}
+
 export interface NoShow {
   name: string;
   car_number: string;
