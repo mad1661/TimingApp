@@ -9,17 +9,20 @@ import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
  *
  *   Compulink StarTrak TOP SPORTSMAN Elimination Results
  *   ROUND 1
- *   6,0,TS,0,M. Chitty,,,,  .061,6.52, 6.526,212.77
- *   77,0,TS,0,R. Mendenhall,,,,  .019,6.90, 6.949,196.51
+ *   6,248262,TS,0,Michael Chitty,Ames IA,'08 Chevy Cobalt,CHEV  665,  .061,6.52, 6.526,212.77
+ *   77,0,TS,0,Ray Mendenhall,,,,  .019,6.90, 6.949,196.51
  *   ...
  *   FINALS
  *   ...
  *   End of File
  *
  * Twelve comma-separated fields: car number, member number, class code,
- * qualifying position, driver ("F. Last"), city/state, vehicle, engine, RT,
- * dial-in, ET, MPH. City/vehicle/engine aren't on RunRow, so they export
- * blank — the readers we feed (racedata-zip-to-pdf) don't need them.
+ * qualifying position, driver (full name, never "F. Last"), city + 2-letter
+ * state, body ('YY Make Model), engine (MAKE  CID), RT, dial-in, ET, MPH.
+ *
+ * The timing data carries none of member/city/body/engine, so those merge in
+ * from the event's tech cards, matched per class by car number first and
+ * driver name second. A run with no tech card exports those fields blank.
  *
  * Pair ordering: left lane first, then right, matching how the getresults →
  * EDAT conversions have been produced (a red-lighting left-lane car stays on
@@ -31,6 +34,25 @@ import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
  * `F` becomes `FINALS`. No rounds or pairings are invented.
  */
 
+/** The tech-card fields the export reads (TechCardEntry satisfies this). */
+export interface EdataTechCard {
+  car_number: string;
+  first_name: string;
+  last_name: string;
+  city: string;
+  state: string;
+  /** Class abbreviation as entered: TS, SS, SC, … */
+  category: string;
+  class_name: string;
+  engine_make: string;
+  body_type: string;
+  body_year: string;
+  /** Cubic inches / cc as entered ("665", "665 CI", …). */
+  cu_cc: string;
+  member_number: string;
+  event_name?: string;
+}
+
 export interface EdataExportFile {
   /** CompuLink-style name: C1EDAT.TXT, C2EDAT.TXT, … */
   filename: string;
@@ -40,6 +62,8 @@ export interface EdataExportFile {
   rounds: string[];
   pairs: number;
   runs: number;
+  /** How many of the file's runs found a tech card to fill the entry fields. */
+  enriched: number;
   content: string;
 }
 
@@ -105,21 +129,74 @@ function fmtDial(dial: number | null): string {
   return dial.toFixed(2);
 }
 
-/** "Justin Ashley" → "J. Ashley"; already-short "J. Ashley" passes through. */
-function shortName(name: string | null): string {
-  const n = (name || "").trim().replace(/\s+/g, " ");
-  if (!n) return "";
-  const space = n.indexOf(" ");
-  if (space === -1) return n;
-  const initial = n.slice(0, space).replace(/\./g, "").charAt(0).toUpperCase();
-  const rest = n.slice(space + 1);
-  return initial ? `${initial}. ${rest}` : rest;
-}
-
 /** The format has no quoting, so a comma in any field would shear the line. */
 function csvSafe(v: string): string {
   return v.replace(/,/g, " ").replace(/\s+/g, " ").trim();
 }
+
+function norm(s: string | null | undefined): string {
+  return (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+// ——— Tech-card field formatting (the CompuLink entry-record shapes) ———
+
+/** "Ames IA" — city plus 2-letter state. */
+function cityState(tc: EdataTechCard): string {
+  const city = csvSafe(tc.city || "");
+  const st = csvSafe(tc.state || "").toUpperCase();
+  return [city, st].filter(Boolean).join(" ");
+}
+
+// Long forms and recurring typos → the short forms the CompuLink files use.
+const BODY_WORD_FIXES: Record<string, string> = {
+  CHEVROLET: "Chevy",
+  CHEVRLOET: "Chevy",
+  CHEV: "Chevy",
+  CHEVY: "Chevy",
+  CAMARO: "Camaro",
+  CAMERO: "Camaro",
+  CAMAERO: "Camaro",
+};
+
+function bodyWord(w: string): string {
+  const fixed = BODY_WORD_FIXES[w.toUpperCase()];
+  if (fixed) return fixed;
+  // Tech cards often arrive ALL CAPS; title-case real words but leave short
+  // model codes (SS, GTO, Z28) alone.
+  if (/^[A-Z]{4,}$/.test(w)) return w.charAt(0) + w.slice(1).toLowerCase();
+  return w;
+}
+
+/** "'08 Chevy Cobalt" — apostrophe-year plus normalized make/model. */
+function bodyString(tc: EdataTechCard): string {
+  const body = (tc.body_type || "").trim().split(/\s+/).filter(Boolean).map(bodyWord).join(" ");
+  // Some entries already carry the year in the body ("'63 Nova").
+  if (/^'\d{2}\b/.test(body)) return csvSafe(body);
+  const digits = (tc.body_year || "").replace(/\D/g, "");
+  const year = digits ? `'${digits.slice(-2).padStart(2, "0")}` : "";
+  return csvSafe([year, body].filter(Boolean).join(" "));
+}
+
+const ENGINE_MAKE_FIXES: Record<string, string> = {
+  CHEVY: "CHEV",
+  CHEVROLET: "CHEV",
+  CHEVRLOET: "CHEV",
+};
+
+/** "CHEV  665" — make (CompuLink short form) + two spaces + cubic inches. */
+function engineString(tc: EdataTechCard): string {
+  let make = csvSafe(tc.engine_make || "").toUpperCase();
+  make = ENGINE_MAKE_FIXES[make] || make;
+  const cid = ((tc.cu_cc || "").match(/\d+/) || [""])[0];
+  if (make && cid) return `${make.padEnd(4)}  ${cid}`;
+  return csvSafe(make || cid);
+}
+
+function fullName(tc: EdataTechCard): string {
+  return csvSafe(`${tc.first_name || ""} ${tc.last_name || ""}`);
+}
+
+// ——— Class codes and category ordering ———
 
 const CLASS_BY_NAME = new Map<string, { code: string; order: number }>();
 RACE_CLASSES.forEach((c, i) => {
@@ -128,7 +205,7 @@ RACE_CLASSES.forEach((c, i) => {
 });
 
 function classInfo(category: string, runs: RunRow[]): { code: string; order: number } {
-  const known = CLASS_BY_NAME.get(category.trim().toUpperCase());
+  const known = CLASS_BY_NAME.get(norm(category));
   if (known) return known;
   // EData-imported rows carry the class code in class_index — reuse it when
   // every row agrees.
@@ -139,16 +216,71 @@ function classInfo(category: string, runs: RunRow[]): { code: string; order: num
   );
   if (codes.size === 1) return { code: [...codes][0], order: RACE_CLASSES.length };
   // Last resort: the category's initials.
-  const initials = category
-    .trim()
-    .toUpperCase()
-    .split(/\s+/)
+  const initials = norm(category)
+    .split(" ")
     .map((w) => w.charAt(0))
     .join("")
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 4);
   return { code: initials || "X", order: RACE_CLASSES.length };
 }
+
+// ——— Tech card ↔ run matching (same shape as the no-shows cross-reference:
+// class first, then car number, with driver name as the fallback) ———
+
+function techCardMatchesCategory(tc: EdataTechCard, category: string, code: string): boolean {
+  const catNorm = norm(category);
+  const className = norm(tc.class_name);
+  if (className && className === catNorm) return true;
+  const tcCode = norm(tc.category);
+  if (tcCode && (tcCode === catNorm || tcCode === code)) return true;
+  return false;
+}
+
+/** How complete an entry record is — the fuller card wins a duplicate key. */
+function tcScore(tc: EdataTechCard): number {
+  let s = 0;
+  for (const v of [tc.member_number, tc.city, tc.state, tc.body_type, tc.engine_make, tc.cu_cc]) {
+    if ((v || "").trim()) s++;
+  }
+  return s;
+}
+
+interface CategoryTechIndex {
+  byCar: Map<string, EdataTechCard>;
+  byName: Map<string, EdataTechCard>;
+  /** The class code the tech cards agree on, when they agree on exactly one. */
+  code: string | null;
+}
+
+function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
+  const byCar = new Map<string, EdataTechCard>();
+  const byName = new Map<string, EdataTechCard>();
+  const codes = new Set<string>();
+  for (const tc of cards) {
+    const car = norm(tc.car_number);
+    if (car) {
+      const prev = byCar.get(car);
+      if (!prev || tcScore(tc) > tcScore(prev)) byCar.set(car, tc);
+    }
+    const name = norm(`${tc.first_name || ""} ${tc.last_name || ""}`);
+    if (name) {
+      const prev = byName.get(name);
+      if (!prev || tcScore(tc) > tcScore(prev)) byName.set(name, tc);
+    }
+    const code = norm(tc.category);
+    if (/^[A-Z0-9]{1,6}$/.test(code)) codes.add(code);
+  }
+  return { byCar, byName, code: codes.size === 1 ? [...codes][0] : null };
+}
+
+function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
+  const byCar = index.byCar.get(norm(run.car_number));
+  if (byCar) return byCar;
+  return index.byName.get(norm(run.name)) || null;
+}
+
+// ——— Line assembly ———
 
 /** More recorded timing data wins when collapsing timing-system resets. */
 function dataScore(r: RunRow): number {
@@ -159,18 +291,23 @@ function dataScore(r: RunRow): number {
   return s;
 }
 
-function runLine(run: RunRow, classCode: string, quarterMile: boolean): string {
+function runLine(
+  run: RunRow,
+  tc: EdataTechCard | null,
+  classCode: string,
+  quarterMile: boolean,
+): string {
   const et = quarterMile ? run.ft1320 : run.ft660;
   const mph = quarterMile ? run.mph_1320 : run.mph_660;
   const fields = [
     csvSafe(run.car_number || ""),
-    csvSafe(run.member_number || "") || "0",
+    csvSafe(run.member_number || "") || (tc ? csvSafe(tc.member_number || "") : "") || "0",
     classCode,
     run.qual_pos !== null && run.qual_pos !== undefined ? String(run.qual_pos) : "0",
-    csvSafe(shortName(run.name)),
-    "", // city/state — not stored on RunRow
-    "", // vehicle
-    "", // engine
+    (tc ? fullName(tc) : "") || csvSafe(run.name || ""),
+    tc ? cityState(tc) : "",
+    tc ? bodyString(tc) : "",
+    tc ? engineString(tc) : "",
     fmtRt(run.rt),
     fmtDial(run.dial_in),
     fmtEt(et ?? null),
@@ -179,8 +316,9 @@ function runLine(run: RunRow, classCode: string, quarterMile: boolean): string {
   return fields.join(",");
 }
 
-function singleMarker(run: RunRow): string {
-  const member = csvSafe(run.member_number || "") || "0";
+function singleMarker(run: RunRow, tc: EdataTechCard | null): string {
+  const member =
+    csvSafe(run.member_number || "") || (tc ? csvSafe(tc.member_number || "") : "") || "0";
   return `SINGLE,${member},,0,,,,,,,,`;
 }
 
@@ -190,11 +328,16 @@ function tsMillis(ts: string): number {
 }
 
 /**
- * Build one EDAT file per category from the given elimination runs. Rounds
- * that aren't eliminations (Q, T, …) are ignored, so passing a full event's
- * runs is fine.
+ * Build one EDAT file per category from the given elimination runs, merging
+ * entry-record fields (member number, full name, city, body, engine) in from
+ * the tech cards. Rounds that aren't eliminations (Q, T, …) are ignored, so
+ * passing a full event's runs is fine; tech cards for other events are
+ * filtered out by event_name.
  */
-export function buildEdataExport(runs: RunRow[]): EdataExportResult {
+export function buildEdataExport(
+  runs: RunRow[],
+  techCards: EdataTechCard[] = [],
+): EdataExportResult {
   const warnings: string[] = [];
 
   const byCategory = new Map<string, RunRow[]>();
@@ -207,6 +350,13 @@ export function buildEdataExport(runs: RunRow[]): EdataExportResult {
     else byCategory.set(cat, [run]);
   }
 
+  // Tech cards scoped to this event: cards tagged with another event's name
+  // are someone else's entries.
+  const eventNames = new Set(runs.map((r) => norm(r.event_name)).filter(Boolean));
+  const eventCards = techCards.filter(
+    (tc) => !norm(tc.event_name) || eventNames.size === 0 || eventNames.has(norm(tc.event_name)),
+  );
+
   // Stable class numbering: known classes in RACE_CLASSES order (pros first),
   // anything else alphabetically after them.
   const categories = [...byCategory.entries()]
@@ -215,7 +365,13 @@ export function buildEdataExport(runs: RunRow[]): EdataExportResult {
 
   const files: EdataExportFile[] = [];
 
-  categories.forEach(({ category, catRuns, code }, catIndex) => {
+  categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
+    const techIndex = indexTechCards(
+      eventCards.filter((tc) => techCardMatchesCategory(tc, category, fallbackCode)),
+    );
+    // The entry system's own abbreviation beats our name-table guess.
+    const code = techIndex.code || fallbackCode;
+
     // Whether this class's finish line is the quarter or the eighth: a class
     // with any 1320 data is quarter-mile; otherwise fall back to the 660.
     const quarterMile =
@@ -229,6 +385,7 @@ export function buildEdataExport(runs: RunRow[]): EdataExportResult {
     const lines: string[] = [`Compulink StarTrak ${category.toUpperCase()} Elimination Results`];
     let pairs = 0;
     let runCount = 0;
+    let enriched = 0;
 
     for (const round of roundCodes) {
       const roundRuns = catRuns.filter((r) => r.round === round);
@@ -244,7 +401,7 @@ export function buildEdataExport(runs: RunRow[]): EdataExportResult {
         const byCar = new Map<string, RunRow>();
         const anonymous: RunRow[] = [];
         for (const r of groupRuns) {
-          const key = (r.car_number || "").trim().toUpperCase();
+          const key = norm(r.car_number);
           if (!key) {
             anonymous.push(r);
             continue;
@@ -269,8 +426,14 @@ export function buildEdataExport(runs: RunRow[]): EdataExportResult {
           );
         }
 
-        for (const r of pairRuns) lines.push(runLine(r, code, quarterMile));
-        if (pairRuns.length === 1) lines.push(singleMarker(pairRuns[0]));
+        for (const r of pairRuns) {
+          const tc = techCardForRun(r, techIndex);
+          if (tc) enriched++;
+          lines.push(runLine(r, tc, code, quarterMile));
+        }
+        if (pairRuns.length === 1) {
+          lines.push(singleMarker(pairRuns[0], techCardForRun(pairRuns[0], techIndex)));
+        }
 
         pairs++;
         runCount += pairRuns.length;
@@ -286,6 +449,7 @@ export function buildEdataExport(runs: RunRow[]): EdataExportResult {
       rounds: roundCodes,
       pairs,
       runs: runCount,
+      enriched,
       content: lines.join(EOL) + EOL,
     });
   });
