@@ -244,10 +244,12 @@ const TF_QLY = qly([
   );
 }
 
-// ——— 7. Header logos land in BOTH downloaded PDFs (v1.43.2) ———
-// The v1.43.1 bug: logos set on the page never showed on the downloaded
-// Final Round Results PDF. Assert the actual image XObjects, per PDF, with a
-// distinct image per slot (identical images get deduped into one XObject).
+// ——— 7. Header logos: finals PDF yes, qualifying PDF NEVER (v1.43.4) ———
+// The v1.43.1 bug was logos not reaching the finals PDF at all; v1.43.4 sets
+// the product rule: the finals PDF carries the logos (page 1), while the
+// qualifying sheet must stay logo-free even when a logo package is supplied.
+// Assert the actual image XObjects, per PDF, with a distinct image per slot
+// (identical images get deduped into one XObject).
 {
   const countImages = (pdf: Uint8Array | null): number =>
     pdf ? (Buffer.from(pdf).toString("latin1").match(/\/Subtype\s*\/Image/g) || []).length : -1;
@@ -285,16 +287,17 @@ const TF_QLY = qly([
     `got ${countImages(withLogos.finalsPdf)} image XObjects`,
   );
   check(
-    "qualifying PDF embeds all 3 header logos",
-    countImages(withLogos.qualifyingPdf) === 3,
+    "qualifying PDF stays image-free even WITH a logo package",
+    countImages(withLogos.qualifyingPdf) === 0,
     `got ${countImages(withLogos.qualifyingPdf)} image XObjects`,
   );
 }
 
-// ——— 7b. Header logos are DRAWN on every page of a multi-page PDF (v1.43.3) ———
-// The v1.43.2 gap: the finals builder stamped the logo row only on the summary's
-// first page and each class's first elimination page — continuation pages (new
-// page on overflow) had no logos. Force both PDFs past one page and assert the
+// ——— 7b. Logo placement per page (v1.43.4 product rule) ———
+// Finals PDF: logos on the FIRST page of the document only — v1.43.3's
+// every-page stamping is reverted, so page 2+ (summary continuations and all
+// elimination pages) must draw zero images. Qualifying PDF: zero images on
+// every page, logos or not. Force both PDFs past one page and assert the
 // per-page draw invocations, not just the file-level XObjects.
 {
   const event: PdfEvent = {
@@ -325,8 +328,13 @@ const TF_QLY = qly([
   const finalsDraws = perPageImageDraws(buildRacedataPdf(event, finalsCats));
   check("multi-page finals PDF really is multi-page", finalsDraws.length > 2, `got ${finalsDraws.length} pages`);
   check(
-    "finals PDF draws all 3 logos on EVERY page (2+ included)",
-    finalsDraws.length > 0 && finalsDraws.every((n) => n === 3),
+    "finals PDF draws all 3 logos on page 1",
+    finalsDraws[0] === 3,
+    `page-1 draws: ${finalsDraws[0]}`,
+  );
+  check(
+    "finals PDF draws NO logos on page 2+",
+    finalsDraws.length > 1 && finalsDraws.slice(1).every((n) => n === 0),
     `per-page draws: [${finalsDraws.join(", ")}]`,
   );
 
@@ -341,8 +349,8 @@ const TF_QLY = qly([
   const qualDraws = perPageImageDraws(buildQualifyingPdf(event, qualCats));
   check("multi-page qualifying PDF really is multi-page", qualDraws.length > 2, `got ${qualDraws.length} pages`);
   check(
-    "qualifying PDF draws all 3 logos on EVERY page (2+ included)",
-    qualDraws.length > 0 && qualDraws.every((n) => n === 3),
+    "qualifying PDF draws ZERO logos on every page, even with a logo package",
+    qualDraws.length > 0 && qualDraws.every((n) => n === 0),
     `per-page draws: [${qualDraws.join(", ")}]`,
   );
 
