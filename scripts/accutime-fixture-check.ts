@@ -373,7 +373,7 @@ const TF_QLY = qly([
 
   // Countdown = regular values; the Pomona 2 finale = Indy values.
   check("pro Countdown scores the regular values", ptsOf(score("countdown").rows, "1") === 121);
-  check("pro Pomona 2 finale scores the Indy values", ptsOf(score("countdown_finale").rows, "1") === 179);
+  check("pro Pomona 2 finale scores the Indy values", ptsOf(score("PC2").rows, "1") === 179);
 
   // No per-session data (Compulink QDAT-only shape): bonuses skipped, said so.
   const noSess = score("regular", { qualSessionPasses: [] });

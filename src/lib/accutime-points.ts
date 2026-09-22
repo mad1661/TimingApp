@@ -74,7 +74,7 @@ const ALCOHOL_CLASS_CODES = new Set(["TAD", "TAFC"]);
 // values, only its Pomona 2 finale steps up to Indy's.
 export const PRO_CLASS_CODES = new Set(["TF", "FC", "PS", "PSM", "TFM", "MMPS", "PM"]);
 
-export type ProEventScale = "regular" | "indy" | "countdown" | "countdown_finale";
+export type ProEventScale = "regular" | "indy" | "countdown" | "PC2";
 
 export interface ProScaleValues {
   /** Which value set applies ("regular" or "indy"). */
@@ -112,7 +112,7 @@ export const PRO_EVENT_SCALES: { value: ProEventScale; label: string }[] = [
   { value: "regular", label: "Regular season" },
   { value: "indy", label: "U.S. Nationals (Indy scale)" },
   { value: "countdown", label: "Countdown (regular values)" },
-  { value: "countdown_finale", label: "Countdown finale — Pomona 2 (Indy scale)" },
+  { value: "PC2", label: "Countdown finale — Pomona 2 (Indy scale)" },
 ];
 
 export function proScaleLabel(scale: ProEventScale): string {
@@ -120,7 +120,7 @@ export function proScaleLabel(scale: ProEventScale): string {
 }
 
 export function proScaleValues(scale: ProEventScale): ProScaleValues {
-  return scale === "indy" || scale === "countdown_finale" ? PRO_SCALE_INDY : PRO_SCALE_REGULAR;
+  return scale === "indy" || scale === "PC2" ? PRO_SCALE_INDY : PRO_SCALE_REGULAR;
 }
 
 /**
