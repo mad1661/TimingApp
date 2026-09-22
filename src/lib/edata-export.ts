@@ -51,6 +51,10 @@ export interface EdataTechCard {
   cu_cc: string;
   member_number: string;
   event_name?: string;
+  // Extra entry fields the QDAT (qualifying) export writes; EDAT ignores them.
+  engine_year?: string;
+  hp?: string;
+  factored_hp?: string;
 }
 
 export interface EdataExportFile {
@@ -130,18 +134,18 @@ function fmtDial(dial: number | null): string {
 }
 
 /** The format has no quoting, so a comma in any field would shear the line. */
-function csvSafe(v: string): string {
+export function csvSafe(v: string): string {
   return v.replace(/,/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function norm(s: string | null | undefined): string {
+export function norm(s: string | null | undefined): string {
   return (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 }
 
 // ——— Tech-card field formatting (the CompuLink entry-record shapes) ———
 
 /** "Ames IA" — city plus 2-letter state. */
-function cityState(tc: EdataTechCard): string {
+export function cityState(tc: EdataTechCard): string {
   const city = csvSafe(tc.city || "");
   const st = csvSafe(tc.state || "").toUpperCase();
   return [city, st].filter(Boolean).join(" ");
@@ -168,7 +172,7 @@ function bodyWord(w: string): string {
 }
 
 /** "'08 Chevy Cobalt" — apostrophe-year plus normalized make/model. */
-function bodyString(tc: EdataTechCard): string {
+export function bodyString(tc: EdataTechCard): string {
   const body = (tc.body_type || "").trim().split(/\s+/).filter(Boolean).map(bodyWord).join(" ");
   // Some entries already carry the year in the body ("'63 Nova").
   if (/^'\d{2}\b/.test(body)) return csvSafe(body);
@@ -184,7 +188,7 @@ const ENGINE_MAKE_FIXES: Record<string, string> = {
 };
 
 /** "CHEV  665" — make (CompuLink short form) + two spaces + cubic inches. */
-function engineString(tc: EdataTechCard): string {
+export function engineString(tc: EdataTechCard): string {
   let make = csvSafe(tc.engine_make || "").toUpperCase();
   make = ENGINE_MAKE_FIXES[make] || make;
   const cid = ((tc.cu_cc || "").match(/\d+/) || [""])[0];
@@ -192,7 +196,7 @@ function engineString(tc: EdataTechCard): string {
   return csvSafe(make || cid);
 }
 
-function fullName(tc: EdataTechCard): string {
+export function fullName(tc: EdataTechCard): string {
   return csvSafe(`${tc.first_name || ""} ${tc.last_name || ""}`);
 }
 
@@ -204,7 +208,7 @@ RACE_CLASSES.forEach((c, i) => {
   if (c.code && !CLASS_BY_NAME.has(key)) CLASS_BY_NAME.set(key, { code: c.code, order: i });
 });
 
-function classInfo(category: string, runs: RunRow[]): { code: string; order: number } {
+export function classInfo(category: string, runs: RunRow[]): { code: string; order: number } {
   const known = CLASS_BY_NAME.get(norm(category));
   if (known) return known;
   // EData-imported rows carry the class code in class_index — reuse it when
@@ -228,7 +232,7 @@ function classInfo(category: string, runs: RunRow[]): { code: string; order: num
 // ——— Tech card ↔ run matching (same shape as the no-shows cross-reference:
 // class first, then car number, with driver name as the fallback) ———
 
-function techCardMatchesCategory(tc: EdataTechCard, category: string, code: string): boolean {
+export function techCardMatchesCategory(tc: EdataTechCard, category: string, code: string): boolean {
   const catNorm = norm(category);
   const className = norm(tc.class_name);
   if (className && className === catNorm) return true;
@@ -246,14 +250,14 @@ function tcScore(tc: EdataTechCard): number {
   return s;
 }
 
-interface CategoryTechIndex {
+export interface CategoryTechIndex {
   byCar: Map<string, EdataTechCard>;
   byName: Map<string, EdataTechCard>;
   /** The class code the tech cards agree on, when they agree on exactly one. */
   code: string | null;
 }
 
-function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
+export function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
   const byCar = new Map<string, EdataTechCard>();
   const byName = new Map<string, EdataTechCard>();
   const codes = new Set<string>();
@@ -274,7 +278,7 @@ function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
   return { byCar, byName, code: codes.size === 1 ? [...codes][0] : null };
 }
 
-function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
+export function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
   const byCar = index.byCar.get(norm(run.car_number));
   if (byCar) return byCar;
   return index.byName.get(norm(run.name)) || null;
