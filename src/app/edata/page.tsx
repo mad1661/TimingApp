@@ -6,12 +6,15 @@ import { useLiveData } from "@/components/LiveDataProvider";
 import { RACE_CLASSES } from "@/lib/schedule-classes";
 import {
   DEDUCTION_REASONS,
+  PRO_EVENT_SCALES,
   buildDeductionsSheet,
   buildPointsFileContent,
   deductionsFor,
+  proScaleLabel,
   type AccuPointsCategory,
   type AccuPointsSkipped,
   type PointsDeduction,
+  type ProEventScale,
 } from "@/lib/accutime-points";
 
 // Class picker options for sessions whose Class.ini carries no code: real
@@ -254,6 +257,9 @@ export default function EdataPage() {
   // the session and are applied client-side, so adding one needs no rebuild.
   const [accuCalcPoints, setAccuCalcPoints] = useState(true);
   const [accuIncomplete, setAccuIncomplete] = useState(false);
+  // Event scale for pro (Mission Foods) classes: Indy and the Pomona 2
+  // Countdown finale pay the stepped-up values; everything else is regular.
+  const [accuProScale, setAccuProScale] = useState<ProEventScale>("regular");
   // Race code in the points filename: "16" → C10A16DP.TXT (golden sample).
   const [accuRaceCode, setAccuRaceCode] = useState("16");
   const [accuDeductions, setAccuDeductions] = useState<(PointsDeduction & { id: number })[]>([]);
@@ -547,6 +553,7 @@ export default function EdataPage() {
       if (accuLogos.right) form.append("logo_right", accuLogos.right);
       form.append("calc_points", accuCalcPoints ? "1" : "0");
       form.append("incomplete_race", accuIncomplete ? "1" : "0");
+      form.append("pro_scale", accuProScale);
       form.append("points_race_code", accuRaceCode.trim());
       const { ok, body } = await postAccuForm(form, (pct) => {
         if (pct !== null && pct < 1) {
@@ -1100,11 +1107,11 @@ export default function EdataPage() {
                 onChange={(e) => setAccuCalcPoints(e.target.checked)}
                 className="accent-nhra-red cursor-pointer"
               />
-              Calculate points (Alcohol &amp; below)
+              Calculate points
             </label>
             <label
               className="flex items-center gap-2 cursor-pointer"
-              title="Racers who won their last matchup get the next round's loss points as a guaranteed minimum"
+              title="Sportsman/alcohol only: racers who won their last matchup get the next round's loss points as a guaranteed minimum. NHRA publishes no pro equivalent, so pro classes are unaffected."
             >
               <input
                 type="checkbox"
@@ -1112,9 +1119,26 @@ export default function EdataPage() {
                 onChange={(e) => setAccuIncomplete(e.target.checked)}
                 className="accent-nhra-red cursor-pointer"
               />
-              Incomplete race — guaranteed points
+              Incomplete race — guaranteed points (sportsman/alcohol)
             </label>
           </div>
+          <label
+            className="text-xs text-gray-400 w-56"
+            title="Which Mission Foods value set the pro classes (TF/FC/PS/PSM…) score: Indy and the Pomona 2 Countdown finale pay W150/RU120 with the stepped-up qualifying values; every other event — Countdown included — pays the regular W100/RU80 scale. Sportsman and alcohol points ignore this."
+          >
+            Pro event scale
+            <select
+              value={accuProScale}
+              onChange={(e) => setAccuProScale(e.target.value as ProEventScale)}
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white"
+            >
+              {PRO_EVENT_SCALES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label
             className="text-xs text-gray-400 w-24"
             title="Race code in the points filename: 16 → C10A16DP.TXT"
@@ -1312,14 +1336,16 @@ export default function EdataPage() {
           </div>
         )}
 
-        {/* ——— Points (Alcohol & below), with deductions ——— */}
+        {/* ——— Points, with deductions ——— */}
         {accuResult && (accuResult.points.length > 0 || accuResult.pointsSkipped.length > 0) && (
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border">
-              <p className="text-sm text-white font-semibold">Points — Alcohol &amp; below</p>
+              <p className="text-sm text-white font-semibold">Points</p>
               <p className="text-xs text-gray-500 mt-0.5">
                 NHRA sportsman brackets by field size; TAD/TAFC score the fixed alcohol bracket
-                plus qualifying position and attempt points. Points files ({accuResult.points
+                plus qualifying position and attempt points; pro classes (TF/FC/PS/PSM…) score
+                the national-event structure — rounds, qualifying position, participation and
+                session low-ET bonuses — on the picked event scale. Points files ({accuResult.points
                   .map((p) => p.filename)
                   .join(", ") || "—"}) go into the RACEDATA.zip with deductions applied.
               </p>
@@ -1327,10 +1353,7 @@ export default function EdataPage() {
                 <p className="text-xs text-yellow-500 mt-1">
                   Skipped:{" "}
                   {accuResult.pointsSkipped
-                    .map(
-                      (s) =>
-                        `${s.category} (${s.reason === "pro" ? "pro — held off for now" : "no elimination rounds"})`,
-                    )
+                    .map((s) => `${s.category} (no elimination rounds)`)
                     .join(" · ")}
                 </p>
               )}
@@ -1347,6 +1370,7 @@ export default function EdataPage() {
                       <span className="text-gray-500 font-normal">
                         ({cat.classCode}) · field of {cat.fieldSize}
                         {cat.alcohol ? " · alcohol bracket + qual/attempt points" : ""}
+                        {cat.pro && cat.proScale ? ` · pro — ${proScaleLabel(cat.proScale)}` : ""}
                       </span>
                     </p>
                     <button
@@ -1363,6 +1387,15 @@ export default function EdataPage() {
                       {cat.filename}
                     </button>
                   </div>
+                  {(cat.notes || []).length > 0 && (
+                    <ul className="px-4 py-1.5 space-y-0.5 bg-nhra-darker/20">
+                      {(cat.notes || []).map((n, ni) => (
+                        <li key={ni} className="text-[11px] text-yellow-500/90">
+                          {n}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead className="text-gray-500 uppercase tracking-wider">

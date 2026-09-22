@@ -75,6 +75,19 @@ export interface AccuTimeElimRound {
   pairs: AccuTimePair[];
 }
 
+/**
+ * One qualifying session's passes, best finish-line ET per car — the source
+ * for the pro per-session low-ET bonus. Only race.dat's Logging clusters can
+ * supply this; Compulink QDAT text carries best-of-event only, so sessions
+ * built from it leave qualSessionPasses empty (bonuses are then skipped, never
+ * invented).
+ */
+export interface AccuTimeQualSessionData {
+  /** 1-based session order across the event (Q1, Q2, …). */
+  session: number;
+  passes: { car_number: string; name: string; et: number | null }[];
+}
+
 export interface AccuTimeSession {
   classCode: string;
   className: string;
@@ -84,6 +97,8 @@ export interface AccuTimeSession {
   treeBase: number;
   qualifying: AccuTimeQualifier[];
   qualSessions: number;
+  /** Per-session qualifying passes (empty when the source has best-only data). */
+  qualSessionPasses: AccuTimeQualSessionData[];
   /** All elimination passes, EDAT/RunRow-shaped (lane order preserved). */
   runs: Omit<RunRow, "id" | "created_at">[];
   elimRounds: AccuTimeElimRound[];
@@ -1017,6 +1032,9 @@ function buildCompulinkSessions(
       treeBase: 0.5, // Compulink text carries tree-adjusted RTs already
       qualifying,
       qualSessions: qualifying.length ? 1 : 0,
+      // QDAT holds the best-of-event order only — no per-session passes, so
+      // pro session low-ET bonuses are skipped (and said so), never guessed.
+      qualSessionPasses: [],
       runs,
       elimRounds,
       lowEt,
@@ -1210,6 +1228,32 @@ export function parseAccuTimePack(
       if (best && best.mph !== null) topSpeed = { mph: best.mph, car: best.car_number, name: best.name };
     }
 
+    // Per-session qualifying passes for the pro low-ET bonus: rounds in
+    // ascending order, each date cluster within a round is one session, best
+    // finish-line ET per car.
+    const qualSessionPasses: AccuTimeQualSessionData[] = [];
+    {
+      let sessionNo = 0;
+      for (const rn of [...qual.keys()].sort((a, b) => a - b)) {
+        for (const cluster of qual.get(rn)!) {
+          sessionNo++;
+          const bestByCar = new Map<string, { car_number: string; name: string; et: number | null }>();
+          for (const pass of cluster) {
+            for (const row of pass.rows) {
+              if (isByeRow(row)) continue;
+              const et = finishEt(row);
+              const key = row.car.toUpperCase();
+              const cur = bestByCar.get(key);
+              if (!cur || (et !== null && (cur.et === null || et < cur.et))) {
+                bestByCar.set(key, { car_number: row.car, name: row.name, et });
+              }
+            }
+          }
+          if (bestByCar.size > 0) qualSessionPasses.push({ session: sessionNo, passes: [...bestByCar.values()] });
+        }
+      }
+    }
+
     // Elimination rounds → RunRows. Lane order within a pair is preserved for
     // the EDAT text; the pairs also carry winner-first copies for the PDFs.
     const season = opts.season || (ini.raceDate ? ini.raceDate.slice(0, 4) : "");
@@ -1284,6 +1328,7 @@ export function parseAccuTimePack(
       treeBase,
       qualifying,
       qualSessions,
+      qualSessionPasses,
       runs,
       elimRounds,
       lowEt,
