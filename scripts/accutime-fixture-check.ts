@@ -13,6 +13,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import { deflateSync } from "zlib";
 import { parseAccuTimePack, parseClassIni, type AccuTimeSession } from "../src/lib/accutime";
 import { buildAccuTimeArtifacts } from "../src/lib/accutime-export";
 import {
@@ -166,23 +167,86 @@ const TF_QLY = qly([
   );
 }
 
-// ——— 7. Header logos: PDFs build with and without them ———
+// ——— 7. Header logos land in BOTH downloaded PDFs (v1.43.2) ———
+// The v1.43.1 bug: logos set on the page never showed on the downloaded
+// Final Round Results PDF. Assert the actual image XObjects, per PDF, with a
+// distinct image per slot (identical images get deduped into one XObject).
 {
-  const TINY_PNG =
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  // Minimal valid 8x8 RGB PNG, one shade per slot, generated in-process.
+  const tinyPng = (shade: number): string => {
+    const crcTable = Array.from({ length: 256 }, (_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    const crc32 = (buf: Buffer) => {
+      let c = 0xffffffff;
+      for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, data: Buffer) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(data.length);
+      const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(body));
+      return Buffer.concat([len, body, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(8, 0);
+    ihdr.writeUInt32BE(8, 4);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 2; // color type RGB
+    const raw = Buffer.concat(
+      Array.from({ length: 8 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(24, shade)])),
+    );
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", ihdr),
+      chunk("IDAT", deflateSync(raw)),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+    return "data:image/png;base64," + png.toString("base64");
+  };
+  const countImages = (pdf: Uint8Array | null): number =>
+    pdf ? (Buffer.from(pdf).toString("latin1").match(/\/Subtype\s*\/Image/g) || []).length : -1;
+
+  // The finals PDF only builds when a session has elimination rounds, so a
+  // minimal Compulink EDAT (path B) rides along with the qualifying session.
+  const TS_EDAT = latin1(
+    [
+      "Compulink StarTrak TOP SPORTSMAN Elimination Results",
+      "FINALS",
+      "175W,935755,TS,1,Stan Wadoski,Union ME,'63 Nova,CHEV  765,  .018,, 7.456,176.72",
+      "115,945840,TS,2,Rick Homan,Allentown PA,'08 Cobalt,CHEV  540,  .034,, 7.501,175.20",
+      "End of File",
+    ].join("\r\n"),
+  );
   const { sessions } = parseAccuTimePack([
     { name: "race.qly", data: FC_QLY },
     { name: "Class.ini", data: latin1(FC_INI) },
+    { name: "C11EDAT.TXT", data: TS_EDAT },
   ]);
+  check(
+    "logo fixture has an elim session (finals PDF) and a qualifying session",
+    sessions.some((s) => s.elimRounds.length > 0) && sessions.some((s) => s.qualifying.length > 0),
+    sessions.map((s) => `${s.className}: elim ${s.elimRounds.length}, qual ${s.qualifying.length}`).join(" | "),
+  );
   const plain = buildAccuTimeArtifacts(sessions, []);
   const withLogos = buildAccuTimeArtifacts(sessions, [], {
-    logos: { left: TINY_PNG, center: TINY_PNG, right: TINY_PNG },
+    logos: { left: tinyPng(0x11), center: tinyPng(0x77), right: tinyPng(0xee) },
   });
-  check("qualifying PDF builds without logos", (plain.qualifyingPdf?.length ?? 0) > 0);
-  check("qualifying PDF builds with logos", (withLogos.qualifyingPdf?.length ?? 0) > 0);
+  check("finals PDF builds without logos, image-free", countImages(plain.finalsPdf) === 0);
+  check("qualifying PDF builds without logos, image-free", countImages(plain.qualifyingPdf) === 0);
   check(
-    "logo PDF is larger (images embedded)",
-    (withLogos.qualifyingPdf?.length ?? 0) > (plain.qualifyingPdf?.length ?? 0),
+    "finals PDF embeds all 3 header logos",
+    countImages(withLogos.finalsPdf) === 3,
+    `got ${countImages(withLogos.finalsPdf)} image XObjects`,
+  );
+  check(
+    "qualifying PDF embeds all 3 header logos",
+    countImages(withLogos.qualifyingPdf) === 3,
+    `got ${countImages(withLogos.qualifyingPdf)} image XObjects`,
   );
 }
 

@@ -134,8 +134,19 @@ const ACCU_LOGO_SLOTS: { key: AccuLogoSlot; label: string; align: string }[] = [
 
 const ACCU_LOGOS_LS_KEY = "timindata_accutime_logos";
 
-// Rasterize any picked image (PNG / JPG / WebP / SVG) to a PNG data URL jsPDF
-// can embed, capped so a header logo stays a sane size.
+/** One string per logo set, to tell whether the built package already has them. */
+function logosKey(l: Record<AccuLogoSlot, string | null>): string {
+  return `${l.left || ""}|${l.center || ""}|${l.right || ""}`;
+}
+
+// Rasterize any picked image (PNG / JPG / WebP / SVG) to a PNG/JPEG data URL
+// jsPDF can embed. The server rejects logo fields over ~3M chars, so the
+// encode steps down — smaller PNG, then JPEG flattened onto white (the PDF
+// page is white anyway) — until the data URL fits with room to spare. Without
+// this, a photo-style banner rasterized to PNG could blow past the cap and
+// the logo silently vanished from the downloaded PDFs.
+const LOGO_DATA_URL_MAX = 2_500_000;
+
 async function fileToLogoDataUrl(file: File): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
@@ -147,14 +158,32 @@ async function fileToLogoDataUrl(file: File): Promise<string> {
     });
     const natW = img.naturalWidth || 600;
     const natH = img.naturalHeight || 210;
-    const scale = Math.min(1, 1600 / natW, 420 / natH);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(natW * scale));
-    canvas.height = Math.max(1, Math.round(natH * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("canvas unavailable");
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/png");
+    const base = Math.min(1, 1600 / natW, 420 / natH);
+    const render = (scale: number, type: "image/png" | "image/jpeg"): string => {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(natW * scale));
+      canvas.height = Math.max(1, Math.round(natH * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas unavailable");
+      if (type === "image/jpeg") {
+        // JPEG has no alpha — flatten onto white, matching the printed sheet.
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL(type, 0.85);
+    };
+    // PNG keeps transparency; only give that up when even a half-size PNG is
+    // still too heavy.
+    for (const s of [1, 0.7, 0.5]) {
+      const out = render(base * s, "image/png");
+      if (out.length <= LOGO_DATA_URL_MAX) return out;
+    }
+    for (const s of [1, 0.7, 0.5]) {
+      const out = render(base * s, "image/jpeg");
+      if (out.length <= LOGO_DATA_URL_MAX) return out;
+    }
+    return render(base * 0.25, "image/jpeg");
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -252,6 +281,11 @@ export default function EdataPage() {
   });
   const accuLogoInputRef = useRef<HTMLInputElement>(null);
   const accuLogoSlotRef = useRef<AccuLogoSlot>("left");
+  // The logos baked into the current package's PDFs. The server renders the
+  // PDFs at upload time, so when the on-page logos drift from these the
+  // package must be rebuilt or the download buttons keep serving PDFs without
+  // the logos (the v1.43.1 "images don't go on the finals PDF" bug).
+  const accuBuiltLogosKey = useRef<string | null>(null);
 
   // Points (Alcohol & below) + deductions. Deductions live in page state for
   // the session and are applied client-side, so adding one needs no rebuild.
@@ -333,6 +367,18 @@ export default function EdataPage() {
       // corrupt store — start clean
     }
   }, []);
+
+  // Adding, replacing or clearing a logo after the package was built rebuilds
+  // it automatically (debounced), so the downloaded finals / qualifying PDFs
+  // always carry the logos shown on the page.
+  useEffect(() => {
+    if (!accuResult || accuUploading || accuFilesRef.current.length === 0) return;
+    if (accuBuiltLogosKey.current === null) return;
+    if (logosKey(accuLogos) === accuBuiltLogosKey.current) return;
+    const t = setTimeout(() => void handleAccuUpload(accuFilesRef.current), 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accuLogos, accuResult, accuUploading]);
 
   function updateLogo(slot: AccuLogoSlot, dataUrl: string | null) {
     const next = { ...accuLogos, [slot]: dataUrl };
@@ -551,6 +597,9 @@ export default function EdataPage() {
       if (accuLogos.left) form.append("logo_left", accuLogos.left);
       if (accuLogos.center) form.append("logo_center", accuLogos.center);
       if (accuLogos.right) form.append("logo_right", accuLogos.right);
+      // Recorded at attempt time (not on success) so a failed rebuild shows
+      // its error once instead of retry-looping from the auto-rebuild effect.
+      accuBuiltLogosKey.current = logosKey(accuLogos);
       form.append("calc_points", accuCalcPoints ? "1" : "0");
       form.append("incomplete_race", accuIncomplete ? "1" : "0");
       form.append("pro_scale", accuProScale);
@@ -1027,7 +1076,7 @@ export default function EdataPage() {
           onChange={(e) => void handleLogoPick(e.target.files)}
         />
         <p className="text-xs text-gray-400 mb-1.5">
-          Sheet header logos <span className="text-gray-500">— print across the top of the qualifying and Final Round Results PDFs; leave empty for text-only headers</span>
+          Sheet header logos <span className="text-gray-500">— print across the top of the qualifying and Final Round Results PDFs; leave empty for text-only headers. Changing them after an upload rebuilds the package automatically.</span>
         </p>
         <div className="grid grid-cols-3 gap-3 mb-4">
           {ACCU_LOGO_SLOTS.map((slot) => {
