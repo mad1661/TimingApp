@@ -13,9 +13,16 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { deflateSync } from "zlib";
+import { deflateSync, inflateSync } from "zlib";
 import { parseAccuTimePack, parseClassIni, type AccuTimeSession } from "../src/lib/accutime";
 import { buildAccuTimeArtifacts } from "../src/lib/accutime-export";
+import {
+  buildRacedataPdf,
+  buildQualifyingPdf,
+  type PdfCategory,
+  type PdfEvent,
+  type QualPdfCategory,
+} from "../src/lib/racedata-pdf";
 import {
   buildPointsFileContent,
   countdownSeedPoints,
@@ -34,6 +41,76 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 const latin1 = (s: string) => new Uint8Array(Buffer.from(s, "latin1"));
+
+// Minimal valid 8x8 RGB PNG, one shade per logo slot, generated in-process
+// (identical images get deduped into one XObject, so each slot is distinct).
+function tinyPng(shade: number): string {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buf: Buffer) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(8, 0);
+  ihdr.writeUInt32BE(8, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type RGB
+  const raw = Buffer.concat(
+    Array.from({ length: 8 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(24, shade)])),
+  );
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+  return "data:image/png;base64," + png.toString("base64");
+}
+
+/**
+ * Count image-draw invocations (`/I<n> Do`) per page, in page order. Unlike a
+ * whole-file XObject count this proves the logos are STAMPED on each page —
+ * the v1.43.2 gap was continuation pages sharing the file's XObjects but
+ * never drawing them.
+ */
+function perPageImageDraws(pdf: Uint8Array | null): number[] {
+  if (!pdf) return [];
+  const raw = Buffer.from(pdf).toString("latin1");
+  const objs = new Map<number, string>();
+  const re = /(\d+) 0 obj([\s\S]*?)endobj/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) objs.set(Number(m[1]), m[2]);
+  const counts: number[] = [];
+  for (const body of objs.values()) {
+    if (!/\/Type\s*\/Page[^s]/.test(body)) continue;
+    const cm = body.match(/\/Contents\s+(\d+) 0 R/);
+    const cbody = cm ? objs.get(Number(cm[1])) || "" : "";
+    const sm = cbody.match(/stream\r?\n([\s\S]*?)\r?\nendstream/);
+    let content = sm ? sm[1] : "";
+    if (/FlateDecode/.test(cbody)) {
+      try {
+        content = inflateSync(Buffer.from(content, "latin1")).toString("latin1");
+      } catch {
+        content = "";
+      }
+    }
+    counts.push((content.match(/\/I\d+ Do/g) || []).length);
+  }
+  return counts;
+}
 
 // Class.ini in the sample session's shape (GM1 Funny Car).
 const FC_INI = [
@@ -172,42 +249,6 @@ const TF_QLY = qly([
 // Final Round Results PDF. Assert the actual image XObjects, per PDF, with a
 // distinct image per slot (identical images get deduped into one XObject).
 {
-  // Minimal valid 8x8 RGB PNG, one shade per slot, generated in-process.
-  const tinyPng = (shade: number): string => {
-    const crcTable = Array.from({ length: 256 }, (_, n) => {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-      return c >>> 0;
-    });
-    const crc32 = (buf: Buffer) => {
-      let c = 0xffffffff;
-      for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
-      return (c ^ 0xffffffff) >>> 0;
-    };
-    const chunk = (type: string, data: Buffer) => {
-      const len = Buffer.alloc(4);
-      len.writeUInt32BE(data.length);
-      const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
-      const crc = Buffer.alloc(4);
-      crc.writeUInt32BE(crc32(body));
-      return Buffer.concat([len, body, crc]);
-    };
-    const ihdr = Buffer.alloc(13);
-    ihdr.writeUInt32BE(8, 0);
-    ihdr.writeUInt32BE(8, 4);
-    ihdr[8] = 8; // bit depth
-    ihdr[9] = 2; // color type RGB
-    const raw = Buffer.concat(
-      Array.from({ length: 8 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(24, shade)])),
-    );
-    const png = Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      chunk("IHDR", ihdr),
-      chunk("IDAT", deflateSync(raw)),
-      chunk("IEND", Buffer.alloc(0)),
-    ]);
-    return "data:image/png;base64," + png.toString("base64");
-  };
   const countImages = (pdf: Uint8Array | null): number =>
     pdf ? (Buffer.from(pdf).toString("latin1").match(/\/Subtype\s*\/Image/g) || []).length : -1;
 
@@ -247,6 +288,71 @@ const TF_QLY = qly([
     "qualifying PDF embeds all 3 header logos",
     countImages(withLogos.qualifyingPdf) === 3,
     `got ${countImages(withLogos.qualifyingPdf)} image XObjects`,
+  );
+}
+
+// ——— 7b. Header logos are DRAWN on every page of a multi-page PDF (v1.43.3) ———
+// The v1.43.2 gap: the finals builder stamped the logo row only on the summary's
+// first page and each class's first elimination page — continuation pages (new
+// page on overflow) had no logos. Force both PDFs past one page and assert the
+// per-page draw invocations, not just the file-level XObjects.
+{
+  const event: PdfEvent = {
+    series: "NHRA Mission Foods Drag Racing Series",
+    dates: "September 18, 2026",
+    roundDate: "18/SEP/2026",
+    brand: "AccuTime",
+    logos: { left: tinyPng(0x11), center: tinyPng(0x77), right: tinyPng(0xee) },
+  };
+
+  // Finals: a 60-row summary spills the summary section onto page 2+, and six
+  // 10-pair rounds spill the elimination listing onto continuation pages.
+  const roundRow = (n: number) => ({
+    num: String(n), cls: "TF", qfy: "1", driver: `Driver ${n}`, home: "Town ST",
+    car: "'08 Chevy", motor: "CHEV 500", reaction: "0.050", di: "", et: "7.500", mph: "180.00",
+  });
+  const finalsCats: PdfCategory[] = Array.from({ length: 2 }, (_, c) => ({
+    name: `CLASS ${c + 1}`,
+    hasDI: false,
+    rows: Array.from({ length: 60 }, (_, i) => ({
+      label: "Low E.T.", num: String(i), driver: `Driver ${i}`, hometown: "Town ST", car: "'08 Chevy", et: "7.500",
+    })),
+    rounds: Array.from({ length: 6 }, (_, r) => ({
+      name: `ROUND ${r + 1}`,
+      pairs: Array.from({ length: 10 }, (_, p) => ({ rows: [roundRow(p * 2), roundRow(p * 2 + 1)], single: false })),
+    })),
+  }));
+  const finalsDraws = perPageImageDraws(buildRacedataPdf(event, finalsCats));
+  check("multi-page finals PDF really is multi-page", finalsDraws.length > 2, `got ${finalsDraws.length} pages`);
+  check(
+    "finals PDF draws all 3 logos on EVERY page (2+ included)",
+    finalsDraws.length > 0 && finalsDraws.every((n) => n === 3),
+    `per-page draws: [${finalsDraws.join(", ")}]`,
+  );
+
+  // Qualifying: 120 entries per class overflow each class onto extra pages.
+  const qualCats: QualPdfCategory[] = Array.from({ length: 2 }, (_, c) => ({
+    name: `QCLASS ${c + 1}`,
+    entries: Array.from({ length: 120 }, (_, i) => ({
+      pos: String(i + 1), num: String(i), cls: "TF", driver: `Driver ${i}`, hometown: "Town ST",
+      car: "'08 Chevy", motor: "CHEV 500", et: "7.500", index: "", diff: "",
+    })),
+  }));
+  const qualDraws = perPageImageDraws(buildQualifyingPdf(event, qualCats));
+  check("multi-page qualifying PDF really is multi-page", qualDraws.length > 2, `got ${qualDraws.length} pages`);
+  check(
+    "qualifying PDF draws all 3 logos on EVERY page (2+ included)",
+    qualDraws.length > 0 && qualDraws.every((n) => n === 3),
+    `per-page draws: [${qualDraws.join(", ")}]`,
+  );
+
+  // No logos → no image draws anywhere, and the pages still build (the
+  // text-only header keeps its original layout).
+  const noLogoDraws = perPageImageDraws(buildRacedataPdf({ ...event, logos: undefined }, finalsCats));
+  check(
+    "finals PDF without logos stays image-free on every page",
+    noLogoDraws.length > 2 && noLogoDraws.every((n) => n === 0),
+    `per-page draws: [${noLogoDraws.join(", ")}]`,
   );
 }
 
