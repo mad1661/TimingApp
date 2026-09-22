@@ -249,6 +249,8 @@ function tcScore(tc: EdataTechCard): number {
 interface CategoryTechIndex {
   byCar: Map<string, EdataTechCard>;
   byName: Map<string, EdataTechCard>;
+  /** "D WILKERSON" (first initial + last) — for abbreviated timing names. */
+  byInitial: Map<string, EdataTechCard | null>;
   /** The class code the tech cards agree on, when they agree on exactly one. */
   code: string | null;
 }
@@ -256,6 +258,7 @@ interface CategoryTechIndex {
 function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
   const byCar = new Map<string, EdataTechCard>();
   const byName = new Map<string, EdataTechCard>();
+  const byInitial = new Map<string, EdataTechCard | null>();
   const codes = new Set<string>();
   for (const tc of cards) {
     const car = norm(tc.car_number);
@@ -268,16 +271,41 @@ function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
       const prev = byName.get(name);
       if (!prev || tcScore(tc) > tcScore(prev)) byName.set(name, tc);
     }
+    const initialKey = initialLastKey(`${tc.first_name || ""} ${tc.last_name || ""}`);
+    if (initialKey) {
+      // Two different people can share an initial + last name (father/son) —
+      // an ambiguous key matches nobody rather than guessing.
+      const prev = byInitial.get(initialKey);
+      if (prev === undefined) byInitial.set(initialKey, tc);
+      else if (prev && norm(`${prev.first_name} ${prev.last_name}`) !== name) byInitial.set(initialKey, null);
+    }
     const code = norm(tc.category);
     if (/^[A-Z0-9]{1,6}$/.test(code)) codes.add(code);
   }
-  return { byCar, byName, code: codes.size === 1 ? [...codes][0] : null };
+  return { byCar, byName, byInitial, code: codes.size === 1 ? [...codes][0] : null };
+}
+
+/** "Daniel Wilkerson" or "D. WIlkerson" → "D WILKERSON"; null when unusable. */
+function initialLastKey(name: string | null): string | null {
+  const n = norm(name).replace(/\./g, "");
+  const parts = n.split(" ").filter(Boolean);
+  if (parts.length < 2) return null;
+  const initial = parts[0].charAt(0);
+  const last = parts[parts.length - 1];
+  if (!initial || !last) return null;
+  return `${initial} ${last}`;
 }
 
 function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
+  // Category is already scoped by the caller; within it, car number is the
+  // strongest join, exact name next, and the timing system's abbreviated
+  // "D. Wilkerson" style last (only when it singles out one card).
   const byCar = index.byCar.get(norm(run.car_number));
   if (byCar) return byCar;
-  return index.byName.get(norm(run.name)) || null;
+  const byName = index.byName.get(norm(run.name));
+  if (byName) return byName;
+  const key = initialLastKey(run.name);
+  return (key && index.byInitial.get(key)) || null;
 }
 
 // ——— Line assembly ———
