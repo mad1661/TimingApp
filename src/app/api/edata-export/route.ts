@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getElimRunsForEvent } from "@/lib/db";
+import { getAllTechCards, getElimRunsForEvent } from "@/lib/db";
 import { buildEdataExport } from "@/lib/edata-export";
 
 export const dynamic = "force-dynamic";
@@ -15,9 +15,11 @@ const NO_STORE_HEADERS = {
  * GET /api/edata-export?event_code=…&season=…
  *
  * Builds CompuLink StarTrak EDAT elimination files (one per class) from the
- * event's stored runs and returns them as JSON: { files: [{ filename,
- * category, classCode, rounds, pairs, runs, content }], warnings }. The
- * client turns these into downloads / a RACEDATA.zip.
+ * event's stored runs, merging entry-record fields (member number, full name,
+ * city, body, engine) from the tech cards, and returns them as JSON:
+ * { files: [{ filename, category, classCode, rounds, pairs, runs, enriched,
+ * content }], warnings }. The client turns these into downloads / a
+ * RACEDATA.zip.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -32,8 +34,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const runs = await getElimRunsForEvent(eventCode, season);
-    const result = buildEdataExport(runs);
+    const [runs, techCards] = await Promise.all([
+      getElimRunsForEvent(eventCode, season),
+      // Tech cards only enrich; an export with blank entry fields still beats
+      // no export if the collection can't be read.
+      getAllTechCards().catch((err) => {
+        console.error("EData export: tech cards unavailable:", err);
+        return [];
+      }),
+    ]);
+    const result = buildEdataExport(runs, techCards);
     return NextResponse.json(result, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("EData export failed:", error);

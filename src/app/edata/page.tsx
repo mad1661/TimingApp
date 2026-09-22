@@ -28,6 +28,7 @@ interface ExportFile {
   rounds: string[];
   pairs: number;
   runs: number;
+  enriched: number;
   content: string;
 }
 
@@ -330,10 +331,11 @@ export default function EdataPage() {
             <h2 className="text-white font-bold text-lg">Export EDAT / RACEDATA</h2>
             <p className="text-xs text-gray-400 mt-1 max-w-xl">
               Writes the event&apos;s elimination rounds (E1, E2, … , finals) as CompuLink StarTrak
-              EDAT files — one C#EDAT.TXT per class — using the event code and season above. Only
-              rounds already on file are written; nothing is invented. Pairs are left lane then
-              right; rounds imported from EData (no lanes) are written winner-first, CompuLink&apos;s
-              own convention.
+              EDAT files — one C#EDAT.TXT per class — using the event code and season above.
+              Member numbers, full names, city, body and engine merge in from the event&apos;s tech
+              cards where a car (or driver name) matches. Only rounds already on file are written;
+              nothing is invented. Pairs are left lane then right; rounds imported from EData (no
+              lanes) are written winner-first, CompuLink&apos;s own convention.
             </p>
           </div>
           <button
@@ -373,6 +375,7 @@ export default function EdataPage() {
                     <th className="text-left px-3 py-2 font-medium">Class</th>
                     <th className="text-left px-3 py-2 font-medium">Rounds</th>
                     <th className="text-right px-3 py-2 font-medium">Pairings</th>
+                    <th className="text-right px-3 py-2 font-medium">Tech cards</th>
                     <th className="text-right px-4 py-2 font-medium"></th>
                   </tr>
                 </thead>
@@ -385,6 +388,14 @@ export default function EdataPage() {
                       </td>
                       <td className="px-3 py-2 text-gray-400">{f.rounds.join(" · ")}</td>
                       <td className="px-3 py-2 text-right text-gray-300">{f.pairs}</td>
+                      <td
+                        className={`px-3 py-2 text-right ${
+                          f.enriched === 0 ? "text-gray-600" : "text-gray-300"
+                        }`}
+                        title="Runs whose member / city / body / engine came from a tech card"
+                      >
+                        {f.enriched}/{f.runs}
+                      </td>
                       <td className="px-4 py-2 text-right">
                         <button
                           onClick={() => downloadBytes(f.filename, edataBytes(f.content), "text/plain")}
