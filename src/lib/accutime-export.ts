@@ -26,6 +26,15 @@ import {
   type PdfRoundRow,
   type QualPdfCategory,
 } from "./racedata-pdf";
+import {
+  PRO_CLASS_CODES,
+  buildIdxFile,
+  compulinkClassNumber,
+  scoreAccuTimeSession,
+  type AccuPointsCategory,
+  type AccuPointsSkipped,
+  type IdxEntry,
+} from "./accutime-points";
 
 /**
  * Turns parsed AccuTime sessions plus the shared tech-card store into the one
@@ -48,6 +57,11 @@ export interface AccuTimeArtifacts {
   warnings: string[];
   /** Per-class coverage: how many elim runs matched a tech card. */
   coverage: { category: string; enriched: number; runs: number }[];
+  /** NHRA points, Alcohol & below (points-calc port); pro classes land in pointsSkipped. */
+  points: AccuPointsCategory[];
+  pointsSkipped: AccuPointsSkipped[];
+  /** IDX class table for the RACEDATA.zip (golden-sample layout), null with no sessions. */
+  idx: AccuTimeTextFile | null;
 }
 
 /** Trim the fixed-width EDAT numeric strings for PDF cells (right-aligned by jsPDF). */
@@ -62,7 +76,17 @@ function toEdataCard(tc: EdataTechCard): EdataTechCard {
 export function buildAccuTimeArtifacts(
   sessions: AccuTimeSession[],
   storedTechCards: EdataTechCard[],
-  opts: { eventName?: string; seriesHeader?: string; logos?: PdfLogos } = {},
+  opts: {
+    eventName?: string;
+    seriesHeader?: string;
+    logos?: PdfLogos;
+    /** Score points (Alcohol & below). Defaults on. */
+    calcPoints?: boolean;
+    /** Award guaranteed next-round loss points to racers whose race never finished. */
+    incompleteRace?: boolean;
+    /** Race code in the points filename: "16" → C10A16DP.TXT. */
+    pointsRaceCode?: string;
+  } = {},
 ): AccuTimeArtifacts {
   const warnings: string[] = [];
 
@@ -83,12 +107,32 @@ export function buildAccuTimeArtifacts(
     return !tag || !eventNameNorm || tag === eventNameNorm;
   };
 
+  // Compulink class numbers name every class's files (C10QDAT / C10EDAT /
+  // C10A16DP are all Super Street, per the golden RACEDATA sample). Classes
+  // without a fixed number take the lowest unused one.
+  const usedNums = new Set<number>();
+  let nextSeq = 1;
+  const classNums = ordered.map((s) => {
+    let n = compulinkClassNumber(s.className, s.classCode);
+    if (n === null || usedNums.has(n)) {
+      while (usedNums.has(nextSeq)) nextSeq++;
+      n = nextSeq;
+    }
+    usedNums.add(n);
+    return n;
+  });
+  const numByCategory = new Map(ordered.map((s, i) => [s.className.toUpperCase(), classNums[i]]));
+
   // ---------- EDAT (all sessions' elim runs together) ----------
   const allRuns: RunRow[] = ordered.flatMap((s) => s.runs as RunRow[]);
   const allDriverCards = ordered.flatMap((s) => s.drivers.map(toEdataCard));
   const mergedCards = [...allDriverCards, ...storedTechCards];
   const edatResult = buildEdataExport(allRuns, mergedCards);
   warnings.push(...edatResult.warnings);
+  const edatFiles = edatResult.files.map((f) => {
+    const n = numByCategory.get(f.category.toUpperCase());
+    return n !== undefined ? { ...f, filename: `C${n}EDAT.TXT` } : f;
+  });
 
   const coverage = edatResult.files.map((f) => ({
     category: f.category,
@@ -96,10 +140,15 @@ export function buildAccuTimeArtifacts(
     runs: f.runs,
   }));
 
-  // ---------- QDAT + PDFs, per session ----------
+  // ---------- QDAT + PDFs + points, per session ----------
   const qdat: AccuTimeTextFile[] = [];
   const finalsCats: PdfCategory[] = [];
   const qualCats: QualPdfCategory[] = [];
+  const points: AccuPointsCategory[] = [];
+  const pointsSkipped: AccuPointsSkipped[] = [];
+  const idxEntries: IdxEntry[] = [];
+  const calcPoints = opts.calcPoints !== false;
+  const raceCode = (opts.pointsRaceCode || "").trim().replace(/-/g, "");
 
   let anyElim = false;
 
@@ -107,6 +156,51 @@ export function buildAccuTimeArtifacts(
     const cards = [...session.drivers.map(toEdataCard), ...storedTechCards];
     const idx = buildTechIndex(session.className, session.classCode, cards, isLocal);
     const cardFor = (car: string | null, name: string | null) => findTechCard(car, name, idx);
+    const classNum = classNums[i];
+
+    // ----- IDX class-table row: the champ and runner-up once the final ran -----
+    {
+      const finals = session.elimRounds.find((r) => r.round === "F");
+      let winnerMember = "0";
+      let winnerName = "";
+      let runnerUpName = "";
+      if (finals && finals.pairs.length === 1) {
+        const [w, l] = finals.pairs[0].runs;
+        if (w) {
+          const tc = cardFor(w.car_number, w.name);
+          winnerName = (tc ? fullName(tc) : "") || w.name || "";
+          winnerMember = w.member_number || tc?.member_number || "0";
+        }
+        if (l) {
+          const tc = cardFor(l.car_number, l.name);
+          runnerUpName = (tc ? fullName(tc) : "") || l.name || "";
+        }
+      }
+      idxEntries.push({ num: classNum, classCode: session.classCode || "?", winnerMember, winnerName, runnerUpName });
+    }
+
+    // ----- Points (Alcohol & below; pro categories held off) -----
+    if (calcPoints) {
+      if (PRO_CLASS_CODES.has(session.classCode)) {
+        pointsSkipped.push({ category: session.className, classCode: session.classCode, reason: "pro" });
+      } else if (!session.elimRounds.length) {
+        pointsSkipped.push({ category: session.className, classCode: session.classCode, reason: "no_elims" });
+      } else {
+        points.push({
+          category: session.className,
+          classCode: session.classCode,
+          // Same C# prefix as the class's EDAT/QDAT files: C10A16DP.TXT.
+          filename: `C${classNum}A${raceCode}DP.TXT`,
+          alcohol: session.classCode === "TAD" || session.classCode === "TAFC",
+          fieldSize: new Set(
+            session.elimRounds.flatMap((r) =>
+              r.pairs.flatMap((p) => p.runs.map((run) => (run.car_number || run.name || "?").trim().toUpperCase())),
+            ),
+          ).size,
+          rows: scoreAccuTimeSession(session, cardFor, { incompleteRace: opts.incompleteRace }),
+        });
+      }
+    }
 
     // ----- QDAT text -----
     const qEntries: QdatEntry[] = session.qualifying.map((q) => {
@@ -129,7 +223,7 @@ export function buildAccuTimeArtifacts(
     });
     if (qEntries.length) {
       qdat.push({
-        filename: `C${i + 1}QDAT.TXT`,
+        filename: `C${classNum}QDAT.TXT`,
         category: session.className,
         content: buildQdatFile(session.className, qEntries, session.lowEt, session.topSpeed),
       });
@@ -281,7 +375,21 @@ export function buildAccuTimeArtifacts(
 
   if (!anyElim) warnings.push("No elimination rounds were found in the AccuTime data — EDAT and the finals PDF are empty.");
 
-  return { edat: edatResult.files, qdat, finalsPdf, qualifyingPdf, warnings, coverage };
+  const idxFile: AccuTimeTextFile | null = idxEntries.length
+    ? { filename: "IDX14.TXT", category: "", content: buildIdxFile(idxEntries) }
+    : null;
+
+  return {
+    edat: edatFiles,
+    qdat,
+    finalsPdf,
+    qualifyingPdf,
+    warnings,
+    coverage,
+    points,
+    pointsSkipped,
+    idx: idxFile,
+  };
 }
 
 function bodyYearFull(tc: EdataTechCard | null): string {

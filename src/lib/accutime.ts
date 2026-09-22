@@ -2,6 +2,7 @@ import { unzipSync } from "fflate";
 import MDBReader from "mdb-reader";
 import type { RunRow } from "./db";
 import type { EdataTechCard } from "./edata-export";
+import { parseEdataFile } from "./edata-parse";
 import { RACE_CLASSES } from "./schedule-classes";
 
 /**
@@ -687,17 +688,356 @@ function splitBucket(bucket: PackFile[], label: string, topWarnings: string[]): 
   }));
 }
 
+// ——— Compulink QDAT/EDAT text ingest (path B) ———
+//
+// Tracks that already hold Compulink text can skip the AccuTime conversion:
+// dropping C#QDAT.TXT + C#EDAT.TXT builds the same package (PDFs, points,
+// re-emitted QDAT/EDAT) through the same session pipeline.
+
+function compulinkKind(f: PackFile): "qdat" | "edat" | null {
+  if (!/\.txt$/i.test(f.name)) return null;
+  const head = latin1(f.data.slice(0, 300));
+  if (/^Compulink\s+StarTrak\s+.+\s+Qualifying\s+for\s+\d+/im.test(head)) return "qdat";
+  if (/^Compulink\s+StarTrak\s+.+\s+Elimination\s+Results/im.test(head)) return "edat";
+  const base = f.name.split(/[\\/]/).pop() || f.name;
+  if (/QDAT/i.test(base)) return "qdat";
+  if (/EDAT/i.test(base)) return "edat";
+  return null;
+}
+
+interface QdatParseEntry {
+  car: string;
+  member: string;
+  cls: string;
+  body: string;
+  bodyYear: string;
+  engine: string;
+  hp: string;
+  factoredHp: string;
+  name: string;
+  cityState: string;
+  et: number | null;
+}
+
+function parseQdatText(text: string): {
+  className: string;
+  entries: QdatParseEntry[];
+  lowEt: { et: number; car: string; name: string } | null;
+  topSpeed: { mph: number; car: string; name: string } | null;
+} {
+  const lines = text.replace(/\x1a+/g, "").split(/\r?\n/);
+  let className = "";
+  let lowEt: { et: number; car: string; name: string } | null = null;
+  let topSpeed: { mph: number; car: string; name: string } | null = null;
+  const entries: QdatParseEntry[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || /^End of File$/i.test(line)) continue;
+    const h = line.match(/^Compulink\s+StarTrak\s+(.+?)\s+Qualifying\s+for\s+\d+/i);
+    if (h) {
+      className = h[1].trim();
+      continue;
+    }
+    const low = line.match(/^Low\s+ET\s+([\d.]+)\s+(\S+)\s+(.*)$/i);
+    if (low) {
+      lowEt = { et: parseFloat(low[1]), car: low[2], name: low[3].trim() };
+      continue;
+    }
+    const top = line.match(/^Top\s+Speed\s+([\d.]+)\s+(\S+)\s+(.*)$/i);
+    if (top) {
+      topSpeed = { mph: parseFloat(top[1]), car: top[2], name: top[3].trim() };
+      continue;
+    }
+    const f = line.split(",");
+    if (f.length < 11) continue;
+    entries.push({
+      car: str(f[0]),
+      member: str(f[1]) === "0" ? "" : str(f[1]),
+      cls: str(f[2]),
+      body: str(f[3]),
+      bodyYear: str(f[4]),
+      engine: str(f[5]),
+      hp: str(f[6]),
+      factoredHp: str(f[7]),
+      name: str(f[8]),
+      cityState: str(f[9]),
+      et: posOrNull(num(f[10])),
+    });
+  }
+  return { className, entries, lowEt, topSpeed };
+}
+
+function splitCityState(s: string): { city: string; state: string } {
+  const m = s.trim().match(/^(.*?)\s+([A-Z]{2})$/i);
+  return m ? { city: m[1], state: m[2].toUpperCase() } : { city: s.trim(), state: "" };
+}
+
+function splitPersonName(s: string): { first: string; last: string } {
+  const words = s.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return { first: "", last: words[0] || "" };
+  return { first: words.slice(0, -1).join(" "), last: words[words.length - 1] };
+}
+
+function splitBody(s: string): { type: string; year: string } {
+  const m = s.trim().match(/^'(\d{2})\s+(.*)$/);
+  return m ? { type: m[2], year: m[1] } : { type: s.trim(), year: "" };
+}
+
+function splitEngine(s: string): { make: string; cid: string } {
+  const words = s.trim().split(/\s+/).filter(Boolean);
+  const cid = words.length > 1 && /^\d+$/.test(words[words.length - 1]) ? words.pop()! : "";
+  return { make: words.join(" "), cid };
+}
+
+/** Entry-record card synthesized from a Compulink text row (QDAT or EDAT). */
+function compulinkCard(fields: {
+  car: string;
+  member: string;
+  cls: string;
+  name: string;
+  cityState: string;
+  body: string;
+  engine: string;
+  className: string;
+  hp?: string;
+  factoredHp?: string;
+}): EdataTechCard {
+  const { city, state } = splitCityState(fields.cityState);
+  const { first, last } = splitPersonName(fields.name);
+  const body = splitBody(fields.body);
+  const engine = splitEngine(fields.engine);
+  return {
+    car_number: fields.car,
+    first_name: first,
+    last_name: last,
+    city,
+    state,
+    category: fields.cls,
+    class_name: fields.className,
+    engine_make: engine.make,
+    body_type: body.type,
+    body_year: body.year,
+    cu_cc: engine.cid,
+    member_number: fields.member === "0" ? "" : fields.member,
+    hp: fields.hp || "",
+    factored_hp: fields.factoredHp || "",
+    event_name: "", // session-local: always trusted
+  };
+}
+
+function buildCompulinkSessions(
+  files: PackFile[],
+  iniMeta: ClassIniInfo | null,
+  sharedDbfs: PackFile[],
+  opts: AccuTimeParseOptions,
+  topWarnings: string[],
+): AccuTimeSession[] {
+  // Pair QDAT + EDAT by the C# prefix, falling back to the header class name
+  // for renamed files.
+  const groups = new Map<string, { qdat: PackFile | null; edat: PackFile | null }>();
+  const keyFor = (f: PackFile): string => {
+    const base = f.name.split(/[\\/]/).pop() || f.name;
+    const m = base.match(/^C(\d+)/i);
+    if (m) return `#${parseInt(m[1], 10)}`;
+    const head = latin1(f.data.slice(0, 300));
+    const h = head.match(/^Compulink\s+StarTrak\s+(.+?)\s+(?:Qualifying\s+for|Elimination\s+Results)/im);
+    return h ? h[1].trim().toUpperCase() : base.toUpperCase();
+  };
+  for (const f of files) {
+    const kind = compulinkKind(f);
+    if (!kind) continue;
+    const key = keyFor(f);
+    const g = groups.get(key) || { qdat: null, edat: null };
+    if (kind === "qdat" && !g.qdat) g.qdat = f;
+    else if (kind === "edat" && !g.edat) g.edat = f;
+    else topWarnings.push(`${f.name}: another ${kind.toUpperCase()} for the same class was already read — skipped.`);
+    groups.set(key, g);
+  }
+
+  const sessions: AccuTimeSession[] = [];
+
+  for (const [, g] of groups) {
+    const warnings: string[] = [];
+    const label = g.edat?.name || g.qdat?.name || "?";
+
+    // Eliminations through the existing EData parser (winner-first pairing,
+    // SINGLE markers, synthetic timestamps).
+    let runs: AccuTimeSession["runs"] = [];
+    let roundsInOrder: string[] = [];
+    let edatClassName = "";
+    if (g.edat) {
+      const parsed = parseEdataFile(latin1(g.edat.data), {
+        eventCode: opts.eventCode || "",
+        season: opts.season || (iniMeta?.raceDate ? iniMeta.raceDate.slice(0, 4) : ""),
+        eventName: opts.eventName,
+        raceDate: iniMeta?.raceDate || undefined,
+        fileName: g.edat.name,
+      });
+      warnings.push(...parsed.warnings);
+      edatClassName = parsed.category;
+      runs = parsed.runs;
+      roundsInOrder = parsed.rounds;
+    } else {
+      warnings.push(`${label}: QDAT with no matching EDAT — qualifying only, no elimination rounds or points.`);
+    }
+
+    const qdat = g.qdat ? parseQdatText(latin1(g.qdat.data)) : null;
+    if (g.edat && !g.qdat) {
+      warnings.push(`${label}: EDAT with no matching QDAT — no qualifying sheet (and no alcohol qualifying points).`);
+    }
+
+    const classNameRaw = (edatClassName || qdat?.className || "").trim().toUpperCase();
+
+    // Class code: the header name decides first — in Super Stock / Stock /
+    // Comp the rows' class column is each CAR's class (GT/HA, B/SA, I/SM),
+    // not the eliminator. The row majority covers headerless files.
+    let classCode = "";
+    for (const [code, name] of CLASS_NAME_BY_CODE) {
+      if (name === classNameRaw) {
+        classCode = code;
+        break;
+      }
+    }
+    if (!classCode) {
+      const codeCounts = new Map<string, number>();
+      for (const r of runs) {
+        const c = (r.class_index || "").trim().toUpperCase();
+        if (c) codeCounts.set(c, (codeCounts.get(c) || 0) + 1);
+      }
+      for (const e of qdat?.entries || []) {
+        const c = e.cls.trim().toUpperCase();
+        if (c) codeCounts.set(c, (codeCounts.get(c) || 0) + 1);
+      }
+      classCode = [...codeCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+    }
+    if (!classCode) classCode = (opts.classCode || "").trim().toUpperCase();
+    const className = classNameRaw || (classCode ? CLASS_NAME_BY_CODE.get(classCode) || classCode : "UNKNOWN");
+    if (!classCode) {
+      warnings.push(`${label}: no class code in the file — pick the class on the page and rebuild.`);
+    }
+
+    // Elimination rounds: runs arrive winner-first per pair in file order.
+    const elimRounds: AccuTimeElimRound[] = [];
+    for (const roundCode of roundsInOrder) {
+      const roundRuns = runs.filter((r) => r.round === roundCode);
+      const pairs: AccuTimePair[] = [];
+      for (let i = 0; i < roundRuns.length; ) {
+        const r = roundRuns[i];
+        const next = roundRuns[i + 1];
+        if (r.is_winner && next && !next.is_winner) {
+          pairs.push({ runs: [r, next], single: false });
+          i += 2;
+        } else {
+          pairs.push({ runs: [r], single: true });
+          i += 1;
+        }
+      }
+      const m = roundCode.match(/^E(\d+)$/);
+      if (pairs.length) {
+        elimRounds.push({ round: roundCode, label: m ? `ROUND ${m[1]}` : "FINALS", pairs });
+      }
+    }
+
+    // Qualifying order + entry cards from the text rows themselves, so the
+    // package rebuilds even with no external tech cards on file.
+    const qualifying: AccuTimeQualifier[] = (qdat?.entries || []).map((e, i) => ({
+      pos: i + 1,
+      car_number: e.car,
+      name: e.name,
+      rt: null,
+      et: e.et,
+      mph: null,
+      bestSession: null,
+    }));
+
+    const drivers: EdataTechCard[] = [];
+    const seenCards = new Set<string>();
+    const addCard = (card: EdataTechCard) => {
+      const key = `${card.car_number}|${card.last_name}`.toUpperCase();
+      if (!card.car_number && !card.last_name) return;
+      if (seenCards.has(key)) return;
+      seenCards.add(key);
+      drivers.push(card);
+    };
+    for (const e of qdat?.entries || []) {
+      addCard(compulinkCard({ ...e, className }));
+    }
+    if (g.edat) {
+      // EDAT rows carry city / body / engine the RunRow shape doesn't hold.
+      for (const raw of latin1(g.edat.data).replace(/\x1a+/g, "").split(/\r?\n/)) {
+        const f = raw.split(",");
+        if (f.length < 12 || /^SINGLE$/i.test(f[0].trim())) continue;
+        addCard(
+          compulinkCard({
+            car: str(f[0]),
+            member: str(f[1]),
+            cls: str(f[2]),
+            name: str(f[4]),
+            cityState: str(f[5]),
+            body: str(f[6]),
+            engine: str(f[7]),
+            className,
+          }),
+        );
+      }
+    }
+    for (const dbf of sharedDbfs) {
+      if (!isJetDb(dbf.data)) continue;
+      try {
+        for (const card of readDrivers(dbf.data, classCode, className)) addCard(card);
+      } catch {
+        // unreadable shared driver db — text rows already cover the basics
+      }
+    }
+
+    // Retag runs with the resolved class name so grouping downstream holds.
+    for (const r of runs) r.category = className;
+
+    const qualPassRuns = runs.filter((r) => r.ft1320 !== null);
+    let lowEt = qdat?.lowEt || null;
+    let topSpeed = qdat?.topSpeed || null;
+    if (!lowEt) {
+      for (const r of qualPassRuns) {
+        if (r.ft1320 !== null && (!lowEt || r.ft1320 < lowEt.et))
+          lowEt = { et: r.ft1320, car: r.car_number || "", name: r.name || "" };
+      }
+    }
+    if (!topSpeed) {
+      for (const r of qualPassRuns) {
+        if (r.mph_1320 !== null && (!topSpeed || r.mph_1320 > topSpeed.mph))
+          topSpeed = { mph: r.mph_1320, car: r.car_number || "", name: r.name || "" };
+      }
+    }
+
+    sessions.push({
+      classCode,
+      className,
+      raceDate: iniMeta?.raceDate || null,
+      seriesName: iniMeta?.seriesName || null,
+      treeBase: 0.5, // Compulink text carries tree-adjusted RTs already
+      qualifying,
+      qualSessions: qualifying.length ? 1 : 0,
+      runs,
+      elimRounds,
+      lowEt,
+      topSpeed,
+      drivers,
+      warnings,
+    });
+  }
+
+  return sessions;
+}
+
 export function parseAccuTimePack(
   inputFiles: PackFile[],
   opts: AccuTimeParseOptions = {},
 ): { sessions: AccuTimeSession[]; warnings: string[] } {
   const topWarnings: string[] = [];
 
-  // Expand .acc / .zip archives, then split archives and loose files alike
-  // into per-class session groups — one drop can hold many classes, zipped,
-  // loose, or mixed.
-  const groups: SessionGroup[] = [];
-  const loose: PackFile[] = [];
+  // Expand .acc / .zip archives; members keep the archive name as a path
+  // prefix so the folder-based session grouping sees each zip as a folder.
+  const all: PackFile[] = [];
   for (const f of inputFiles) {
     if (isZip(f.data)) {
       if (isEncryptedZip(f.data)) {
@@ -710,20 +1050,42 @@ export function parseAccuTimePack(
       }
       try {
         const members = unzipSync(f.data);
-        const files = Object.entries(members)
-          .filter(([name]) => !name.endsWith("/"))
-          .map(([name, data]) => ({ name, data }));
-        groups.push(...splitLooseSessions(files, topWarnings, f.name));
+        for (const [name, data] of Object.entries(members)) {
+          if (!name.endsWith("/")) all.push({ name: `${f.name}/${name}`, data });
+        }
       } catch {
         topWarnings.push(`${f.name}: could not be read as a zip archive — skipped.`);
       }
     } else {
-      loose.push(f);
+      all.push(f);
     }
   }
-  if (loose.length) groups.push(...splitLooseSessions(loose, topWarnings, "uploaded files"));
 
-  const sessions: AccuTimeSession[] = [];
+  // Path B: Compulink QDAT/EDAT text builds sessions directly. A lone
+  // Class.ini / Drivers.dbf dropped alongside belongs to those sessions
+  // (series header, race date, entry records) when no AccuTime timing files
+  // came with them.
+  const compulinkSessions: AccuTimeSession[] = [];
+  const compulinkFiles = all.filter((f) => compulinkKind(f) !== null);
+  let accuFiles = all.filter((f) => compulinkKind(f) === null);
+  if (compulinkFiles.length > 0) {
+    const hasAccuTiming = accuFiles.some((f) => isDatFile(f) || isQlyFile(f));
+    let iniMeta: ClassIniInfo | null = null;
+    let sharedDbfs: PackFile[] = [];
+    if (!hasAccuTiming) {
+      const ini = accuFiles.find(isIniFile);
+      if (ini) iniMeta = parseClassIni(latin1(ini.data));
+      sharedDbfs = accuFiles.filter((f) => isDbfFile(f) && !isIniFile(f));
+      accuFiles = [];
+    }
+    compulinkSessions.push(...buildCompulinkSessions(compulinkFiles, iniMeta, sharedDbfs, opts, topWarnings));
+  }
+
+  const groups: SessionGroup[] = accuFiles.length
+    ? splitLooseSessions(accuFiles, topWarnings, "uploaded files")
+    : [];
+
+  const sessions: AccuTimeSession[] = [...compulinkSessions];
 
   for (const group of groups) {
     const warnings: string[] = [];

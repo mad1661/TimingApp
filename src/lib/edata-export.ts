@@ -61,6 +61,8 @@ export interface EdataTechCard {
   /** Horsepower figures — QDAT prints them; EDAT doesn't. */
   hp?: string;
   factored_hp?: string;
+  /** Home division ("NED — Division 1") — stored tech cards carry it; points files print the number. */
+  home_division?: string;
 }
 
 export interface EdataExportFile {

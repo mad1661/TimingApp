@@ -78,6 +78,9 @@ export async function POST(request: NextRequest) {
       eventName,
       seriesHeader,
       logos,
+      calcPoints: form.get("calc_points") !== "0",
+      incompleteRace: form.get("incomplete_race") === "1",
+      pointsRaceCode: (form.get("points_race_code") as string) || "",
     });
 
     const toB64 = (bytes: Uint8Array | null) =>
@@ -110,6 +113,9 @@ export async function POST(request: NextRequest) {
         finalsPdfBase64: toB64(artifacts.finalsPdf),
         qualifyingPdfBase64: toB64(artifacts.qualifyingPdf),
         coverage: artifacts.coverage,
+        points: artifacts.points,
+        pointsSkipped: artifacts.pointsSkipped,
+        idx: artifacts.idx,
         warnings: [...parseWarnings, ...artifacts.warnings],
       },
       { headers: NO_STORE_HEADERS },

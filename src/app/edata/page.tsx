@@ -4,6 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { strToU8, zipSync } from "fflate";
 import { useLiveData } from "@/components/LiveDataProvider";
 import { RACE_CLASSES } from "@/lib/schedule-classes";
+import {
+  DEDUCTION_REASONS,
+  buildDeductionsSheet,
+  buildPointsFileContent,
+  deductionsFor,
+  type AccuPointsCategory,
+  type AccuPointsSkipped,
+  type PointsDeduction,
+} from "@/lib/accutime-points";
 
 // Class picker options for sessions whose Class.ini carries no code: real
 // racing classes only (the schedule placeholders — Secure "X", Track Prep… —
@@ -84,6 +93,9 @@ interface AccuResult {
   finalsPdfBase64: string | null;
   qualifyingPdfBase64: string | null;
   coverage: { category: string; enriched: number; runs: number }[];
+  points: AccuPointsCategory[];
+  pointsSkipped: AccuPointsSkipped[];
+  idx: (AccuTextFile & { content: string }) | null;
   warnings: string[];
 }
 
@@ -237,6 +249,71 @@ export default function EdataPage() {
   });
   const accuLogoInputRef = useRef<HTMLInputElement>(null);
   const accuLogoSlotRef = useRef<AccuLogoSlot>("left");
+
+  // Points (Alcohol & below) + deductions. Deductions live in page state for
+  // the session and are applied client-side, so adding one needs no rebuild.
+  const [accuCalcPoints, setAccuCalcPoints] = useState(true);
+  const [accuIncomplete, setAccuIncomplete] = useState(false);
+  // Race code in the points filename: "16" → C10A16DP.TXT (golden sample).
+  const [accuRaceCode, setAccuRaceCode] = useState("16");
+  const [accuDeductions, setAccuDeductions] = useState<(PointsDeduction & { id: number })[]>([]);
+  const dedId = useRef(1);
+  const [dedCat, setDedCat] = useState("");
+  const [dedCar, setDedCar] = useState("");
+  const [dedReason, setDedReason] = useState<string>(DEDUCTION_REASONS[0]);
+  const [dedNote, setDedNote] = useState("");
+  const [dedPoints, setDedPoints] = useState("");
+
+  function addDeduction() {
+    const cat = accuResult?.points.find((p) => p.category === dedCat);
+    const row = cat?.rows.find((r) => r.car_number === dedCar);
+    const pts = parseFloat(dedPoints);
+    if (!cat || !row || !Number.isFinite(pts) || pts <= 0) return;
+    setAccuDeductions((prev) => [
+      ...prev,
+      {
+        id: dedId.current++,
+        category: cat.category,
+        car_number: row.car_number,
+        name: row.name,
+        reason: dedReason,
+        note: dedNote.trim(),
+        points: pts,
+      },
+    ]);
+    setDedNote("");
+    setDedPoints("");
+  }
+
+  /** A category's rows with deductions applied (final = points − deducted). */
+  function pointsRowsFinal(cat: AccuPointsCategory) {
+    return cat.rows.map((r) => {
+      const deducted = deductionsFor(accuDeductions, cat.category, r.car_number);
+      return { ...r, deducted, final: r.points - deducted };
+    });
+  }
+
+  // Points files: earned points in field 5, the deduction in field 6 (the
+  // golden A16DP layout), so the audit trail lives in the file itself.
+  function pointsFileEntries(): Record<string, Uint8Array> {
+    const entries: Record<string, Uint8Array> = {};
+    if (!accuResult) return entries;
+    for (const cat of accuResult.points) {
+      const rows = pointsRowsFinal(cat).map((r) => ({ ...r, deduction: r.deducted }));
+      entries[cat.filename] = edataBytes(buildPointsFileContent(cat.category, rows));
+    }
+    return entries;
+  }
+
+  /** Deductions that actually hit a scored row — the notes audit sheet. */
+  function appliedDeductions() {
+    if (!accuResult) return [];
+    return accuDeductions.filter((d) =>
+      accuResult.points.some(
+        (p) => p.category === d.category && p.rows.some((r) => r.car_number === d.car_number),
+      ),
+    );
+  }
 
   // Restore the last-used header logos.
   useEffect(() => {
@@ -435,7 +512,7 @@ export default function EdataPage() {
     // .acc is AccuTime's password-locked archive — it can't be opened here, so
     // it's dropped from the upload with a note rather than failing everything.
     const accFiles = entries.filter((e) => /\.acc$/i.test(e.path));
-    const valid = entries.filter((e) => /\.(dat|qly|ini|dbf|zip)$/i.test(e.path));
+    const valid = entries.filter((e) => /\.(dat|qly|ini|dbf|zip|txt)$/i.test(e.path));
     setAccuNote(
       accFiles.length > 0
         ? `${accFiles.map((e) => e.file.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use the loose .qly / .dat / Class.ini / Drivers.dbf files from the same folder instead.`
@@ -445,7 +522,7 @@ export default function EdataPage() {
       setAccuError(
         accFiles.length > 0
           ? ""
-          : "Upload the AccuTime session files: .dat / .qly / Class.ini / Drivers.dbf (or a zip of them).",
+          : "Upload AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf), Compulink C#QDAT/C#EDAT .TXT, or a zip of them.",
       );
       if (accuFileRef.current) accuFileRef.current.value = "";
       return;
@@ -468,6 +545,9 @@ export default function EdataPage() {
       if (accuLogos.left) form.append("logo_left", accuLogos.left);
       if (accuLogos.center) form.append("logo_center", accuLogos.center);
       if (accuLogos.right) form.append("logo_right", accuLogos.right);
+      form.append("calc_points", accuCalcPoints ? "1" : "0");
+      form.append("incomplete_race", accuIncomplete ? "1" : "0");
+      form.append("points_race_code", accuRaceCode.trim());
       const { ok, body } = await postAccuForm(form, (pct) => {
         if (pct !== null && pct < 1) {
           setAccuProgress({ stage: "Uploading session files…", pct });
@@ -494,13 +574,16 @@ export default function EdataPage() {
     }
   }
 
+  // RACEDATA.zip is Compulink text only — per class C#QDAT / C#EDAT /
+  // C#A16DP plus IDX14.TXT, matching the golden sample. PDFs download
+  // separately, never inside this zip.
   function accuAllEntries(): Record<string, Uint8Array> {
     const entries: Record<string, Uint8Array> = {};
     if (!accuResult) return entries;
     for (const f of accuResult.edat) entries[f.filename] = edataBytes(f.content);
     for (const f of accuResult.qdat) entries[f.filename] = edataBytes(f.content);
-    if (accuResult.finalsPdfBase64) entries["FinalRoundResults.pdf"] = base64ToBytes(accuResult.finalsPdfBase64);
-    if (accuResult.qualifyingPdfBase64) entries["Qualifying.pdf"] = base64ToBytes(accuResult.qualifyingPdfBase64);
+    Object.assign(entries, pointsFileEntries());
+    if (accuResult.idx) entries[accuResult.idx.filename] = edataBytes(accuResult.idx.content);
     return entries;
   }
 
@@ -908,18 +991,22 @@ export default function EdataPage() {
           <h2 className="text-white font-bold text-lg">AccuTime export</h2>
           <p className="text-xs text-gray-400 mt-1 max-w-2xl">
             Drop AccuTime sessions and get the full package: Compulink-compatible qualifying{" "}
-            <span className="font-mono">*QDAT.TXT</span> and eliminations{" "}
-            <span className="font-mono">*EDAT.TXT</span>, plus an AccuTime-branded qualifying PDF
+            <span className="font-mono">*QDAT.TXT</span>, eliminations{" "}
+            <span className="font-mono">*EDAT.TXT</span> and EVENT points{" "}
+            <span className="font-mono">*A16DP.TXT</span>, plus an AccuTime-branded qualifying PDF
             and Final Round Results PDF (with each class&apos;s round-by-round elimination page).
-            Upload the{" "}
-            <span className="font-mono">.dat</span> / <span className="font-mono">.qly</span> /{" "}
-            <span className="font-mono">Class.ini</span> / <span className="font-mono">Drivers.dbf</span>{" "}
-            files from the session folder (a zip of them works too). The{" "}
+            Upload the <span className="font-mono">.dat</span> /{" "}
+            <span className="font-mono">.qly</span> / <span className="font-mono">Class.ini</span>{" "}
+            / <span className="font-mono">Drivers.dbf</span> files from the session folder (a zip
+            works too) — or, for tracks that already have Compulink text, drop{" "}
+            <span className="font-mono">C#QDAT.TXT</span> +{" "}
+            <span className="font-mono">C#EDAT.TXT</span> directly for the same package. The{" "}
             <span className="font-mono">.acc</span> archive is password-locked and isn&apos;t
             needed — the loose files carry the same data. Several classes can go in one drop:
             one folder or zip per class, or matching names (FC.dat + FC.qly + FC-Class.ini).
             Member #, city, body and engine merge from the session&apos;s own driver database and
-            the shared tech cards.
+            the shared tech cards. RACEDATA.zip holds the Compulink text only (QDAT / EDAT /
+            points / IDX); the PDFs download separately.
           </p>
         </div>
 
@@ -1005,6 +1092,41 @@ export default function EdataPage() {
               ))}
             </select>
           </label>
+          <div className="text-xs text-gray-400 flex flex-col gap-1.5 pb-1.5">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={accuCalcPoints}
+                onChange={(e) => setAccuCalcPoints(e.target.checked)}
+                className="accent-nhra-red cursor-pointer"
+              />
+              Calculate points (Alcohol &amp; below)
+            </label>
+            <label
+              className="flex items-center gap-2 cursor-pointer"
+              title="Racers who won their last matchup get the next round's loss points as a guaranteed minimum"
+            >
+              <input
+                type="checkbox"
+                checked={accuIncomplete}
+                onChange={(e) => setAccuIncomplete(e.target.checked)}
+                className="accent-nhra-red cursor-pointer"
+              />
+              Incomplete race — guaranteed points
+            </label>
+          </div>
+          <label
+            className="text-xs text-gray-400 w-24"
+            title="Race code in the points filename: 16 → C10A16DP.TXT"
+          >
+            Race #
+            <input
+              value={accuRaceCode}
+              onChange={(e) => setAccuRaceCode(e.target.value)}
+              placeholder="16"
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+            />
+          </label>
           {accuFilesRef.current.length > 0 && !accuUploading && (
             <button
               onClick={() => handleAccuUpload(accuFilesRef.current)}
@@ -1035,7 +1157,7 @@ export default function EdataPage() {
             ref={accuFileRef}
             type="file"
             multiple
-            accept=".dat,.qly,.ini,.dbf,.zip,.DAT,.QLY,.INI,.DBF,.ZIP"
+            accept=".dat,.qly,.ini,.dbf,.zip,.txt,.DAT,.QLY,.INI,.DBF,.ZIP,.TXT"
             className="hidden"
             onChange={(e) =>
               handleAccuUpload(
@@ -1050,8 +1172,8 @@ export default function EdataPage() {
             {accuUploading ? "Working…" : "Drop AccuTime session files here"}
           </p>
           <p className="text-xs text-gray-500">
-            race.dat + race.qly + Class.ini + Drivers.dbf — folders and zips welcome; no .acc
-            needed, it&apos;s locked
+            race.dat + race.qly + Class.ini + Drivers.dbf, or Compulink C#QDAT/C#EDAT .TXT —
+            folders and zips welcome; no .acc needed, it&apos;s locked
           </p>
         </div>
 
@@ -1114,6 +1236,7 @@ export default function EdataPage() {
               <button
                 onClick={handleDownloadAccuZip}
                 className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
+                title="Compulink text only: C#QDAT / C#EDAT / C#A16DP + IDX14.TXT — PDFs download separately below"
               >
                 Download RACEDATA.zip
               </button>
@@ -1186,6 +1309,236 @@ export default function EdataPage() {
                 </button>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ——— Points (Alcohol & below), with deductions ——— */}
+        {accuResult && (accuResult.points.length > 0 || accuResult.pointsSkipped.length > 0) && (
+          <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border">
+              <p className="text-sm text-white font-semibold">Points — Alcohol &amp; below</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                NHRA sportsman brackets by field size; TAD/TAFC score the fixed alcohol bracket
+                plus qualifying position and attempt points. Points files ({accuResult.points
+                  .map((p) => p.filename)
+                  .join(", ") || "—"}) go into the RACEDATA.zip with deductions applied.
+              </p>
+              {accuResult.pointsSkipped.length > 0 && (
+                <p className="text-xs text-yellow-500 mt-1">
+                  Skipped:{" "}
+                  {accuResult.pointsSkipped
+                    .map(
+                      (s) =>
+                        `${s.category} (${s.reason === "pro" ? "pro — held off for now" : "no elimination rounds"})`,
+                    )
+                    .join(" · ")}
+                </p>
+              )}
+            </div>
+
+            {accuResult.points.map((cat) => {
+              const rows = pointsRowsFinal(cat);
+              const anyDed = rows.some((r) => r.deducted > 0);
+              return (
+                <div key={cat.filename} className="border-b border-nhra-border/60">
+                  <div className="px-4 py-2 bg-nhra-darker/40 flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-xs text-white font-semibold">
+                      {cat.category}{" "}
+                      <span className="text-gray-500 font-normal">
+                        ({cat.classCode}) · field of {cat.fieldSize}
+                        {cat.alcohol ? " · alcohol bracket + qual/attempt points" : ""}
+                      </span>
+                    </p>
+                    <button
+                      onClick={() => {
+                        const withDed = rows.map((r) => ({ ...r, deduction: r.deducted }));
+                        downloadBytes(
+                          cat.filename,
+                          edataBytes(buildPointsFileContent(cat.category, withDed)),
+                          "text/plain",
+                        );
+                      }}
+                      className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 font-mono"
+                    >
+                      {cat.filename}
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-gray-500 uppercase tracking-wider">
+                        <tr>
+                          <th className="text-left px-4 py-1.5 font-medium">Car</th>
+                          <th className="text-left px-2 py-1.5 font-medium">Driver</th>
+                          <th className="text-left px-2 py-1.5 font-medium">Status</th>
+                          <th className="text-right px-2 py-1.5 font-medium">Points</th>
+                          <th className="text-right px-2 py-1.5 font-medium">Deducted</th>
+                          <th className="text-right px-4 py-1.5 font-medium">Final</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, ri) => (
+                          <tr key={`${r.car_number}-${ri}`} className="border-t border-nhra-border/40">
+                            <td className="px-4 py-1.5 text-gray-300 font-mono">{r.car_number || "—"}</td>
+                            <td className="px-2 py-1.5 text-white">
+                              {r.name || "—"}
+                              {r.isWinner ? " 🏆" : ""}
+                            </td>
+                            <td className="px-2 py-1.5 text-gray-400">{r.status}</td>
+                            <td className="px-2 py-1.5 text-right text-gray-300 tabular-nums">{r.points}</td>
+                            <td
+                              className={`px-2 py-1.5 text-right tabular-nums ${
+                                r.deducted > 0 ? "text-red-400" : "text-gray-600"
+                              }`}
+                            >
+                              {r.deducted > 0 ? `−${r.deducted}` : "—"}
+                            </td>
+                            <td
+                              className={`px-4 py-1.5 text-right font-semibold tabular-nums ${
+                                anyDed && r.deducted > 0 ? "text-yellow-500" : "text-white"
+                              }`}
+                            >
+                              {r.final}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Deductions — oil-downs and other penalties, applied before export. */}
+            {accuResult.points.length > 0 && (
+              <div className="px-4 py-3 bg-nhra-darker/40">
+                <p className="text-xs text-white font-semibold mb-2">
+                  Deductions{" "}
+                  <span className="text-gray-500 font-normal">
+                    — oil-downs and penalties; adjusts the points files and is listed in
+                    DEDUCTIONS.TXT in the zip
+                  </span>
+                </p>
+                <div className="flex flex-wrap items-end gap-2 mb-2">
+                  <label className="text-[11px] text-gray-500">
+                    Class
+                    <select
+                      value={dedCat}
+                      onChange={(e) => {
+                        setDedCat(e.target.value);
+                        setDedCar("");
+                      }}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white min-w-[10rem]"
+                    >
+                      <option value="">— class —</option>
+                      {accuResult.points.map((p) => (
+                        <option key={p.filename} value={p.category}>
+                          {p.category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Racer
+                    <select
+                      value={dedCar}
+                      onChange={(e) => setDedCar(e.target.value)}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white min-w-[12rem]"
+                    >
+                      <option value="">— racer —</option>
+                      {(accuResult.points.find((p) => p.category === dedCat)?.rows || []).map(
+                        (r, ri) => (
+                          <option key={`${r.car_number}-${ri}`} value={r.car_number}>
+                            {r.car_number} {r.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Reason
+                    <select
+                      value={dedReason}
+                      onChange={(e) => setDedReason(e.target.value)}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+                    >
+                      {DEDUCTION_REASONS.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Note
+                    <input
+                      value={dedNote}
+                      onChange={(e) => setDedNote(e.target.value)}
+                      placeholder={dedReason === "Other" ? "what happened" : "optional"}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 w-40"
+                    />
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Points
+                    <input
+                      value={dedPoints}
+                      onChange={(e) => setDedPoints(e.target.value)}
+                      inputMode="numeric"
+                      placeholder="10"
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 w-16"
+                    />
+                  </label>
+                  <button
+                    onClick={addDeduction}
+                    disabled={
+                      !dedCat || !dedCar || !(parseFloat(dedPoints) > 0) || (dedReason === "Other" && !dedNote.trim())
+                    }
+                    className="px-3 py-1.5 rounded text-xs font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
+                  >
+                    Add deduction
+                  </button>
+                </div>
+                {accuDeductions.length > 0 && (
+                  <ul className="space-y-1">
+                    {accuDeductions.map((d) => (
+                      <li key={d.id} className="flex items-center gap-2 text-xs text-gray-300">
+                        <button
+                          onClick={() =>
+                            setAccuDeductions((prev) => prev.filter((x) => x.id !== d.id))
+                          }
+                          className="w-5 h-5 rounded border border-nhra-border text-gray-500 hover:text-white hover:border-gray-500 leading-none"
+                          title="Remove this deduction"
+                        >
+                          ✕
+                        </button>
+                        <span className="text-red-400 font-semibold tabular-nums">−{d.points}</span>
+                        <span className="text-white">
+                          {d.car_number} {d.name}
+                        </span>
+                        <span className="text-gray-500">
+                          {d.category} · {d.reason}
+                          {d.note ? ` — ${d.note}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {appliedDeductions().length > 0 && (
+                  <button
+                    onClick={() =>
+                      downloadBytes(
+                        "DEDUCTIONS.TXT",
+                        edataBytes(buildDeductionsSheet(appliedDeductions())),
+                        "text/plain",
+                      )
+                    }
+                    className="mt-2 text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 font-mono"
+                    title="Audit sheet with reasons and notes — downloads separately, not part of RACEDATA.zip"
+                  >
+                    DEDUCTIONS.TXT
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
