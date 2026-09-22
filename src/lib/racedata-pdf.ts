@@ -71,6 +71,11 @@ const LOGO_BAND_H = 76;
 /**
  * Draw the three-slot logo row at yTop and return the vertical space it used
  * (0 when no logos, so pages without them keep their original layout).
+ *
+ * This is the one shared header-band helper: EVERY page of both PDFs —
+ * summary continuations, elimination continuations, qualifying pages — goes
+ * through it, so a multi-page download carries the logos on page 2+ too
+ * (v1.43.3; previously only first pages were stamped).
  */
 function drawLogoRow(doc: jsPDF, event: PdfEvent, yTop: number, W: number, margin: number): number {
   const slots = [event.logos?.left, event.logos?.center, event.logos?.right];
@@ -175,11 +180,18 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
   const catGap = 9;
   const bottom = H - 34;
 
+  // Summary continuation pages carry the same header band as page 1; with no
+  // logos the page keeps its original text-only top.
+  const newSummaryPage = (): number => {
+    doc.addPage();
+    const band = drawLogoRow(doc, event, 40, W, 36);
+    return band ? 40 + band + 6 : 44;
+  };
+
   for (const cat of categories) {
     const need = headH + cat.rows.length * rowH + catGap;
     if (y + Math.min(need, headH + 2 * rowH) > bottom) {
-      doc.addPage();
-      y = 44;
+      y = newSummaryPage();
     }
     doc.setFont("times", "bold");
     doc.setFontSize(6);
@@ -203,8 +215,7 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     doc.setFontSize(8.5);
     for (const r of cat.rows) {
       if (y > bottom) {
-        doc.addPage();
-        y = 44;
+        y = newSummaryPage();
         doc.setFont("times", "normal");
         doc.setFontSize(8.5);
       }
@@ -296,10 +307,13 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     doc.text("* WINNERS of each pair appear First", 46, ry);
     ry += 12;
 
+    // Elimination continuation pages get the border AND the header band, so
+    // long round-by-round listings keep the logos past their first page.
     const newPage = (): number => {
       doc.addPage();
       drawPageBorder();
-      return 52;
+      const band = drawLogoRow(doc, event, 44, W, 44);
+      return band ? 44 + band + 6 : 52;
     };
 
     for (const rd of cat.rounds) {
