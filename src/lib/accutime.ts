@@ -677,7 +677,9 @@ export function parseAccuTimePack(
   }
 
   if (sessions.length === 0) {
-    topWarnings.push("No AccuTime sessions found — upload the .acc archive or the .dat/.qly/Class.ini files.");
+    topWarnings.push(
+      "No AccuTime sessions found — upload the .dat / .qly / Class.ini / Drivers.dbf files from the session folder (the .acc archive is password-locked and can't be read).",
+    );
   }
 
   return { sessions, warnings: topWarnings };

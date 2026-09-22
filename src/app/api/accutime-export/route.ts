@@ -16,8 +16,10 @@ const NO_STORE_HEADERS = {
 /**
  * POST /api/accutime-export  (multipart: files[], event_name?)
  *
- * Parses AccuTime session files (.acc / .dat / .qly / Class.ini / Drivers.dbf),
- * merges the shared tech_cards store, and returns the Compulink export package
+ * Parses AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf, or a
+ * zip of them — the .acc archive itself is password-locked and gets skipped
+ * with a warning), merges the shared tech_cards store, and returns the
+ * Compulink export package
  * as JSON: QDAT + EDAT text files plus base64 finals / qualifying PDFs. The
  * client saves them individually or as a RACEDATA.zip.
  */

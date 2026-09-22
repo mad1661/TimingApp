@@ -124,6 +124,10 @@ export default function EdataPage() {
   const [accuUploading, setAccuUploading] = useState(false);
   const [accuResult, setAccuResult] = useState<AccuResult | null>(null);
   const [accuError, setAccuError] = useState("");
+  const [accuNote, setAccuNote] = useState("");
+  const [accuProgress, setAccuProgress] = useState<{ stage: string; pct: number | null } | null>(
+    null,
+  );
   const [accuDragOver, setAccuDragOver] = useState(false);
   const accuFileRef = useRef<HTMLInputElement>(null);
 
@@ -259,29 +263,76 @@ export default function EdataPage() {
     });
   }
 
+  // fetch() can't report upload progress, so the AccuTime post goes through
+  // XHR: a determinate percentage while the files go up, then the caller flips
+  // to an indeterminate "building" stage while the server parses and renders.
+  function postAccuForm(
+    form: FormData,
+    onUploadPct: (pct: number | null) => void,
+  ): Promise<{ ok: boolean; body: Record<string, unknown> }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/accutime-export");
+      xhr.upload.onprogress = (e) =>
+        onUploadPct(e.lengthComputable && e.total > 0 ? e.loaded / e.total : null);
+      xhr.onload = () => {
+        let body: Record<string, unknown> = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          // non-JSON error body — the generic message below covers it
+        }
+        resolve({ ok: xhr.status >= 200 && xhr.status < 300, body });
+      };
+      xhr.onerror = () => reject(new Error("Upload failed — network error"));
+      xhr.send(form);
+    });
+  }
+
   async function handleAccuUpload(files: File[]) {
-    const valid = files.filter((f) => /\.(acc|dat|qly|ini|dbf)$/i.test(f.name));
+    // .acc is AccuTime's password-locked archive — it can't be opened here, so
+    // it's dropped from the upload with a note rather than failing everything.
+    const accFiles = files.filter((f) => /\.acc$/i.test(f.name));
+    const valid = files.filter((f) => /\.(dat|qly|ini|dbf|zip)$/i.test(f.name));
+    setAccuNote(
+      accFiles.length > 0
+        ? `${accFiles.map((f) => f.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use the loose .qly / .dat / Class.ini / Drivers.dbf files from the same folder instead.`
+        : "",
+    );
     if (valid.length === 0) {
-      setAccuError("Upload AccuTime files: .acc, or the .dat / .qly / Class.ini / Drivers.dbf set.");
+      setAccuError(
+        accFiles.length > 0
+          ? ""
+          : "Upload the AccuTime session files: .dat / .qly / Class.ini / Drivers.dbf (or a zip of them).",
+      );
+      if (accuFileRef.current) accuFileRef.current.value = "";
       return;
     }
     setAccuUploading(true);
     setAccuError("");
     setAccuResult(null);
+    setAccuProgress({ stage: "Uploading session files…", pct: 0 });
     try {
       const form = new FormData();
       for (const f of valid) form.append("files", f);
       if (live.config?.eventName) form.append("event_name", live.config.eventName);
       if (eventCode.trim()) form.append("event_code", eventCode.trim());
       if (season.trim()) form.append("season", season.trim());
-      const res = await fetch("/api/accutime-export", { method: "POST", body: form });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "AccuTime export failed");
-      setAccuResult(body as AccuResult);
+      const { ok, body } = await postAccuForm(form, (pct) => {
+        if (pct !== null && pct < 1) {
+          setAccuProgress({ stage: "Uploading session files…", pct });
+        } else {
+          // Bytes are up — everything left is server work with no size to count.
+          setAccuProgress({ stage: "Reading session · building QDAT / EDAT / PDFs…", pct: null });
+        }
+      });
+      if (!ok) throw new Error((body.error as string) || "AccuTime export failed");
+      setAccuResult(body as unknown as AccuResult);
     } catch (err) {
       setAccuError(err instanceof Error ? err.message : "AccuTime export failed");
     } finally {
       setAccuUploading(false);
+      setAccuProgress(null);
       if (accuFileRef.current) accuFileRef.current.value = "";
     }
   }
@@ -703,11 +754,12 @@ export default function EdataPage() {
             <span className="font-mono">*QDAT.TXT</span>, eliminations{" "}
             <span className="font-mono">*EDAT.TXT</span>, a StarTrak qualifying PDF and the Final
             Round Results PDF (with each class&apos;s round-by-round elimination page). Upload the{" "}
-            <span className="font-mono">.acc</span> archive, or the{" "}
             <span className="font-mono">.dat</span> / <span className="font-mono">.qly</span> /{" "}
             <span className="font-mono">Class.ini</span> / <span className="font-mono">Drivers.dbf</span>{" "}
-            files directly. Member #, city, body and engine merge from the session&apos;s own driver
-            database and the shared tech cards.
+            files from the session folder (a zip of them works too). The{" "}
+            <span className="font-mono">.acc</span> archive is password-locked and isn&apos;t
+            needed — the loose files carry the same data. Member #, city, body and engine merge
+            from the session&apos;s own driver database and the shared tech cards.
           </p>
         </div>
 
@@ -731,17 +783,46 @@ export default function EdataPage() {
             ref={accuFileRef}
             type="file"
             multiple
-            accept=".acc,.dat,.qly,.ini,.dbf,.ACC,.DAT,.QLY,.INI,.DBF"
+            accept=".dat,.qly,.ini,.dbf,.zip,.DAT,.QLY,.INI,.DBF,.ZIP"
             className="hidden"
             onChange={(e) => handleAccuUpload(Array.from(e.target.files || []))}
           />
           <p className="text-white font-medium mb-1">
-            {accuUploading ? "Building the export package…" : "Drop AccuTime session files here"}
+            {accuUploading ? "Working…" : "Drop AccuTime session files here"}
           </p>
           <p className="text-xs text-gray-500">
-            race.acc, or race.dat + race.qly + Class.ini + Drivers.dbf
+            race.dat + race.qly + Class.ini + Drivers.dbf — no .acc needed, it&apos;s locked
           </p>
         </div>
+
+        {accuProgress && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between gap-3 mb-1.5">
+              <p className="text-xs text-gray-400">{accuProgress.stage}</p>
+              {accuProgress.pct !== null && (
+                <p className="text-xs text-gray-500 tabular-nums">
+                  {Math.round(accuProgress.pct * 100)}%
+                </p>
+              )}
+            </div>
+            <div className="h-2 rounded-full bg-nhra-darker border border-nhra-border overflow-hidden">
+              {accuProgress.pct !== null ? (
+                <div
+                  className="h-full bg-nhra-red rounded-full transition-[width] duration-200"
+                  style={{ width: `${Math.max(3, accuProgress.pct * 100)}%` }}
+                />
+              ) : (
+                <div className="h-full w-1/3 bg-nhra-red rounded-full animate-progress-slide" />
+              )}
+            </div>
+          </div>
+        )}
+
+        {accuNote && (
+          <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
+            {accuNote}
+          </div>
+        )}
 
         {accuError && (
           <div className="mt-3 bg-red-500/10 border border-red-500/40 text-red-400 rounded-xl px-4 py-3 text-sm">
