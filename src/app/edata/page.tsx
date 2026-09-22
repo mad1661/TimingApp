@@ -3,6 +3,32 @@
 import { useEffect, useRef, useState } from "react";
 import { strToU8, zipSync } from "fflate";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { RACE_CLASSES } from "@/lib/schedule-classes";
+import {
+  DEDUCTION_REASONS,
+  buildDeductionsSheet,
+  buildPointsFileContent,
+  deductionsFor,
+  type AccuPointsCategory,
+  type AccuPointsSkipped,
+  type PointsDeduction,
+} from "@/lib/accutime-points";
+
+// Class picker options for sessions whose Class.ini carries no code: real
+// racing classes only (the schedule placeholders — Secure "X", Track Prep… —
+// are not timing classes), one entry per code.
+const ACCU_CLASS_OPTIONS: { code: string; name: string }[] = (() => {
+  const seen = new Set<string>();
+  const out: { code: string; name: string }[] = [];
+  for (const c of RACE_CLASSES) {
+    if (!c.isRacing) continue;
+    const code = c.code.trim().toUpperCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    out.push({ code, name: c.name.toUpperCase() });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+})();
 
 interface PerFile {
   name: string;
@@ -40,6 +66,7 @@ interface ExportResult {
 interface AccuSession {
   classCode: string;
   className: string;
+  seriesName: string | null;
   raceDate: string | null;
   qualifiers: number;
   qualSessions: number;
@@ -66,6 +93,9 @@ interface AccuResult {
   finalsPdfBase64: string | null;
   qualifyingPdfBase64: string | null;
   coverage: { category: string; enriched: number; runs: number }[];
+  points: AccuPointsCategory[];
+  pointsSkipped: AccuPointsSkipped[];
+  idx: (AccuTextFile & { content: string }) | null;
   warnings: string[];
 }
 
@@ -80,6 +110,82 @@ function base64ToBytes(b64: string): Uint8Array {
 // import path reads them.
 function edataBytes(content: string): Uint8Array {
   return strToU8(content, true);
+}
+
+interface AccuEntry {
+  file: File;
+  path: string;
+}
+
+// ——— Header logos: the racedata-zip-to-pdf three-slot row (left / event /
+// right), stamped across the top of the qualifying + Final Round Results
+// PDFs. Kept in localStorage so the logos survive a refresh. ———
+
+type AccuLogoSlot = "left" | "center" | "right";
+
+const ACCU_LOGO_SLOTS: { key: AccuLogoSlot; label: string; align: string }[] = [
+  { key: "left", label: "Click to add left logo", align: "justify-start" },
+  { key: "center", label: "Click to add event logo", align: "justify-center" },
+  { key: "right", label: "Click to add right logo", align: "justify-end" },
+];
+
+const ACCU_LOGOS_LS_KEY = "timindata_accutime_logos";
+
+// Rasterize any picked image (PNG / JPG / WebP / SVG) to a PNG data URL jsPDF
+// can embed, capped so a header logo stays a sane size.
+async function fileToLogoDataUrl(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("unreadable image"));
+      el.src = url;
+    });
+    const natW = img.naturalWidth || 600;
+    const natH = img.naturalHeight || 210;
+    const scale = Math.min(1, 1600 / natW, 420 / natH);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(natW * scale));
+    canvas.height = Math.max(1, Math.round(natH * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas unavailable");
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Folder drops arrive as directory entries, and which folder a file came from
+// is a class-grouping signal server-side — so the drop is walked recursively
+// and every file keeps its relative path.
+async function collectAccuDrop(dt: DataTransfer): Promise<AccuEntry[]> {
+  const entries = Array.from(dt.items || []).map((it) =>
+    typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null,
+  );
+  if (!entries.some(Boolean)) {
+    return Array.from(dt.files).map((f) => ({ file: f, path: f.webkitRelativePath || f.name }));
+  }
+  const out: AccuEntry[] = [];
+  async function walk(entry: FileSystemEntry, prefix: string): Promise<void> {
+    if (entry.isFile) {
+      const file = await new Promise<File>((res, rej) =>
+        (entry as FileSystemFileEntry).file(res, rej),
+      );
+      out.push({ file, path: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      // readEntries returns results in chunks — keep reading until empty.
+      let batch: FileSystemEntry[];
+      do {
+        batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
+        for (const e of batch) await walk(e, `${prefix + entry.name}/`);
+      } while (batch.length > 0);
+    }
+  }
+  for (const e of entries) if (e) await walk(e, "");
+  return out;
 }
 
 function downloadBytes(filename: string, bytes: Uint8Array, mime: string) {
@@ -124,8 +230,125 @@ export default function EdataPage() {
   const [accuUploading, setAccuUploading] = useState(false);
   const [accuResult, setAccuResult] = useState<AccuResult | null>(null);
   const [accuError, setAccuError] = useState("");
+  const [accuNote, setAccuNote] = useState("");
+  const [accuProgress, setAccuProgress] = useState<{ stage: string; pct: number | null } | null>(
+    null,
+  );
   const [accuDragOver, setAccuDragOver] = useState(false);
   const accuFileRef = useRef<HTMLInputElement>(null);
+  // The uploaded session files are kept so the package can be rebuilt with a
+  // picked class or an edited series header without re-dropping them.
+  const accuFilesRef = useRef<AccuEntry[]>([]);
+  const [accuSeries, setAccuSeries] = useState("");
+  const accuSeriesEdited = useRef(false);
+  const [accuClassPick, setAccuClassPick] = useState("");
+  const [accuLogos, setAccuLogos] = useState<Record<AccuLogoSlot, string | null>>({
+    left: null,
+    center: null,
+    right: null,
+  });
+  const accuLogoInputRef = useRef<HTMLInputElement>(null);
+  const accuLogoSlotRef = useRef<AccuLogoSlot>("left");
+
+  // Points (Alcohol & below) + deductions. Deductions live in page state for
+  // the session and are applied client-side, so adding one needs no rebuild.
+  const [accuCalcPoints, setAccuCalcPoints] = useState(true);
+  const [accuIncomplete, setAccuIncomplete] = useState(false);
+  // Race code in the points filename: "16" → C10A16DP.TXT (golden sample).
+  const [accuRaceCode, setAccuRaceCode] = useState("16");
+  const [accuDeductions, setAccuDeductions] = useState<(PointsDeduction & { id: number })[]>([]);
+  const dedId = useRef(1);
+  const [dedCat, setDedCat] = useState("");
+  const [dedCar, setDedCar] = useState("");
+  const [dedReason, setDedReason] = useState<string>(DEDUCTION_REASONS[0]);
+  const [dedNote, setDedNote] = useState("");
+  const [dedPoints, setDedPoints] = useState("");
+
+  function addDeduction() {
+    const cat = accuResult?.points.find((p) => p.category === dedCat);
+    const row = cat?.rows.find((r) => r.car_number === dedCar);
+    const pts = parseFloat(dedPoints);
+    if (!cat || !row || !Number.isFinite(pts) || pts <= 0) return;
+    setAccuDeductions((prev) => [
+      ...prev,
+      {
+        id: dedId.current++,
+        category: cat.category,
+        car_number: row.car_number,
+        name: row.name,
+        reason: dedReason,
+        note: dedNote.trim(),
+        points: pts,
+      },
+    ]);
+    setDedNote("");
+    setDedPoints("");
+  }
+
+  /** A category's rows with deductions applied (final = points − deducted). */
+  function pointsRowsFinal(cat: AccuPointsCategory) {
+    return cat.rows.map((r) => {
+      const deducted = deductionsFor(accuDeductions, cat.category, r.car_number);
+      return { ...r, deducted, final: r.points - deducted };
+    });
+  }
+
+  // Points files: earned points in field 5, the deduction in field 6 (the
+  // golden A16DP layout), so the audit trail lives in the file itself.
+  function pointsFileEntries(): Record<string, Uint8Array> {
+    const entries: Record<string, Uint8Array> = {};
+    if (!accuResult) return entries;
+    for (const cat of accuResult.points) {
+      const rows = pointsRowsFinal(cat).map((r) => ({ ...r, deduction: r.deducted }));
+      entries[cat.filename] = edataBytes(buildPointsFileContent(cat.category, rows));
+    }
+    return entries;
+  }
+
+  /** Deductions that actually hit a scored row — the notes audit sheet. */
+  function appliedDeductions() {
+    if (!accuResult) return [];
+    return accuDeductions.filter((d) =>
+      accuResult.points.some(
+        (p) => p.category === d.category && p.rows.some((r) => r.car_number === d.car_number),
+      ),
+    );
+  }
+
+  // Restore the last-used header logos.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(ACCU_LOGOS_LS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<Record<AccuLogoSlot, unknown>>;
+      const pick = (v: unknown) => (typeof v === "string" && v.startsWith("data:image/") ? v : null);
+      setAccuLogos({ left: pick(parsed.left), center: pick(parsed.center), right: pick(parsed.right) });
+    } catch {
+      // corrupt store — start clean
+    }
+  }, []);
+
+  function updateLogo(slot: AccuLogoSlot, dataUrl: string | null) {
+    const next = { ...accuLogos, [slot]: dataUrl };
+    setAccuLogos(next);
+    try {
+      localStorage.setItem(ACCU_LOGOS_LS_KEY, JSON.stringify(next));
+    } catch {
+      // quota full — the logos still apply for this session
+    }
+  }
+
+  async function handleLogoPick(files: FileList | null) {
+    const f = files?.[0];
+    if (!f) return;
+    try {
+      updateLogo(accuLogoSlotRef.current, await fileToLogoDataUrl(f));
+    } catch {
+      setAccuError(`${f.name}: couldn't be read as an image.`);
+    } finally {
+      if (accuLogoInputRef.current) accuLogoInputRef.current.value = "";
+    }
+  }
 
   // Default to the loaded event so the common case needs no typing.
   useEffect(() => {
@@ -259,40 +482,108 @@ export default function EdataPage() {
     });
   }
 
-  async function handleAccuUpload(files: File[]) {
-    const valid = files.filter((f) => /\.(acc|dat|qly|ini|dbf)$/i.test(f.name));
+  // fetch() can't report upload progress, so the AccuTime post goes through
+  // XHR: a determinate percentage while the files go up, then the caller flips
+  // to an indeterminate "building" stage while the server parses and renders.
+  function postAccuForm(
+    form: FormData,
+    onUploadPct: (pct: number | null) => void,
+  ): Promise<{ ok: boolean; body: Record<string, unknown> }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/accutime-export");
+      xhr.upload.onprogress = (e) =>
+        onUploadPct(e.lengthComputable && e.total > 0 ? e.loaded / e.total : null);
+      xhr.onload = () => {
+        let body: Record<string, unknown> = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          // non-JSON error body — the generic message below covers it
+        }
+        resolve({ ok: xhr.status >= 200 && xhr.status < 300, body });
+      };
+      xhr.onerror = () => reject(new Error("Upload failed — network error"));
+      xhr.send(form);
+    });
+  }
+
+  async function handleAccuUpload(entries: AccuEntry[]) {
+    // .acc is AccuTime's password-locked archive — it can't be opened here, so
+    // it's dropped from the upload with a note rather than failing everything.
+    const accFiles = entries.filter((e) => /\.acc$/i.test(e.path));
+    const valid = entries.filter((e) => /\.(dat|qly|ini|dbf|zip|txt)$/i.test(e.path));
+    setAccuNote(
+      accFiles.length > 0
+        ? `${accFiles.map((e) => e.file.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use the loose .qly / .dat / Class.ini / Drivers.dbf files from the same folder instead.`
+        : "",
+    );
     if (valid.length === 0) {
-      setAccuError("Upload AccuTime files: .acc, or the .dat / .qly / Class.ini / Drivers.dbf set.");
+      setAccuError(
+        accFiles.length > 0
+          ? ""
+          : "Upload AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf), Compulink C#QDAT/C#EDAT .TXT, or a zip of them.",
+      );
+      if (accuFileRef.current) accuFileRef.current.value = "";
       return;
     }
+    accuFilesRef.current = valid;
     setAccuUploading(true);
     setAccuError("");
     setAccuResult(null);
+    setAccuProgress({ stage: "Uploading session files…", pct: 0 });
     try {
       const form = new FormData();
-      for (const f of valid) form.append("files", f);
+      // The relative path rides along as the filename — which folder a file
+      // came from tells the server which class session it belongs to.
+      for (const e of valid) form.append("files", e.file, e.path);
       if (live.config?.eventName) form.append("event_name", live.config.eventName);
       if (eventCode.trim()) form.append("event_code", eventCode.trim());
       if (season.trim()) form.append("season", season.trim());
-      const res = await fetch("/api/accutime-export", { method: "POST", body: form });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "AccuTime export failed");
-      setAccuResult(body as AccuResult);
+      if (accuClassPick) form.append("class_code", accuClassPick);
+      if (accuSeries.trim()) form.append("series_header", accuSeries.trim());
+      if (accuLogos.left) form.append("logo_left", accuLogos.left);
+      if (accuLogos.center) form.append("logo_center", accuLogos.center);
+      if (accuLogos.right) form.append("logo_right", accuLogos.right);
+      form.append("calc_points", accuCalcPoints ? "1" : "0");
+      form.append("incomplete_race", accuIncomplete ? "1" : "0");
+      form.append("points_race_code", accuRaceCode.trim());
+      const { ok, body } = await postAccuForm(form, (pct) => {
+        if (pct !== null && pct < 1) {
+          setAccuProgress({ stage: "Uploading session files…", pct });
+        } else {
+          // Bytes are up — everything left is server work with no size to count.
+          setAccuProgress({ stage: "Reading session · building QDAT / EDAT / PDFs…", pct: null });
+        }
+      });
+      if (!ok) throw new Error((body.error as string) || "AccuTime export failed");
+      const parsed = body as unknown as AccuResult;
+      setAccuResult(parsed);
+      // Prefill the header field with the session's own series title (Class.ini
+      // [Reports]) unless the user already typed one.
+      if (!accuSeriesEdited.current) {
+        const s = parsed.sessions.find((x) => x.seriesName)?.seriesName;
+        if (s) setAccuSeries(s);
+      }
     } catch (err) {
       setAccuError(err instanceof Error ? err.message : "AccuTime export failed");
     } finally {
       setAccuUploading(false);
+      setAccuProgress(null);
       if (accuFileRef.current) accuFileRef.current.value = "";
     }
   }
 
+  // RACEDATA.zip is Compulink text only — per class C#QDAT / C#EDAT /
+  // C#A16DP plus IDX14.TXT, matching the golden sample. PDFs download
+  // separately, never inside this zip.
   function accuAllEntries(): Record<string, Uint8Array> {
     const entries: Record<string, Uint8Array> = {};
     if (!accuResult) return entries;
     for (const f of accuResult.edat) entries[f.filename] = edataBytes(f.content);
     for (const f of accuResult.qdat) entries[f.filename] = edataBytes(f.content);
-    if (accuResult.finalsPdfBase64) entries["FinalRoundResults.pdf"] = base64ToBytes(accuResult.finalsPdfBase64);
-    if (accuResult.qualifyingPdfBase64) entries["Qualifying.pdf"] = base64ToBytes(accuResult.qualifyingPdfBase64);
+    Object.assign(entries, pointsFileEntries());
+    if (accuResult.idx) entries[accuResult.idx.filename] = edataBytes(accuResult.idx.content);
     return entries;
   }
 
@@ -699,16 +990,151 @@ export default function EdataPage() {
         <div className="mb-2">
           <h2 className="text-white font-bold text-lg">AccuTime export</h2>
           <p className="text-xs text-gray-400 mt-1 max-w-2xl">
-            Drop an AccuTime session and get the full Compulink package: qualifying{" "}
+            Drop AccuTime sessions and get the full package: Compulink-compatible qualifying{" "}
             <span className="font-mono">*QDAT.TXT</span>, eliminations{" "}
-            <span className="font-mono">*EDAT.TXT</span>, a StarTrak qualifying PDF and the Final
-            Round Results PDF (with each class&apos;s round-by-round elimination page). Upload the{" "}
-            <span className="font-mono">.acc</span> archive, or the{" "}
-            <span className="font-mono">.dat</span> / <span className="font-mono">.qly</span> /{" "}
-            <span className="font-mono">Class.ini</span> / <span className="font-mono">Drivers.dbf</span>{" "}
-            files directly. Member #, city, body and engine merge from the session&apos;s own driver
-            database and the shared tech cards.
+            <span className="font-mono">*EDAT.TXT</span> and EVENT points{" "}
+            <span className="font-mono">*A16DP.TXT</span>, plus an AccuTime-branded qualifying PDF
+            and Final Round Results PDF (with each class&apos;s round-by-round elimination page).
+            Upload the <span className="font-mono">.dat</span> /{" "}
+            <span className="font-mono">.qly</span> / <span className="font-mono">Class.ini</span>{" "}
+            / <span className="font-mono">Drivers.dbf</span> files from the session folder (a zip
+            works too) — or, for tracks that already have Compulink text, drop{" "}
+            <span className="font-mono">C#QDAT.TXT</span> +{" "}
+            <span className="font-mono">C#EDAT.TXT</span> directly for the same package. The{" "}
+            <span className="font-mono">.acc</span> archive is password-locked and isn&apos;t
+            needed — the loose files carry the same data. Several classes can go in one drop:
+            one folder or zip per class, or matching names (FC.dat + FC.qly + FC-Class.ini).
+            Member #, city, body and engine merge from the session&apos;s own driver database and
+            the shared tech cards. RACEDATA.zip holds the Compulink text only (QDAT / EDAT /
+            points / IDX); the PDFs download separately.
           </p>
+        </div>
+
+        {/* Header logos — the same three-slot row as the Final Round Results
+            Builder, printed across the top of both PDFs. */}
+        <input
+          ref={accuLogoInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleLogoPick(e.target.files)}
+        />
+        <p className="text-xs text-gray-400 mb-1.5">
+          Sheet header logos <span className="text-gray-500">— print across the top of the qualifying and Final Round Results PDFs; leave empty for text-only headers</span>
+        </p>
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {ACCU_LOGO_SLOTS.map((slot) => {
+            const img = accuLogos[slot.key];
+            return (
+              <div key={slot.key} className="relative group">
+                <button
+                  onClick={() => {
+                    accuLogoSlotRef.current = slot.key;
+                    accuLogoInputRef.current?.click();
+                  }}
+                  className={`w-full h-[105px] rounded-xl flex items-center px-2 transition-colors ${
+                    img
+                      ? `${slot.align} border border-nhra-border/60 bg-white/[0.03] hover:border-gray-600`
+                      : "justify-center border-2 border-dashed border-nhra-border hover:border-gray-600"
+                  }`}
+                  title={img ? "Click to replace this logo" : slot.label}
+                >
+                  {img ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={img}
+                      alt={`${slot.key} logo`}
+                      className="max-h-[97px] max-w-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs text-gray-500">{slot.label}</span>
+                  )}
+                </button>
+                {img && (
+                  <button
+                    onClick={() => updateLogo(slot.key, null)}
+                    className="absolute top-1.5 right-1.5 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-black/70 border border-nhra-border text-gray-300 hover:text-white text-xs"
+                    title="Remove this logo"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <label className="text-xs text-gray-400 flex-1 min-w-[16rem]">
+            Header / series line (PDF banner)
+            <input
+              value={accuSeries}
+              onChange={(e) => {
+                accuSeriesEdited.current = true;
+                setAccuSeries(e.target.value);
+              }}
+              placeholder="prefills from Class.ini — e.g. NHRA Mission Foods Drag Racing Series"
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+            />
+          </label>
+          <label className="text-xs text-gray-400 w-64">
+            Class when Class.ini has none
+            <select
+              value={accuClassPick}
+              onChange={(e) => setAccuClassPick(e.target.value)}
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white"
+            >
+              <option value="">— pick a class —</option>
+              {ACCU_CLASS_OPTIONS.map((o) => (
+                <option key={`${o.code}-${o.name}`} value={o.code}>
+                  {o.name} ({o.code})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="text-xs text-gray-400 flex flex-col gap-1.5 pb-1.5">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={accuCalcPoints}
+                onChange={(e) => setAccuCalcPoints(e.target.checked)}
+                className="accent-nhra-red cursor-pointer"
+              />
+              Calculate points (Alcohol &amp; below)
+            </label>
+            <label
+              className="flex items-center gap-2 cursor-pointer"
+              title="Racers who won their last matchup get the next round's loss points as a guaranteed minimum"
+            >
+              <input
+                type="checkbox"
+                checked={accuIncomplete}
+                onChange={(e) => setAccuIncomplete(e.target.checked)}
+                className="accent-nhra-red cursor-pointer"
+              />
+              Incomplete race — guaranteed points
+            </label>
+          </div>
+          <label
+            className="text-xs text-gray-400 w-24"
+            title="Race code in the points filename: 16 → C10A16DP.TXT"
+          >
+            Race #
+            <input
+              value={accuRaceCode}
+              onChange={(e) => setAccuRaceCode(e.target.value)}
+              placeholder="16"
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+            />
+          </label>
+          {accuFilesRef.current.length > 0 && !accuUploading && (
+            <button
+              onClick={() => handleAccuUpload(accuFilesRef.current)}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500"
+            >
+              Rebuild package
+            </button>
+          )}
         </div>
 
         <div
@@ -720,7 +1146,7 @@ export default function EdataPage() {
           onDrop={(e) => {
             e.preventDefault();
             setAccuDragOver(false);
-            handleAccuUpload(Array.from(e.dataTransfer.files));
+            void collectAccuDrop(e.dataTransfer).then(handleAccuUpload);
           }}
           onClick={() => accuFileRef.current?.click()}
           className={`border-2 border-dashed rounded-xl px-6 py-8 text-center cursor-pointer transition-colors ${
@@ -731,21 +1157,68 @@ export default function EdataPage() {
             ref={accuFileRef}
             type="file"
             multiple
-            accept=".acc,.dat,.qly,.ini,.dbf,.ACC,.DAT,.QLY,.INI,.DBF"
+            accept=".dat,.qly,.ini,.dbf,.zip,.txt,.DAT,.QLY,.INI,.DBF,.ZIP,.TXT"
             className="hidden"
-            onChange={(e) => handleAccuUpload(Array.from(e.target.files || []))}
+            onChange={(e) =>
+              handleAccuUpload(
+                Array.from(e.target.files || []).map((f) => ({
+                  file: f,
+                  path: f.webkitRelativePath || f.name,
+                })),
+              )
+            }
           />
           <p className="text-white font-medium mb-1">
-            {accuUploading ? "Building the export package…" : "Drop AccuTime session files here"}
+            {accuUploading ? "Working…" : "Drop AccuTime session files here"}
           </p>
           <p className="text-xs text-gray-500">
-            race.acc, or race.dat + race.qly + Class.ini + Drivers.dbf
+            race.dat + race.qly + Class.ini + Drivers.dbf, or Compulink C#QDAT/C#EDAT .TXT —
+            folders and zips welcome; no .acc needed, it&apos;s locked
           </p>
         </div>
+
+        {accuProgress && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between gap-3 mb-1.5">
+              <p className="text-xs text-gray-400">{accuProgress.stage}</p>
+              {accuProgress.pct !== null && (
+                <p className="text-xs text-gray-500 tabular-nums">
+                  {Math.round(accuProgress.pct * 100)}%
+                </p>
+              )}
+            </div>
+            <div className="h-2 rounded-full bg-nhra-darker border border-nhra-border overflow-hidden">
+              {accuProgress.pct !== null ? (
+                <div
+                  className="h-full bg-nhra-red rounded-full transition-[width] duration-200"
+                  style={{ width: `${Math.max(3, accuProgress.pct * 100)}%` }}
+                />
+              ) : (
+                <div className="h-full w-1/3 bg-nhra-red rounded-full animate-progress-slide" />
+              )}
+            </div>
+          </div>
+        )}
+
+        {accuNote && (
+          <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
+            {accuNote}
+          </div>
+        )}
 
         {accuError && (
           <div className="mt-3 bg-red-500/10 border border-red-500/40 text-red-400 rounded-xl px-4 py-3 text-sm">
             {accuError}
+          </div>
+        )}
+
+        {accuResult && accuResult.sessions.some((s) => !s.classCode) && (
+          <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
+            {accuResult.sessions.filter((s) => !s.classCode).length === accuResult.sessions.length
+              ? "No class code was found in the session files"
+              : "A session came through without a class code"}{" "}
+            — Class.ini normally carries it. Pick the class above and hit Rebuild package;
+            until then those files export with the class marked UNKNOWN.
           </div>
         )}
 
@@ -763,18 +1236,19 @@ export default function EdataPage() {
               <button
                 onClick={handleDownloadAccuZip}
                 className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
+                title="Compulink text only: C#QDAT / C#EDAT / C#A16DP + IDX14.TXT — PDFs download separately below"
               >
                 Download RACEDATA.zip
               </button>
             </div>
             <div className="divide-y divide-nhra-border/60">
-              {accuResult.sessions.map((s) => {
+              {accuResult.sessions.map((s, i) => {
                 const cov = accuResult.coverage.find((c) => c.category === s.className);
                 return (
-                  <div key={s.className} className="px-4 py-2.5 text-sm">
+                  <div key={`${s.className}-${i}`} className="px-4 py-2.5 text-sm">
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <span className="text-white font-medium">
-                        {s.className} <span className="text-gray-500">({s.classCode})</span>
+                        {s.className} <span className="text-gray-500">({s.classCode || "?"})</span>
                       </span>
                       <span className="text-xs text-gray-400">
                         {s.qualifiers} qualifiers · {s.qualSessions} sessions ·{" "}
@@ -835,6 +1309,236 @@ export default function EdataPage() {
                 </button>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ——— Points (Alcohol & below), with deductions ——— */}
+        {accuResult && (accuResult.points.length > 0 || accuResult.pointsSkipped.length > 0) && (
+          <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border">
+              <p className="text-sm text-white font-semibold">Points — Alcohol &amp; below</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                NHRA sportsman brackets by field size; TAD/TAFC score the fixed alcohol bracket
+                plus qualifying position and attempt points. Points files ({accuResult.points
+                  .map((p) => p.filename)
+                  .join(", ") || "—"}) go into the RACEDATA.zip with deductions applied.
+              </p>
+              {accuResult.pointsSkipped.length > 0 && (
+                <p className="text-xs text-yellow-500 mt-1">
+                  Skipped:{" "}
+                  {accuResult.pointsSkipped
+                    .map(
+                      (s) =>
+                        `${s.category} (${s.reason === "pro" ? "pro — held off for now" : "no elimination rounds"})`,
+                    )
+                    .join(" · ")}
+                </p>
+              )}
+            </div>
+
+            {accuResult.points.map((cat) => {
+              const rows = pointsRowsFinal(cat);
+              const anyDed = rows.some((r) => r.deducted > 0);
+              return (
+                <div key={cat.filename} className="border-b border-nhra-border/60">
+                  <div className="px-4 py-2 bg-nhra-darker/40 flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-xs text-white font-semibold">
+                      {cat.category}{" "}
+                      <span className="text-gray-500 font-normal">
+                        ({cat.classCode}) · field of {cat.fieldSize}
+                        {cat.alcohol ? " · alcohol bracket + qual/attempt points" : ""}
+                      </span>
+                    </p>
+                    <button
+                      onClick={() => {
+                        const withDed = rows.map((r) => ({ ...r, deduction: r.deducted }));
+                        downloadBytes(
+                          cat.filename,
+                          edataBytes(buildPointsFileContent(cat.category, withDed)),
+                          "text/plain",
+                        );
+                      }}
+                      className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 font-mono"
+                    >
+                      {cat.filename}
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-gray-500 uppercase tracking-wider">
+                        <tr>
+                          <th className="text-left px-4 py-1.5 font-medium">Car</th>
+                          <th className="text-left px-2 py-1.5 font-medium">Driver</th>
+                          <th className="text-left px-2 py-1.5 font-medium">Status</th>
+                          <th className="text-right px-2 py-1.5 font-medium">Points</th>
+                          <th className="text-right px-2 py-1.5 font-medium">Deducted</th>
+                          <th className="text-right px-4 py-1.5 font-medium">Final</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, ri) => (
+                          <tr key={`${r.car_number}-${ri}`} className="border-t border-nhra-border/40">
+                            <td className="px-4 py-1.5 text-gray-300 font-mono">{r.car_number || "—"}</td>
+                            <td className="px-2 py-1.5 text-white">
+                              {r.name || "—"}
+                              {r.isWinner ? " 🏆" : ""}
+                            </td>
+                            <td className="px-2 py-1.5 text-gray-400">{r.status}</td>
+                            <td className="px-2 py-1.5 text-right text-gray-300 tabular-nums">{r.points}</td>
+                            <td
+                              className={`px-2 py-1.5 text-right tabular-nums ${
+                                r.deducted > 0 ? "text-red-400" : "text-gray-600"
+                              }`}
+                            >
+                              {r.deducted > 0 ? `−${r.deducted}` : "—"}
+                            </td>
+                            <td
+                              className={`px-4 py-1.5 text-right font-semibold tabular-nums ${
+                                anyDed && r.deducted > 0 ? "text-yellow-500" : "text-white"
+                              }`}
+                            >
+                              {r.final}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Deductions — oil-downs and other penalties, applied before export. */}
+            {accuResult.points.length > 0 && (
+              <div className="px-4 py-3 bg-nhra-darker/40">
+                <p className="text-xs text-white font-semibold mb-2">
+                  Deductions{" "}
+                  <span className="text-gray-500 font-normal">
+                    — oil-downs and penalties; adjusts the points files and is listed in
+                    DEDUCTIONS.TXT in the zip
+                  </span>
+                </p>
+                <div className="flex flex-wrap items-end gap-2 mb-2">
+                  <label className="text-[11px] text-gray-500">
+                    Class
+                    <select
+                      value={dedCat}
+                      onChange={(e) => {
+                        setDedCat(e.target.value);
+                        setDedCar("");
+                      }}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white min-w-[10rem]"
+                    >
+                      <option value="">— class —</option>
+                      {accuResult.points.map((p) => (
+                        <option key={p.filename} value={p.category}>
+                          {p.category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Racer
+                    <select
+                      value={dedCar}
+                      onChange={(e) => setDedCar(e.target.value)}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white min-w-[12rem]"
+                    >
+                      <option value="">— racer —</option>
+                      {(accuResult.points.find((p) => p.category === dedCat)?.rows || []).map(
+                        (r, ri) => (
+                          <option key={`${r.car_number}-${ri}`} value={r.car_number}>
+                            {r.car_number} {r.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Reason
+                    <select
+                      value={dedReason}
+                      onChange={(e) => setDedReason(e.target.value)}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white"
+                    >
+                      {DEDUCTION_REASONS.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Note
+                    <input
+                      value={dedNote}
+                      onChange={(e) => setDedNote(e.target.value)}
+                      placeholder={dedReason === "Other" ? "what happened" : "optional"}
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 w-40"
+                    />
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Points
+                    <input
+                      value={dedPoints}
+                      onChange={(e) => setDedPoints(e.target.value)}
+                      inputMode="numeric"
+                      placeholder="10"
+                      className="block mt-0.5 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600 w-16"
+                    />
+                  </label>
+                  <button
+                    onClick={addDeduction}
+                    disabled={
+                      !dedCat || !dedCar || !(parseFloat(dedPoints) > 0) || (dedReason === "Other" && !dedNote.trim())
+                    }
+                    className="px-3 py-1.5 rounded text-xs font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
+                  >
+                    Add deduction
+                  </button>
+                </div>
+                {accuDeductions.length > 0 && (
+                  <ul className="space-y-1">
+                    {accuDeductions.map((d) => (
+                      <li key={d.id} className="flex items-center gap-2 text-xs text-gray-300">
+                        <button
+                          onClick={() =>
+                            setAccuDeductions((prev) => prev.filter((x) => x.id !== d.id))
+                          }
+                          className="w-5 h-5 rounded border border-nhra-border text-gray-500 hover:text-white hover:border-gray-500 leading-none"
+                          title="Remove this deduction"
+                        >
+                          ✕
+                        </button>
+                        <span className="text-red-400 font-semibold tabular-nums">−{d.points}</span>
+                        <span className="text-white">
+                          {d.car_number} {d.name}
+                        </span>
+                        <span className="text-gray-500">
+                          {d.category} · {d.reason}
+                          {d.note ? ` — ${d.note}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {appliedDeductions().length > 0 && (
+                  <button
+                    onClick={() =>
+                      downloadBytes(
+                        "DEDUCTIONS.TXT",
+                        edataBytes(buildDeductionsSheet(appliedDeductions())),
+                        "text/plain",
+                      )
+                    }
+                    className="mt-2 text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 font-mono"
+                    title="Audit sheet with reasons and notes — downloads separately, not part of RACEDATA.zip"
+                  >
+                    DEDUCTIONS.TXT
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 

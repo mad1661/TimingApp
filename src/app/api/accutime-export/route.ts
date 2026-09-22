@@ -16,8 +16,10 @@ const NO_STORE_HEADERS = {
 /**
  * POST /api/accutime-export  (multipart: files[], event_name?)
  *
- * Parses AccuTime session files (.acc / .dat / .qly / Class.ini / Drivers.dbf),
- * merges the shared tech_cards store, and returns the Compulink export package
+ * Parses AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf, or a
+ * zip of them — the .acc archive itself is password-locked and gets skipped
+ * with a warning), merges the shared tech_cards store, and returns the
+ * Compulink export package
  * as JSON: QDAT + EDAT text files plus base64 finals / qualifying PDFs. The
  * client saves them individually or as a RACEDATA.zip.
  */
@@ -28,6 +30,26 @@ export async function POST(request: NextRequest) {
     const eventName = (form.get("event_name") as string) || "";
     const eventCode = (form.get("event_code") as string) || "";
     const season = (form.get("season") as string) || "";
+    // Page-level overrides: the user-picked class (applied only to sessions
+    // whose Class.ini gave no code) and the per-event series banner.
+    const classCode = (form.get("class_code") as string) || "";
+    const seriesHeader = (form.get("series_header") as string) || "";
+
+    // Header logos: PNG/JPEG data URLs the client rasterized, one per slot of
+    // the three-logo row (left / event / right). Anything else is ignored so a
+    // bad value can't break the PDFs.
+    const logo = (field: string): string | undefined => {
+      const v = form.get(field);
+      if (typeof v !== "string") return undefined;
+      if (!/^data:image\/(png|jpe?g);base64,/.test(v)) return undefined;
+      if (v.length > 3_000_000) return undefined;
+      return v;
+    };
+    const logos = {
+      left: logo("logo_left"),
+      center: logo("logo_center"),
+      right: logo("logo_right"),
+    };
 
     if (files.length === 0) {
       return NextResponse.json({ error: "No files uploaded" }, { status: 400, headers: NO_STORE_HEADERS });
@@ -41,6 +63,7 @@ export async function POST(request: NextRequest) {
       eventCode,
       eventName,
       season,
+      classCode,
     });
 
     // Merge in the shared tech-card store (every-card read, v1.40.1).
@@ -51,7 +74,14 @@ export async function POST(request: NextRequest) {
       console.error("AccuTime export: tech cards unavailable:", err);
     }
 
-    const artifacts = buildAccuTimeArtifacts(sessions, storedCards, { eventName });
+    const artifacts = buildAccuTimeArtifacts(sessions, storedCards, {
+      eventName,
+      seriesHeader,
+      logos,
+      calcPoints: form.get("calc_points") !== "0",
+      incompleteRace: form.get("incomplete_race") === "1",
+      pointsRaceCode: (form.get("points_race_code") as string) || "",
+    });
 
     const toB64 = (bytes: Uint8Array | null) =>
       bytes ? Buffer.from(bytes).toString("base64") : null;
@@ -61,6 +91,7 @@ export async function POST(request: NextRequest) {
         sessions: sessions.map((s) => ({
           classCode: s.classCode,
           className: s.className,
+          seriesName: s.seriesName,
           raceDate: s.raceDate,
           qualifiers: s.qualifying.length,
           qualSessions: s.qualSessions,
@@ -82,6 +113,9 @@ export async function POST(request: NextRequest) {
         finalsPdfBase64: toB64(artifacts.finalsPdf),
         qualifyingPdfBase64: toB64(artifacts.qualifyingPdf),
         coverage: artifacts.coverage,
+        points: artifacts.points,
+        pointsSkipped: artifacts.pointsSkipped,
+        idx: artifacts.idx,
         warnings: [...parseWarnings, ...artifacts.warnings],
       },
       { headers: NO_STORE_HEADERS },
