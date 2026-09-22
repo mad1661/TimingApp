@@ -10,11 +10,22 @@
  * v1.43.0 adds the pro (Mission Foods) scoring checks: round/qual/participation
  * math on both event scales, Countdown vs Pomona 2, session bonuses present vs
  * skipped, and pro classes no longer landing in pointsSkipped.
+ * v1.44.0 adds the class-pack accumulation checks: merging a new drop into the
+ * saved sessions by class (add new / replace same, never wipe the rest), the
+ * JSON round-trip through browser storage, and the class pick reaching stored
+ * sessions on a rebuild.
  */
 import * as fs from "fs";
 import * as path from "path";
 import { deflateSync, inflateSync } from "zlib";
-import { parseAccuTimePack, parseClassIni, type AccuTimeSession } from "../src/lib/accutime";
+import {
+  applyAccuClassPick,
+  mergeAccuTimeSessions,
+  parseAccuTimePack,
+  parseClassIni,
+  sanitizeAccuSessions,
+  type AccuTimeSession,
+} from "../src/lib/accutime";
 import { buildAccuTimeArtifacts } from "../src/lib/accutime-export";
 import {
   buildRacedataPdf,
@@ -585,6 +596,100 @@ const TF_QLY = qly([
       countdownSeedPoints(3) === 2070 &&
       countdownSeedPoints(10) === 2000 &&
       countdownSeedPoints(11) === 1990,
+  );
+}
+
+// ——— 10. Class-pack accumulation (v1.44.0): the browser saves every parsed
+// session and posts them back with each drop; the server merges by class so
+// uploading Top Fuel never wipes the Funny Car already built. ———
+{
+  const parseOne = (qlyData: Uint8Array, ini: string) =>
+    parseAccuTimePack([
+      { name: "race.qly", data: qlyData },
+      { name: "Class.ini", data: latin1(ini) },
+    ]).sessions;
+
+  // Drop 1: FC alone. Drop 2: TF merges in — FC stays.
+  const fc = parseOne(FC_QLY, FC_INI);
+  const m1 = mergeAccuTimeSessions(fc, parseOne(TF_QLY, TF_INI));
+  check(
+    "merge: dropping TF keeps FC in the pack",
+    m1.sessions.map((s) => s.className).join("|") === "FUNNY CAR|TOP FUEL",
+    m1.sessions.map((s) => s.className).join("|"),
+  );
+  check(
+    "merge: TF reported as added, nothing replaced",
+    m1.merge.added.join() === "TOP FUEL" && m1.merge.replaced.length === 0,
+    JSON.stringify(m1.merge),
+  );
+
+  // Drop 3: FC again (now with one qualifier) — replaces ONLY the FC slot.
+  const fc2 = parseOne(FC_QLY, FC_INI);
+  fc2[0].qualifying = fc2[0].qualifying.slice(0, 1);
+  const m2 = mergeAccuTimeSessions(m1.sessions, fc2);
+  check(
+    "merge: re-dropped FC replaces just FC, in place",
+    m2.sessions.length === 2 &&
+      m2.sessions[0].className === "FUNNY CAR" &&
+      m2.sessions[0].qualifying.length === 1 &&
+      m2.sessions[1].className === "TOP FUEL" &&
+      m2.sessions[1].qualifying.length === 2,
+    m2.sessions.map((s) => `${s.className}:${s.qualifying.length}`).join("|"),
+  );
+  check(
+    "merge: FC reported as replaced, nothing added",
+    m2.merge.replaced.join() === "FUNNY CAR" && m2.merge.added.length === 0,
+    JSON.stringify(m2.merge),
+  );
+
+  // The pack round-trips through JSON — the shape the browser stores in
+  // IndexedDB and posts back as prior_sessions.
+  const roundTripped = sanitizeAccuSessions(JSON.parse(JSON.stringify(m2.sessions)));
+  check(
+    "stored pack round-trips through JSON intact",
+    roundTripped.length === 2 &&
+      roundTripped[0].className === "FUNNY CAR" &&
+      roundTripped[0].qualifying.length === 1 &&
+      roundTripped[1].classCode === "TF",
+    roundTripped.map((s) => `${s.className}:${s.qualifying.length}`).join("|"),
+  );
+  check(
+    "sanitize drops junk instead of crashing",
+    sanitizeAccuSessions([{ nope: 1 }, "x", null, 42]).length === 0 &&
+      sanitizeAccuSessions("garbage").length === 0,
+  );
+
+  // Class pick on STORED sessions (the rebuild path never re-parses): the
+  // session identity AND its runs' category — the EDAT grouping key — move to
+  // the picked class.
+  const classless = sanitizeAccuSessions(
+    JSON.parse(JSON.stringify(parseAccuTimePack([{ name: "race.qly", data: FC_QLY }]).sessions)),
+  );
+  classless[0].runs = [
+    { category: "UNKNOWN", car_number: "28" } as unknown as AccuTimeSession["runs"][number],
+  ];
+  const picked = applyAccuClassPick(classless, "FC");
+  check(
+    "class pick fills a stored classless session",
+    picked[0].classCode === "FC" && picked[0].className === "FUNNY CAR",
+    `${picked[0].classCode}/${picked[0].className}`,
+  );
+  check(
+    "class pick rewrites the stored runs' category",
+    picked[0].runs[0].category === "FUNNY CAR",
+    String(picked[0].runs[0].category),
+  );
+  check(
+    "sessions that already have a code are untouched by the pick",
+    applyAccuClassPick(m2.sessions, "SST").every((s) => s.classCode !== "SST"),
+  );
+
+  // The artifacts build from the FULL pack — both classes' QDAT present.
+  const arts = buildAccuTimeArtifacts(m2.sessions, []);
+  check(
+    "artifacts build from the whole pack (both classes' QDAT)",
+    arts.qdat.length === 2,
+    arts.qdat.map((q) => `${q.filename}:${q.category}`).join("|"),
   );
 }
 

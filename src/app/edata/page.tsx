@@ -89,6 +89,16 @@ interface AccuTextFile {
   enriched?: number;
 }
 
+// Full parsed session data as the server returns it (`sessionsFull`). Opaque
+// on the client: it's saved locally and posted back as `prior_sessions` so the
+// next drop MERGES into the pack instead of replacing it.
+type AccuStoredSession = { classCode: string; className: string } & Record<string, unknown>;
+
+interface AccuMergeInfo {
+  added: string[];
+  replaced: string[];
+}
+
 interface AccuResult {
   sessions: AccuSession[];
   edat: (AccuTextFile & { content: string })[];
@@ -99,6 +109,8 @@ interface AccuResult {
   points: AccuPointsCategory[];
   pointsSkipped: AccuPointsSkipped[];
   idx: (AccuTextFile & { content: string }) | null;
+  sessionsFull?: AccuStoredSession[];
+  merge?: AccuMergeInfo;
   warnings: string[];
 }
 
@@ -137,6 +149,97 @@ const ACCU_LOGOS_LS_KEY = "timindata_accutime_logos";
 /** One string per logo set, to tell whether the built package already has them. */
 function logosKey(l: Record<AccuLogoSlot, string | null>): string {
   return `${l.left || ""}|${l.center || ""}|${l.right || ""}`;
+}
+
+// ——— Local class pack: the accumulated AccuTime working set. Mark drops one
+// class at a time (FC now, TF later), so the parsed sessions plus the built
+// package are saved in the browser and survive a refresh; each new drop posts
+// the saved sessions back and the server merges by class. IndexedDB rather
+// than localStorage — the built package (base64 PDFs included) easily outgrows
+// the ~5 MB localStorage quota the logos live in. ———
+
+const ACCU_PACK_DB = "timindata_accutime_pack";
+const ACCU_PACK_STORE = "pack";
+const ACCU_PACK_KEY = "working_set";
+
+interface AccuPackStored {
+  v: 1;
+  savedAt: number;
+  sessions: AccuStoredSession[];
+  result: AccuResult;
+  series: string;
+  builtLogosKey: string | null;
+}
+
+function openAccuPackDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(ACCU_PACK_DB, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(ACCU_PACK_STORE)) {
+        req.result.createObjectStore(ACCU_PACK_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// All three swallow storage failures: without IndexedDB the page still works,
+// the pack just doesn't survive a refresh.
+async function loadAccuPack(): Promise<AccuPackStored | null> {
+  try {
+    const db = await openAccuPackDb();
+    try {
+      const stored = await new Promise<unknown>((resolve, reject) => {
+        const req = db.transaction(ACCU_PACK_STORE, "readonly").objectStore(ACCU_PACK_STORE).get(ACCU_PACK_KEY);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const p = stored as AccuPackStored | undefined;
+      if (!p || p.v !== 1 || !Array.isArray(p.sessions) || !p.result || typeof p.result !== "object") return null;
+      return p;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function saveAccuPack(pack: AccuPackStored): Promise<void> {
+  try {
+    const db = await openAccuPackDb();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(ACCU_PACK_STORE, "readwrite");
+        tx.objectStore(ACCU_PACK_STORE).put(pack, ACCU_PACK_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  } catch {
+    // quota / private mode — the pack still lives in page state for this visit
+  }
+}
+
+async function clearAccuPack(): Promise<void> {
+  try {
+    const db = await openAccuPackDb();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(ACCU_PACK_STORE, "readwrite");
+        tx.objectStore(ACCU_PACK_STORE).delete(ACCU_PACK_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  } catch {
+    // nothing stored to clear
+  }
 }
 
 // Rasterize any picked image (PNG / JPG / WebP / SVG) to a PNG/JPEG data URL
@@ -268,9 +371,12 @@ export default function EdataPage() {
   );
   const [accuDragOver, setAccuDragOver] = useState(false);
   const accuFileRef = useRef<HTMLInputElement>(null);
-  // The uploaded session files are kept so the package can be rebuilt with a
-  // picked class or an edited series header without re-dropping them.
-  const accuFilesRef = useRef<AccuEntry[]>([]);
+  // The accumulated class pack: every parsed session so far, as the server
+  // returned it. Posted back with each drop so the server merges instead of
+  // replacing, and enough on its own to rebuild the package (picked class,
+  // edited series header, changed logos) without re-dropping any files.
+  const [accuSessions, setAccuSessions] = useState<AccuStoredSession[]>([]);
+  const [accuMerge, setAccuMerge] = useState<AccuMergeInfo | null>(null);
   const [accuSeries, setAccuSeries] = useState("");
   const accuSeriesEdited = useRef(false);
   const [accuClassPick, setAccuClassPick] = useState("");
@@ -368,17 +474,34 @@ export default function EdataPage() {
     }
   }, []);
 
+  // Rehydrate the saved class pack, so a refresh — or coming back after
+  // dropping Funny Car this morning — keeps every class already built.
+  useEffect(() => {
+    let cancelled = false;
+    void loadAccuPack().then((pack) => {
+      if (cancelled || !pack) return;
+      setAccuSessions(pack.sessions);
+      setAccuResult(pack.result);
+      accuBuiltLogosKey.current = pack.builtLogosKey;
+      if (pack.series && !accuSeriesEdited.current) setAccuSeries(pack.series);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Adding, replacing or clearing a logo after the package was built rebuilds
   // it automatically (debounced), so the downloaded finals / qualifying PDFs
-  // always carry the logos shown on the page.
+  // always carry the logos shown on the page. Rebuilds run from the saved
+  // sessions — no files needed, so this works after a refresh too.
   useEffect(() => {
-    if (!accuResult || accuUploading || accuFilesRef.current.length === 0) return;
+    if (!accuResult || accuUploading || accuSessions.length === 0) return;
     if (accuBuiltLogosKey.current === null) return;
     if (logosKey(accuLogos) === accuBuiltLogosKey.current) return;
-    const t = setTimeout(() => void handleAccuUpload(accuFilesRef.current), 600);
+    const t = setTimeout(() => void postAccuBuild([]), 600);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accuLogos, accuResult, accuUploading]);
+  }, [accuLogos, accuResult, accuUploading, accuSessions]);
 
   function updateLogo(slot: AccuLogoSlot, dataUrl: string | null) {
     const next = { ...accuLogos, [slot]: dataUrl };
@@ -579,16 +702,33 @@ export default function EdataPage() {
       if (accuFileRef.current) accuFileRef.current.value = "";
       return;
     }
-    accuFilesRef.current = valid;
+    await postAccuBuild(valid);
+  }
+
+  // One request, two shapes: new files merge into the saved pack; no files is
+  // a pure rebuild of the pack (class pick, series header, logo changes). The
+  // previous result stays on screen until the new one lands, so a failed
+  // request never blanks a working package.
+  async function postAccuBuild(valid: AccuEntry[]) {
+    // A drop landing while another is in flight would post a stale pack and
+    // silently lose the in-flight class — make it wait instead.
+    if (accuUploading) return;
+    const isUpload = valid.length > 0;
     setAccuUploading(true);
     setAccuError("");
-    setAccuResult(null);
-    setAccuProgress({ stage: "Uploading session files…", pct: 0 });
+    setAccuMerge(null);
+    setAccuProgress({
+      stage: isUpload ? "Uploading session files…" : "Rebuilding from saved class data…",
+      pct: isUpload ? 0 : null,
+    });
     try {
       const form = new FormData();
       // The relative path rides along as the filename — which folder a file
       // came from tells the server which class session it belongs to.
       for (const e of valid) form.append("files", e.file, e.path);
+      // The saved pack goes with every request, so the server merges the new
+      // drop into it (same class → replaced, new class → added).
+      if (accuSessions.length > 0) form.append("prior_sessions", JSON.stringify(accuSessions));
       if (live.config?.eventName) form.append("event_name", live.config.eventName);
       if (eventCode.trim()) form.append("event_code", eventCode.trim());
       if (season.trim()) form.append("season", season.trim());
@@ -606,7 +746,10 @@ export default function EdataPage() {
       form.append("points_race_code", accuRaceCode.trim());
       const { ok, body } = await postAccuForm(form, (pct) => {
         if (pct !== null && pct < 1) {
-          setAccuProgress({ stage: "Uploading session files…", pct });
+          setAccuProgress({
+            stage: isUpload ? "Uploading session files…" : "Sending saved class data…",
+            pct: isUpload ? pct : null,
+          });
         } else {
           // Bytes are up — everything left is server work with no size to count.
           setAccuProgress({ stage: "Reading session · building QDAT / EDAT / PDFs…", pct: null });
@@ -614,13 +757,31 @@ export default function EdataPage() {
       });
       if (!ok) throw new Error((body.error as string) || "AccuTime export failed");
       const parsed = body as unknown as AccuResult;
+      const sessionsFull = Array.isArray(parsed.sessionsFull) ? parsed.sessionsFull : [];
       setAccuResult(parsed);
+      setAccuSessions(sessionsFull);
+      setAccuMerge(isUpload && parsed.merge ? parsed.merge : null);
       // Prefill the header field with the session's own series title (Class.ini
       // [Reports]) unless the user already typed one.
+      let series = accuSeries;
       if (!accuSeriesEdited.current) {
         const s = parsed.sessions.find((x) => x.seriesName)?.seriesName;
-        if (s) setAccuSeries(s);
+        if (s) {
+          series = s;
+          setAccuSeries(s);
+        }
       }
+      // Persist the whole working set — the pack survives a refresh until
+      // Clear data. sessionsFull is stored under its own key, not twice.
+      const { sessionsFull: _omit, ...resultLean } = parsed;
+      void saveAccuPack({
+        v: 1,
+        savedAt: Date.now(),
+        sessions: sessionsFull,
+        result: resultLean as AccuResult,
+        series,
+        builtLogosKey: accuBuiltLogosKey.current,
+      });
     } catch (err) {
       setAccuError(err instanceof Error ? err.message : "AccuTime export failed");
     } finally {
@@ -628,6 +789,28 @@ export default function EdataPage() {
       setAccuProgress(null);
       if (accuFileRef.current) accuFileRef.current.value = "";
     }
+  }
+
+  // Clear data: wipe the accumulated classes + built package (local storage
+  // and page state) for a fresh event. Header logos deliberately stay — they
+  // live in their own store and carry over between events.
+  function handleAccuClearData() {
+    if (!window.confirm("Clear all AccuTime race data saved in this browser? Every class in the pack and the built package go away. Header logos stay.")) {
+      return;
+    }
+    setAccuResult(null);
+    setAccuSessions([]);
+    setAccuMerge(null);
+    setAccuError("");
+    setAccuNote("");
+    setAccuDeductions([]);
+    setDedCat("");
+    setDedCar("");
+    setAccuClassPick("");
+    setAccuSeries("");
+    accuSeriesEdited.current = false;
+    accuBuiltLogosKey.current = null;
+    void clearAccuPack();
   }
 
   // RACEDATA.zip is Compulink text only — per class C#QDAT / C#EDAT /
@@ -1062,7 +1245,10 @@ export default function EdataPage() {
             one folder or zip per class, or matching names (FC.dat + FC.qly + FC-Class.ini).
             Member #, city, body and engine merge from the session&apos;s own driver database and
             the shared tech cards. RACEDATA.zip holds the Compulink text only (QDAT / EDAT /
-            points / IDX); the PDFs download separately.
+            points / IDX); the PDFs download separately. Drops <em>accumulate</em>: each upload
+            merges into the pack saved in this browser — drop Funny Car now and Top Fuel later
+            and both stay in, re-dropping a class replaces just that class, and the zip and
+            PDFs always build from everything. Hit Clear data to start a new event.
           </p>
         </div>
 
@@ -1200,9 +1386,9 @@ export default function EdataPage() {
               className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
             />
           </label>
-          {accuFilesRef.current.length > 0 && !accuUploading && (
+          {accuSessions.length > 0 && !accuUploading && (
             <button
-              onClick={() => handleAccuUpload(accuFilesRef.current)}
+              onClick={() => void postAccuBuild([])}
               className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500"
             >
               Rebuild package
@@ -1285,6 +1471,20 @@ export default function EdataPage() {
           </div>
         )}
 
+        {accuMerge && (accuMerge.added.length > 0 || accuMerge.replaced.length > 0) && (
+          <div className="mt-3 bg-green-500/10 border border-green-500/40 text-green-400 rounded-xl px-4 py-3 text-xs">
+            {[
+              accuMerge.added.length > 0 ? `Added to the pack: ${accuMerge.added.join(", ")}` : "",
+              accuMerge.replaced.length > 0 ? `Replaced with this drop: ${accuMerge.replaced.join(", ")}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            {accuSessions.length > accuMerge.added.length + accuMerge.replaced.length
+              ? " — every other class already in the pack is untouched."
+              : ""}
+          </div>
+        )}
+
         {accuResult && accuResult.sessions.some((s) => !s.classCode) && (
           <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
             {accuResult.sessions.filter((s) => !s.classCode).length === accuResult.sessions.length
@@ -1298,30 +1498,65 @@ export default function EdataPage() {
         {accuResult && accuResult.sessions.length > 0 && (
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
-              <p className="text-sm text-white font-semibold">
-                {accuResult.sessions.length} session
-                {accuResult.sessions.length === 1 ? "" : "s"} ·{" "}
-                {accuResult.edat.length} EDAT · {accuResult.qdat.length} QDAT ·{" "}
-                {[accuResult.finalsPdfBase64 && "finals PDF", accuResult.qualifyingPdfBase64 && "qualifying PDF"]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-              <button
-                onClick={handleDownloadAccuZip}
-                className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
-                title="Compulink text only: C#QDAT / C#EDAT / C#A16DP + IDX14.TXT — PDFs download separately below"
-              >
-                Download RACEDATA.zip
-              </button>
+              <div>
+                <p className="text-sm text-white font-semibold">
+                  {accuResult.sessions.length} class
+                  {accuResult.sessions.length === 1 ? "" : "es"} in the pack ·{" "}
+                  {accuResult.edat.length} EDAT · {accuResult.qdat.length} QDAT ·{" "}
+                  {[accuResult.finalsPdfBase64 && "finals PDF", accuResult.qualifyingPdfBase64 && "qualifying PDF"]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Saved in this browser — classes accumulate across drops and survive a refresh.
+                  Re-dropping a class replaces just that class.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleAccuClearData}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/70"
+                  title="Wipes every class saved in this browser and the built package — for starting a new event. Header logos stay."
+                >
+                  Clear data
+                </button>
+                <button
+                  onClick={handleDownloadAccuZip}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
+                  title="Compulink text only: C#QDAT / C#EDAT / C#A16DP + IDX14.TXT — PDFs download separately below"
+                >
+                  Download RACEDATA.zip
+                </button>
+              </div>
             </div>
             <div className="divide-y divide-nhra-border/60">
               {accuResult.sessions.map((s, i) => {
                 const cov = accuResult.coverage.find((c) => c.category === s.className);
+                const hasQdat = accuResult.qdat.some((f) => f.category === s.className);
+                const hasEdat = accuResult.edat.some((f) => f.category === s.className);
                 return (
                   <div key={`${s.className}-${i}`} className="px-4 py-2.5 text-sm">
                     <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <span className="text-white font-medium">
-                        {s.className} <span className="text-gray-500">({s.classCode || "?"})</span>
+                      <span className="flex items-center gap-2 flex-wrap">
+                        <span className="text-white font-medium">
+                          {s.className} <span className="text-gray-500">({s.classCode || "?"})</span>
+                        </span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${
+                            hasQdat ? "border-green-500/40 text-green-400" : "border-nhra-border text-gray-600"
+                          }`}
+                          title={hasQdat ? "Qualifying file in the pack" : "No qualifying data for this class"}
+                        >
+                          QDAT
+                        </span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${
+                            hasEdat ? "border-green-500/40 text-green-400" : "border-nhra-border text-gray-600"
+                          }`}
+                          title={hasEdat ? "Eliminations file in the pack" : "No elimination rounds for this class"}
+                        >
+                          EDAT
+                        </span>
                       </span>
                       <span className="text-xs text-gray-400">
                         {s.qualifiers} qualifiers · {s.qualSessions} sessions ·{" "}
