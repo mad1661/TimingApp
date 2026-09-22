@@ -2,12 +2,16 @@ import type { AccuTimeSession } from "./accutime";
 import type { EdataTechCard } from "./edata-export";
 
 /**
- * NHRA points scoring for AccuTime sessions, ported from Mark's points-calc
- * playground (markdawson-playground.web.app/points-calc) so the numbers match
- * that app exactly — don't tune these tables here without changing them there.
+ * NHRA points scoring for AccuTime sessions.
  *
- * Scope: Alcohol and below. Pro categories (TF, FC, PS, PSM, …) are skipped
- * for points on purpose — their QDAT/EDAT/PDF exports still build.
+ * Sportsman and Alcohol tables are ported from Mark's points-calc playground
+ * (markdawson-playground.web.app/points-calc) so the numbers match that app
+ * exactly — don't tune those tables here without changing them there.
+ *
+ * Pro categories (TF, FC, PS, PSM, …) score the NHRA Mission Foods national
+ * event structure (see the pro section below) — round results, qualifying
+ * position, participation and per-session low-ET bonuses, on the regular or
+ * Indy scale.
  *
  * This module is pure (type-only imports) so the client can rebuild the
  * points files after deductions without another server round-trip.
@@ -60,23 +64,87 @@ export const ALCOHOL_ATTEMPT_POINTS = 10;
 
 const ALCOHOL_CLASS_CODES = new Set(["TAD", "TAFC"]);
 
-// Held off for now per Mark: no points for the pro categories — their
-// QDAT/EDAT/PDF exports still build.
+// ——— Pro (NHRA Mission Foods) national-event points ———
 //
-// When pro scoring gets built, use the NHRA Mission Foods system (source:
-// nhra.com/how-points-are-earned/nhra-mission-foods-drag-racing-series-points),
-// which differs from the sportsman tables above in every part:
-//   Regular season — rounds W 100 / RU 80 / R3 60 / R2 40 / R1 20;
-//   participation 10 (one valid qual attempt: stage under power + take the
-//   Tree); qual position 1st 8, 2nd 7, 3rd 6, 4th 5, 5-6th 4, 7-8th 3,
-//   9-12th 2, 13-16th 1; per-session ET bonus 3/2/1 (none if the session is
-//   incomplete).
-//   Indy (U.S. Nationals) — W 150 / RU 120 / R3 90 / R2 60 / R1 30;
-//   participation 15; qual 10 down to 3; session bonus 4/3/2/1.
-//   Countdown — regular scale except Pomona 2 uses the Indy scale; the
-//   post-Indy reset seeds 1st 2100, 2nd 2080, then −10 per spot (10th 2000,
-//   11th+ keep stepping −10).
+// Source: nhra.com/how-points-are-earned/nhra-mission-foods-drag-racing-series-points.
+// Two value sets exist: the regular scale (every event except Indy, and every
+// Countdown event except Pomona 2) and the Indy scale (the U.S. Nationals and
+// Pomona 2, the final Countdown race). The event-scale picker on /edata
+// selects which one an export uses; Countdown itself scores the regular
+// values, only its Pomona 2 finale steps up to Indy's.
 export const PRO_CLASS_CODES = new Set(["TF", "FC", "PS", "PSM", "TFM", "MMPS", "PM"]);
+
+export type ProEventScale = "regular" | "indy" | "countdown" | "countdown_finale";
+
+export interface ProScaleValues {
+  /** Which value set applies ("regular" or "indy"). */
+  values: "regular" | "indy";
+  winner: number;
+  runnerUp: number;
+  /** Loser of round n (from round 1); the final's loser is the runner-up. */
+  roundLoser: Record<number, number>;
+  /** Points for the one required valid qualifying attempt. */
+  participation: number;
+  /** Per-session low-ET bonus, quickest first (3/2/1 or 4/3/2/1 at Indy). */
+  sessionBonus: number[];
+}
+
+export const PRO_SCALE_REGULAR: ProScaleValues = {
+  values: "regular",
+  winner: 100,
+  runnerUp: 80,
+  roundLoser: { 1: 20, 2: 40, 3: 60 },
+  participation: 10,
+  sessionBonus: [3, 2, 1],
+};
+
+export const PRO_SCALE_INDY: ProScaleValues = {
+  values: "indy",
+  winner: 150,
+  runnerUp: 120,
+  roundLoser: { 1: 30, 2: 60, 3: 90 },
+  participation: 15,
+  sessionBonus: [4, 3, 2, 1],
+};
+
+/** The /edata event-scale picker options, in display order. */
+export const PRO_EVENT_SCALES: { value: ProEventScale; label: string }[] = [
+  { value: "regular", label: "Regular season" },
+  { value: "indy", label: "U.S. Nationals (Indy scale)" },
+  { value: "countdown", label: "Countdown (regular values)" },
+  { value: "countdown_finale", label: "Countdown finale — Pomona 2 (Indy scale)" },
+];
+
+export function proScaleLabel(scale: ProEventScale): string {
+  return PRO_EVENT_SCALES.find((s) => s.value === scale)?.label || scale;
+}
+
+export function proScaleValues(scale: ProEventScale): ProScaleValues {
+  return scale === "indy" || scale === "countdown_finale" ? PRO_SCALE_INDY : PRO_SCALE_REGULAR;
+}
+
+/**
+ * Pro qualifying POSITION points. The regular ladder is the same shape as the
+ * alcohol one (8/7/6/5, 4 for 5-6th, 3 for 7-8th, 2 for 9-12th, 1 for
+ * 13-16th); Indy's is exactly that plus 2 at every position (10 down to 3).
+ * 17th and beyond score 0.
+ */
+export function getProQualifyingPoints(position: number, scale: ProScaleValues): number {
+  const base = getAlcoholQualifyingPoints(position);
+  if (base === 0) return 0;
+  return scale.values === "indy" ? base + 2 : base;
+}
+
+/**
+ * Post-Indy Countdown reset seed for a championship position: 1st 2100,
+ * 2nd 2080, then −10 per spot (10th 2000, 11th 1990, …). This is a
+ * season-standings adjustment, NOT event points — it must never land in a
+ * per-event A16DP file, which always carries the points earned at that event.
+ */
+export function countdownSeedPoints(position: number): number {
+  if (position <= 1) return 2100;
+  return 2080 - (position - 2) * 10;
+}
 
 function bracketFor(table: PointsBracket[], fieldSize: number): PointsBracket {
   for (const b of table) if (fieldSize >= b.minSize && fieldSize <= b.maxSize) return b;
@@ -108,30 +176,47 @@ export interface AccuPointsCategory {
   /** Compulink points-file name aligned with the C# EDAT/QDAT prefix: C1ADP.TXT. */
   filename: string;
   alcohol: boolean;
+  /** NHRA pro category (Mission Foods structure instead of the brackets). */
+  pro: boolean;
+  /** The event scale a pro category was scored on. */
+  proScale?: ProEventScale;
   fieldSize: number;
   rows: AccuPointsRow[];
+  /** Scoring caveats for this class (skipped session bonuses, heuristics, …). */
+  notes: string[];
 }
 
 export interface AccuPointsSkipped {
   category: string;
   classCode: string;
-  reason: "pro" | "no_elims";
+  reason: "no_elims";
 }
 
 type CardFor = (car: string | null, name: string | null) => EdataTechCard | null;
 
 /**
- * Score one AccuTime session, mirroring points-calc's calculateCategoryResults:
- * winner / runner-up from the final, loser-of-round points from the bracket for
- * the field size, alcohol qualifying position + attempt points from the
- * session's own qualifying order, and the optional incomplete-race guarantee.
+ * Score one AccuTime session.
+ *
+ * Sportsman/Alcohol mirrors points-calc's calculateCategoryResults: winner /
+ * runner-up from the final, loser-of-round points from the bracket for the
+ * field size, alcohol qualifying position + attempt points from the session's
+ * own qualifying order, and the optional incomplete-race guarantee.
+ *
+ * Pro classes score the Mission Foods national-event structure on the picked
+ * scale: round result (W/RU/round-loser), qualifying position points,
+ * participation, and per-session low-ET bonuses when the upload carries
+ * per-session passes. Caveats (skipped bonuses, the participation heuristic,
+ * sessions treated as incomplete) come back in `notes`.
  */
 export function scoreAccuTimeSession(
   session: AccuTimeSession,
   cardFor: CardFor,
-  opts: { incompleteRace?: boolean } = {},
-): AccuPointsRow[] {
+  opts: { incompleteRace?: boolean; proScale?: ProEventScale } = {},
+): { rows: AccuPointsRow[]; notes: string[] } {
   const isAlcohol = ALCOHOL_CLASS_CODES.has(session.classCode);
+  const isPro = PRO_CLASS_CODES.has(session.classCode);
+  const proValues = isPro ? proScaleValues(opts.proScale || "regular") : null;
+  const notes: string[] = [];
 
   // Round numbers: E3 → 3; the final ("F") took over its own E-number, so it
   // continues from the previous round.
@@ -180,15 +265,57 @@ export function scoreAccuTimeSession(
     if (r.losses.includes(finalRoundNum)) runnerUpKey = key;
   }
 
-  // Alcohol qualifying entries by car number for the bonus lookup.
+  // Alcohol/pro qualifying entries by car number for the position points.
   const qualByCar = new Map<string, { pos: number; name: string }>();
-  if (isAlcohol) {
+  if (isAlcohol || isPro) {
     for (const q of session.qualifying) {
       const key = q.car_number.trim().toUpperCase();
       if (key && !qualByCar.has(key)) qualByCar.set(key, { pos: q.pos, name: q.name });
     }
   }
   const matchedQualCars = new Set<string>();
+
+  // Pro per-session low-ET bonuses (3/2/1, Indy 4/3/2/1) — only from real
+  // per-session passes; never derived from a best-of-event order.
+  const sessionBonusByCar = new Map<string, number>();
+  if (isPro && proValues) {
+    const qualSessions = session.qualSessionPasses.filter((s) => s.passes.length > 0);
+    if (qualSessions.length === 0) {
+      notes.push(
+        "Per-session low-ET bonuses not scored — the upload carries no per-session qualifying passes (Compulink QDAT is best-of-event only; upload the AccuTime race.dat for session bonuses).",
+      );
+    } else {
+      const fieldRef = Math.max(session.qualifying.length, ...qualSessions.map((s) => s.passes.length));
+      for (const s of qualSessions) {
+        // NHRA awards no bonus for a session that can't be completed. The
+        // timing rows don't say why a session ended, so the heuristic is:
+        // fewer than half the field making a pass reads as an incomplete
+        // session (in pro qualifying every entered car runs every session).
+        if (s.passes.length * 2 < fieldRef) {
+          notes.push(
+            `Q${s.session} treated as incomplete (${s.passes.length} of ${fieldRef} cars made a pass) — no low-ET bonus for that session.`,
+          );
+          continue;
+        }
+        const ranked = s.passes
+          .filter((p) => p.et !== null)
+          .sort((a, b) => a.et! - b.et!)
+          .slice(0, proValues.sessionBonus.length);
+        ranked.forEach((p, i) => {
+          const key = (p.car_number || p.name || "?").trim().toUpperCase();
+          sessionBonusByCar.set(key, (sessionBonusByCar.get(key) || 0) + proValues.sessionBonus[i]);
+        });
+      }
+    }
+    notes.push(
+      `Participation +${proValues.participation}: any recorded qualifying entry or elimination appearance counts as the one required valid attempt (the timing rows can't prove "staged under power and took the Tree").`,
+    );
+    if (opts.incompleteRace) {
+      notes.push(
+        "The incomplete-race guarantee is a sportsman/alcohol rule — NHRA publishes no pro equivalent, so it was not applied to this class.",
+      );
+    }
+  }
 
   const rows: AccuPointsRow[] = [];
 
@@ -199,7 +326,51 @@ export function scoreAccuTimeSession(
     let points = 10;
     let status = "No Show / Non-Qualifier";
 
-    if (isWinner) {
+    if (isPro && proValues) {
+      // Round points by elimination result. Losers score by the round they
+      // fell in (the table tops out at the third round — a 16-car pro field);
+      // the final's loser is the runner-up.
+      if (isWinner) {
+        points = proValues.winner;
+        status = "Winner";
+      } else if (isRunnerUp) {
+        points = proValues.runnerUp;
+        status = "Runner-Up";
+      } else if (r.losses.length > 0) {
+        const lostRound = r.losses[r.losses.length - 1];
+        points = proValues.roundLoser[Math.min(lostRound, 3)] ?? 0;
+        status = `Lost Round ${lostRound}`;
+      } else if (r.wins.length > 0) {
+        // Won their last matchup but the race never finished. NHRA publishes
+        // no pro incomplete-race guarantee, so no round points are invented —
+        // the sportsman/alcohol toggle deliberately doesn't reach this branch.
+        points = 0;
+        status = `Race incomplete — won R${r.wins[r.wins.length - 1]}, no round points`;
+      } else {
+        points = 0;
+        status = "Ran eliminations";
+      }
+
+      // Participation + qualifying position + session low-ET bonuses. An
+      // elimination appearance counts as the required valid attempt even when
+      // the qualifying sheet is missing.
+      points += proValues.participation;
+      const extras: string[] = [];
+      const q = qualByCar.get(key);
+      if (q) {
+        matchedQualCars.add(key);
+        const qPts = getProQualifyingPoints(q.pos, proValues);
+        points += qPts;
+        extras.push(`Q#${q.pos} +${qPts}`);
+      }
+      extras.push(`attempt +${proValues.participation}`);
+      const bonus = sessionBonusByCar.get(key) || 0;
+      if (bonus > 0) {
+        points += bonus;
+        extras.push(`session lows +${bonus}`);
+      }
+      status += ` (${extras.join(", ")})`;
+    } else if (isWinner) {
       points = bracket.winner;
       status = "Winner";
     } else if (isRunnerUp) {
@@ -268,8 +439,56 @@ export function scoreAccuTimeSession(
     }
   }
 
+  // Pro racers who attempted qualifying but never made the ladder: DNQs (17th
+  // and beyond) earn participation only; a qualified no-show also keeps their
+  // position points and any session bonuses.
+  if (isPro && proValues) {
+    for (const [key, q] of qualByCar) {
+      if (matchedQualCars.has(key)) continue;
+      const car = key === "?" ? "" : key;
+      const tc = cardFor(car || null, q.name || null);
+      const qPts = getProQualifyingPoints(q.pos, proValues);
+      const bonus = sessionBonusByCar.get(key) || 0;
+      const extras: string[] = [];
+      if (qPts > 0) extras.push(`Q#${q.pos} +${qPts}`);
+      extras.push(`attempt +${proValues.participation}`);
+      if (bonus > 0) extras.push(`session lows +${bonus}`);
+      rows.push({
+        car_number: car,
+        member_number: tc?.member_number || "",
+        name: q.name || (tc ? `${tc.first_name} ${tc.last_name}`.trim() : ""),
+        division: extractDivisionNumber(tc?.home_division),
+        points: proValues.participation + qPts + bonus,
+        status: `${qPts > 0 ? `Qualified #${q.pos} — Did Not Race` : `Non-Qualifier (#${q.pos})`} (${extras.join(", ")})`,
+        isWinner: false,
+        isRunnerUp: false,
+      });
+    }
+    // Session-bonus earners absent from both the ladder and the qualifying
+    // order (no .qly alongside race.dat): keep their attempt + bonus points
+    // rather than dropping them.
+    for (const [key, bonus] of sessionBonusByCar) {
+      if (racers.has(key) || qualByCar.has(key) || matchedQualCars.has(key)) continue;
+      const car = key === "?" ? "" : key;
+      const named = session.qualSessionPasses
+        .flatMap((s) => s.passes)
+        .find((p) => (p.car_number || p.name || "?").trim().toUpperCase() === key);
+      const tc = cardFor(car || null, named?.name || null);
+      rows.push({
+        car_number: named?.car_number || car,
+        member_number: tc?.member_number || "",
+        name: named?.name || (tc ? `${tc.first_name} ${tc.last_name}`.trim() : ""),
+        division: extractDivisionNumber(tc?.home_division),
+        points: proValues.participation + bonus,
+        status: `Qualifying sessions only (attempt +${proValues.participation}, session lows +${bonus})`,
+        isWinner: false,
+        isRunnerUp: false,
+      });
+    }
+  }
+
   rows.sort((a, b) => b.points - a.points);
-  return rows;
+  return { rows, notes };
 }
 
 // ——— Deductions (oil-downs and other penalties) ———

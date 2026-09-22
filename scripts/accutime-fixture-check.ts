@@ -7,12 +7,20 @@
  * missing ini never falls back to the Secure "X" placeholder, the page's class
  * pick fills a classless session, the series title reads from [Reports], and a
  * two-class loose drop splits into two sessions (by name stem and by folder).
+ * v1.43.0 adds the pro (Mission Foods) scoring checks: round/qual/participation
+ * math on both event scales, Countdown vs Pomona 2, session bonuses present vs
+ * skipped, and pro classes no longer landing in pointsSkipped.
  */
 import * as fs from "fs";
 import * as path from "path";
-import { parseAccuTimePack, parseClassIni } from "../src/lib/accutime";
+import { parseAccuTimePack, parseClassIni, type AccuTimeSession } from "../src/lib/accutime";
 import { buildAccuTimeArtifacts } from "../src/lib/accutime-export";
-import { buildPointsFileContent } from "../src/lib/accutime-points";
+import {
+  buildPointsFileContent,
+  countdownSeedPoints,
+  scoreAccuTimeSession,
+  type ProEventScale,
+} from "../src/lib/accutime-points";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -237,6 +245,169 @@ const TF_QLY = qly([
   } else {
     console.log("  --  golden RACEDATA extract not found — path B golden checks skipped");
   }
+}
+
+// ——— 9. Pro (Mission Foods) scoring: rounds, qual ladder, participation,
+// session bonuses, event scales, and pro no longer skipped ———
+{
+  type ElimRun = AccuTimeSession["runs"][number];
+  const elimRun = (car: string, round: string, winner: boolean): ElimRun => ({
+    timestamp: null,
+    round,
+    qual_pos: null,
+    car_number: car,
+    name: `Driver ${car}`,
+    member_number: null,
+    class_index: null,
+    rt: null,
+    ft60: null,
+    ft330: null,
+    ft660: null,
+    mph_660: null,
+    ft1000: null,
+    mph_1000: null,
+    ft1320: null,
+    mph_1320: null,
+    mov: null,
+    is_winner: winner ? 1 : 0,
+    is_dq: 0,
+    result: winner ? "W" : "L",
+    place: null,
+    category: "TOP FUEL",
+    lane: null,
+    dial_in: null,
+    event_code: null,
+    event_name: null,
+    event_type: null,
+    season: null,
+    start_date: null,
+  });
+  const pairOf = (w: string, l: string, round: string) => ({
+    runs: [elimRun(w, round, true), elimRun(l, round, false)],
+    single: false,
+  });
+
+  // 16-car ladder: car n = qualifying position n. E1 1v16..8v9 (low seed
+  // wins), E2 1v8..4v5, semis 1v4 / 2v3, final 1v2.
+  const elimRounds: AccuTimeSession["elimRounds"] = [
+    { round: "E1", label: "ROUND 1", pairs: Array.from({ length: 8 }, (_, i) => pairOf(String(i + 1), String(16 - i), "E1")) },
+    { round: "E2", label: "ROUND 2", pairs: Array.from({ length: 4 }, (_, i) => pairOf(String(i + 1), String(8 - i), "E2")) },
+    { round: "E3", label: "ROUND 3", pairs: [pairOf("1", "4", "E3"), pairOf("2", "3", "E3")] },
+    { round: "F", label: "FINALS", pairs: [pairOf("1", "2", "F")] },
+  ];
+  // 17 attempts: 16 qualified + one DNQ (position 17).
+  const qualifying: AccuTimeSession["qualifying"] = Array.from({ length: 17 }, (_, i) => ({
+    pos: i + 1,
+    car_number: String(i + 1),
+    name: `Driver ${i + 1}`,
+    rt: null,
+    et: 3.7 + i * 0.01,
+    mph: null,
+    bestSession: 1,
+  }));
+  // Q1 complete (all 16 ran): lows are cars 1-4 in order. Q2 only 5 of 16
+  // cars ran → treated as incomplete, no bonus despite car 5's low ET.
+  const q1 = {
+    session: 1,
+    passes: Array.from({ length: 16 }, (_, i) => ({
+      car_number: String(i + 1),
+      name: `Driver ${i + 1}`,
+      et: i < 4 ? 3.7 + i * 0.01 : 3.9 + i * 0.01,
+    })),
+  };
+  const q2 = {
+    session: 2,
+    passes: Array.from({ length: 5 }, (_, i) => ({
+      car_number: String(i + 1),
+      name: `Driver ${i + 1}`,
+      et: 3.65 + i * 0.01,
+    })),
+  };
+
+  const proSession = (over: Partial<AccuTimeSession> = {}): AccuTimeSession => ({
+    classCode: "TF",
+    className: "TOP FUEL",
+    raceDate: "2026-09-01",
+    seriesName: null,
+    treeBase: 0.4,
+    qualifying,
+    qualSessions: 2,
+    qualSessionPasses: [q1, q2],
+    runs: elimRounds.flatMap((r) => r.pairs.flatMap((p) => p.runs)),
+    elimRounds,
+    lowEt: null,
+    topSpeed: null,
+    drivers: [],
+    warnings: [],
+    ...over,
+  });
+  const noCard = () => null;
+  const score = (scale: ProEventScale, over: Partial<AccuTimeSession> = {}) =>
+    scoreAccuTimeSession(proSession(over), noCard, { proScale: scale });
+  const ptsOf = (rows: { car_number: string; points: number }[], car: string) =>
+    rows.find((r) => r.car_number === car)?.points;
+
+  // Regular scale: W 100 / RU 80 / R3 60 / R2 40 / R1 20, qual 8..1,
+  // attempt 10, Q1 session lows 3/2/1 (cars 1-3), Q2 incomplete → nothing.
+  const reg = score("regular");
+  check("pro regular: winner 100+8+10+3 = 121", ptsOf(reg.rows, "1") === 121, `got ${ptsOf(reg.rows, "1")}`);
+  check("pro regular: runner-up 80+7+10+2 = 99", ptsOf(reg.rows, "2") === 99, `got ${ptsOf(reg.rows, "2")}`);
+  check("pro regular: R3 loser 60+6+10+1 = 77", ptsOf(reg.rows, "3") === 77, `got ${ptsOf(reg.rows, "3")}`);
+  check("pro regular: R2 loser 40+4+10 = 54 (no Q2 bonus)", ptsOf(reg.rows, "5") === 54, `got ${ptsOf(reg.rows, "5")}`);
+  check("pro regular: R1 loser 20+1+10 = 31", ptsOf(reg.rows, "16") === 31, `got ${ptsOf(reg.rows, "16")}`);
+  check("pro regular: DNQ (#17) attempt-only 10", ptsOf(reg.rows, "17") === 10, `got ${ptsOf(reg.rows, "17")}`);
+  check(
+    "pro regular: Q2 flagged incomplete in the notes",
+    reg.notes.some((n) => n.includes("Q2") && n.includes("incomplete")),
+    JSON.stringify(reg.notes),
+  );
+
+  // Indy scale: W 150 / RU 120 / R3 90 / R2 60 / R1 30, qual +2, attempt 15,
+  // session lows 4/3/2/1.
+  const indy = score("indy");
+  check("pro Indy: winner 150+10+15+4 = 179", ptsOf(indy.rows, "1") === 179, `got ${ptsOf(indy.rows, "1")}`);
+  check("pro Indy: runner-up 120+9+15+3 = 147", ptsOf(indy.rows, "2") === 147, `got ${ptsOf(indy.rows, "2")}`);
+  check("pro Indy: R3 loser 90+8+15+2 = 115", ptsOf(indy.rows, "3") === 115, `got ${ptsOf(indy.rows, "3")}`);
+  check("pro Indy: 4th session low pays (90+7+15+1 = 113)", ptsOf(indy.rows, "4") === 113, `got ${ptsOf(indy.rows, "4")}`);
+  check("pro Indy: R1 loser 30+3+15 = 48", ptsOf(indy.rows, "16") === 48, `got ${ptsOf(indy.rows, "16")}`);
+
+  // Countdown = regular values; the Pomona 2 finale = Indy values.
+  check("pro Countdown scores the regular values", ptsOf(score("countdown").rows, "1") === 121);
+  check("pro Pomona 2 finale scores the Indy values", ptsOf(score("countdown_finale").rows, "1") === 179);
+
+  // No per-session data (Compulink QDAT-only shape): bonuses skipped, said so.
+  const noSess = score("regular", { qualSessionPasses: [] });
+  check("pro without session data: winner 100+8+10 = 118", ptsOf(noSess.rows, "1") === 118, `got ${ptsOf(noSess.rows, "1")}`);
+  check(
+    "pro without session data: note explains skipped bonuses",
+    noSess.notes.some((n) => n.includes("Per-session low-ET bonuses not scored")),
+    JSON.stringify(noSess.notes),
+  );
+
+  // Through the full artifacts build: pro is scored, not skipped, and the
+  // A16DP file carries the TF class number and the golden layout.
+  const artifacts = buildAccuTimeArtifacts([proSession()], [], { pointsRaceCode: "16", proScale: "regular" });
+  check("pro not in pointsSkipped", artifacts.pointsSkipped.length === 0, JSON.stringify(artifacts.pointsSkipped));
+  const proCat = artifacts.points[0];
+  check("pro category scored + flagged", proCat?.pro === true && proCat?.proScale === "regular");
+  check("pro points file named C1A16DP.TXT", proCat?.filename === "C1A16DP.TXT", proCat?.filename);
+  const proFile = buildPointsFileContent(proCat.category, proCat.rows);
+  check(
+    "pro A16DP header + winner row",
+    proFile.startsWith("Compulink StarTrak EVENT Points for TOP FUEL w/REG code 1") &&
+      proFile.includes("\r\n1,,Driver 1,0,121,0"),
+    proFile.split("\r\n").slice(0, 3).join(" | "),
+  );
+
+  // Countdown reset seeds (season-standings helper, never in an A16DP file).
+  check(
+    "countdown seeds: 2100 / 2080 / 2070 / 2000 / 1990",
+    countdownSeedPoints(1) === 2100 &&
+      countdownSeedPoints(2) === 2080 &&
+      countdownSeedPoints(3) === 2070 &&
+      countdownSeedPoints(10) === 2000 &&
+      countdownSeedPoints(11) === 1990,
+  );
 }
 
 if (failures > 0) {

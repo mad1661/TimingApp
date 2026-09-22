@@ -3,6 +3,9 @@ import { getAllTechCards } from "@/lib/db";
 import type { EdataTechCard } from "@/lib/edata-export";
 import { parseAccuTimePack } from "@/lib/accutime";
 import { buildAccuTimeArtifacts } from "@/lib/accutime-export";
+import type { ProEventScale } from "@/lib/accutime-points";
+
+const PRO_SCALES: ProEventScale[] = ["regular", "indy", "countdown", "countdown_finale"];
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -81,6 +84,7 @@ export async function POST(request: NextRequest) {
       calcPoints: form.get("calc_points") !== "0",
       incompleteRace: form.get("incomplete_race") === "1",
       pointsRaceCode: (form.get("points_race_code") as string) || "",
+      proScale: PRO_SCALES.find((s) => s === form.get("pro_scale")) || "regular",
     });
 
     const toB64 = (bytes: Uint8Array | null) =>

@@ -34,6 +34,7 @@ import {
   type AccuPointsCategory,
   type AccuPointsSkipped,
   type IdxEntry,
+  type ProEventScale,
 } from "./accutime-points";
 
 /**
@@ -57,7 +58,7 @@ export interface AccuTimeArtifacts {
   warnings: string[];
   /** Per-class coverage: how many elim runs matched a tech card. */
   coverage: { category: string; enriched: number; runs: number }[];
-  /** NHRA points, Alcohol & below (points-calc port); pro classes land in pointsSkipped. */
+  /** NHRA points: sportsman/alcohol brackets plus the pro Mission Foods structure. */
   points: AccuPointsCategory[];
   pointsSkipped: AccuPointsSkipped[];
   /** IDX class table for the RACEDATA.zip (golden-sample layout), null with no sessions. */
@@ -80,12 +81,17 @@ export function buildAccuTimeArtifacts(
     eventName?: string;
     seriesHeader?: string;
     logos?: PdfLogos;
-    /** Score points (Alcohol & below). Defaults on. */
+    /** Score points. Defaults on. */
     calcPoints?: boolean;
-    /** Award guaranteed next-round loss points to racers whose race never finished. */
+    /**
+     * Award guaranteed next-round loss points to racers whose race never
+     * finished (sportsman/alcohol only — NHRA publishes no pro equivalent).
+     */
     incompleteRace?: boolean;
     /** Race code in the points filename: "16" → C10A16DP.TXT. */
     pointsRaceCode?: string;
+    /** Event scale for pro (Mission Foods) classes. Defaults to regular. */
+    proScale?: ProEventScale;
   } = {},
 ): AccuTimeArtifacts {
   const warnings: string[] = [];
@@ -179,25 +185,32 @@ export function buildAccuTimeArtifacts(
       idxEntries.push({ num: classNum, classCode: session.classCode || "?", winnerMember, winnerName, runnerUpName });
     }
 
-    // ----- Points (Alcohol & below; pro categories held off) -----
+    // ----- Points: sportsman/alcohol brackets, pro Mission Foods structure -----
     if (calcPoints) {
-      if (PRO_CLASS_CODES.has(session.classCode)) {
-        pointsSkipped.push({ category: session.className, classCode: session.classCode, reason: "pro" });
-      } else if (!session.elimRounds.length) {
+      if (!session.elimRounds.length) {
         pointsSkipped.push({ category: session.className, classCode: session.classCode, reason: "no_elims" });
       } else {
+        const isPro = PRO_CLASS_CODES.has(session.classCode);
+        const proScale: ProEventScale = opts.proScale || "regular";
+        const scored = scoreAccuTimeSession(session, cardFor, {
+          incompleteRace: opts.incompleteRace,
+          proScale,
+        });
         points.push({
           category: session.className,
           classCode: session.classCode,
           // Same C# prefix as the class's EDAT/QDAT files: C10A16DP.TXT.
           filename: `C${classNum}A${raceCode}DP.TXT`,
           alcohol: session.classCode === "TAD" || session.classCode === "TAFC",
+          pro: isPro,
+          proScale: isPro ? proScale : undefined,
           fieldSize: new Set(
             session.elimRounds.flatMap((r) =>
               r.pairs.flatMap((p) => p.runs.map((run) => (run.car_number || run.name || "?").trim().toUpperCase())),
             ),
           ).size,
-          rows: scoreAccuTimeSession(session, cardFor, { incompleteRace: opts.incompleteRace }),
+          rows: scored.rows,
+          notes: scored.notes,
         });
       }
     }
