@@ -58,6 +58,9 @@ export interface EdataTechCard {
   cu_cc: string;
   member_number: string;
   event_name?: string;
+  /** Horsepower figures — QDAT prints them; EDAT doesn't. */
+  hp?: string;
+  factored_hp?: string;
 }
 
 export interface EdataExportFile {
@@ -111,7 +114,7 @@ function laneOrder(lane: string | null): number | null {
 }
 
 /** " 1.293", "  .031", "- .028" — no leading 0 before the dot when |RT| < 1. */
-function fmtRt(rt: number | null): string {
+export function fmtRt(rt: number | null): string {
   if (rt === null || !Number.isFinite(rt)) return "";
   const abs = Math.abs(rt);
   let s = abs.toFixed(3);
@@ -120,13 +123,13 @@ function fmtRt(rt: number | null): string {
 }
 
 /** " 4.853" — three decimals, right-aligned to six characters. */
-function fmtEt(et: number | null): string {
+export function fmtEt(et: number | null): string {
   if (et === null || !Number.isFinite(et)) return "";
   return et.toFixed(3).padStart(6);
 }
 
 /** "138.28", " 80.83" — two decimals, right-aligned to six characters. */
-function fmtMph(mph: number | null): string {
+export function fmtMph(mph: number | null): string {
   if (mph === null || !Number.isFinite(mph)) return "";
   return mph.toFixed(2).padStart(6);
 }
@@ -148,7 +151,7 @@ function norm(s: string | null | undefined): string {
 // ——— Tech-card field formatting (the CompuLink entry-record shapes) ———
 
 /** "Ames IA" — city plus 2-letter state. */
-function cityState(tc: EdataTechCard): string {
+export function cityState(tc: EdataTechCard): string {
   const city = csvSafe(tc.city || "");
   const st = csvSafe(tc.state || "").toUpperCase();
   return [city, st].filter(Boolean).join(" ");
@@ -175,7 +178,7 @@ function bodyWord(w: string): string {
 }
 
 /** "'08 Chevy Cobalt" — apostrophe-year plus normalized make/model. */
-function bodyString(tc: EdataTechCard): string {
+export function bodyString(tc: EdataTechCard): string {
   const body = (tc.body_type || "").trim().split(/\s+/).filter(Boolean).map(bodyWord).join(" ");
   // Some entries already carry the year in the body ("'63 Nova").
   if (/^'\d{2}\b/.test(body)) return csvSafe(body);
@@ -191,7 +194,7 @@ const ENGINE_MAKE_FIXES: Record<string, string> = {
 };
 
 /** "CHEV  665" — make (CompuLink short form) + two spaces + cubic inches. */
-function engineString(tc: EdataTechCard): string {
+export function engineString(tc: EdataTechCard): string {
   let make = csvSafe(tc.engine_make || "").toUpperCase();
   make = ENGINE_MAKE_FIXES[make] || make;
   const cid = ((tc.cu_cc || "").match(/\d+/) || [""])[0];
@@ -199,7 +202,7 @@ function engineString(tc: EdataTechCard): string {
   return csvSafe(make || cid);
 }
 
-function fullName(tc: EdataTechCard): string {
+export function fullName(tc: EdataTechCard): string {
   return csvSafe(`${tc.first_name || ""} ${tc.last_name || ""}`);
 }
 
@@ -259,13 +262,37 @@ interface TechCand {
   local: boolean;
 }
 
-interface CategoryTechIndex {
+export interface CategoryTechIndex {
   byCar: Map<string, TechCand>;
   byName: Map<string, TechCand>;
   /** "D WILKERSON" (first initial + last) — for abbreviated timing names. */
   byInitial: Map<string, TechCand | null>;
   /** The class code the tech cards agree on, when they agree on exactly one. */
   code: string | null;
+}
+
+/** classInfo for callers outside this module (AccuTime export, QDAT). */
+export function classCodeForCategory(category: string): { code: string; order: number } {
+  return classInfo(category, []);
+}
+
+/**
+ * Category-scoped tech-card index for callers that match things other than
+ * RunRows (the QDAT builder, the AccuTime PDFs). Same matching the EDAT
+ * export uses: cards filtered to the class, current-event cards outranking
+ * other-event ones.
+ */
+export function buildTechIndex(
+  category: string,
+  classCode: string,
+  cards: EdataTechCard[],
+  isLocal: (tc: EdataTechCard) => boolean,
+): CategoryTechIndex {
+  return indexTechCards(
+    cards
+      .filter((tc) => techCardMatchesCategory(tc, category, classCode))
+      .map((tc) => ({ tc, local: isLocal(tc) })),
+  );
 }
 
 /** Current-event cards outrank other-event ones; fuller records win ties. */
@@ -332,30 +359,40 @@ function initialLastKey(name: string | null): string | null {
 }
 
 /**
- * Whether the run's driver name could be this card's racer. True when either
- * side has no usable name; otherwise the first initial + last name must agree
- * (which also accepts the timing system's abbreviated "D. Wilkerson").
+ * Whether a timing-side driver name could be this card's racer. True when
+ * either side has no usable name; otherwise the first initial + last name must
+ * agree (which also accepts the timing system's abbreviated "D. Wilkerson").
  */
-function nameCompatible(run: RunRow, tc: EdataTechCard): boolean {
-  const runKey = initialLastKey(run.name);
+function namesCompatible(name: string | null, tc: EdataTechCard): boolean {
+  const runKey = initialLastKey(name);
   if (!runKey) return true;
   const tcKey = initialLastKey(`${tc.first_name || ""} ${tc.last_name || ""}`);
   return !tcKey || tcKey === runKey;
 }
 
-function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
-  // Category is already scoped by the caller; within it, car number is the
-  // strongest join, exact name next, and the timing system's abbreviated
-  // "D. Wilkerson" style last (only when it singles out one card). A card
-  // tagged with a different event only joins by car number when the driver
-  // name doesn't contradict it — car numbers get reused across events.
-  const byCar = index.byCar.get(norm(run.car_number));
-  if (byCar && (byCar.local || nameCompatible(run, byCar.tc))) return byCar.tc;
-  const byName = index.byName.get(norm(run.name));
+/**
+ * Category is already scoped by the index; within it, car number is the
+ * strongest join, exact name next, and the timing system's abbreviated
+ * "D. Wilkerson" style last (only when it singles out one card). A card
+ * tagged with a different event only joins by car number when the driver
+ * name doesn't contradict it — car numbers get reused across events.
+ */
+export function findTechCard(
+  carNumber: string | null,
+  name: string | null,
+  index: CategoryTechIndex,
+): EdataTechCard | null {
+  const byCar = index.byCar.get(norm(carNumber));
+  if (byCar && (byCar.local || namesCompatible(name, byCar.tc))) return byCar.tc;
+  const byName = index.byName.get(norm(name));
   if (byName) return byName.tc;
-  const key = initialLastKey(run.name);
+  const key = initialLastKey(name);
   const byInitial = key ? index.byInitial.get(key) : null;
   return byInitial ? byInitial.tc : null;
+}
+
+function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
+  return findTechCard(run.car_number, run.name, index);
 }
 
 // ——— Line assembly ———
@@ -544,4 +581,69 @@ export function buildEdataExport(
   }
 
   return { files, warnings };
+}
+
+// ——— QDAT: the qualifying sibling of EDAT ———
+
+/**
+ * One qualifier for a C##QDAT.TXT file, already enriched. Thirteen fields:
+ *
+ *   1308,342370,E/SA,'69 Camaro,1969,CHEV  396,350,330,Ralph Porpora,New Windsor NY,10.589,11.70,-1.111
+ *
+ * car, member, class/index designation, body, body year, engine, HP, factored
+ * HP, driver, city+state, best ET, index, ET-minus-index. Heads-up classes
+ * leave index and the difference blank.
+ */
+export interface QdatEntry {
+  car: string;
+  member: string;
+  classOrIndex: string;
+  body: string;
+  bodyYear: string;
+  engine: string;
+  hp: string;
+  factoredHp: string;
+  name: string;
+  cityState: string;
+  et: number | null;
+  index: number | null;
+  mph: number | null;
+}
+
+export function buildQdatFile(
+  category: string,
+  entries: QdatEntry[],
+  lowEt: { et: number; car: string; name: string } | null,
+  topSpeed: { mph: number; car: string; name: string } | null,
+): string {
+  const lines: string[] = [
+    `Compulink StarTrak ${category.toUpperCase()} Qualifying for ${entries.length} entries`,
+  ];
+  if (lowEt) lines.push(`Low ET ${lowEt.et.toFixed(3)} ${csvSafe(lowEt.car)} ${csvSafe(lowEt.name)}`);
+  if (topSpeed)
+    lines.push(`Top Speed ${topSpeed.mph.toFixed(2)} ${csvSafe(topSpeed.car)} ${csvSafe(topSpeed.name)}`);
+
+  for (const e of entries) {
+    const diff = e.et !== null && e.index !== null ? (e.et - e.index).toFixed(3) : "";
+    lines.push(
+      [
+        csvSafe(e.car),
+        csvSafe(e.member) || "0",
+        csvSafe(e.classOrIndex),
+        csvSafe(e.body),
+        csvSafe(e.bodyYear),
+        csvSafe(e.engine),
+        csvSafe(e.hp),
+        csvSafe(e.factoredHp),
+        csvSafe(e.name),
+        csvSafe(e.cityState),
+        e.et !== null ? e.et.toFixed(3) : "",
+        e.index !== null ? e.index.toFixed(2) : "",
+        diff,
+      ].join(","),
+    );
+  }
+
+  lines.push("End of File");
+  return lines.join(EOL) + EOL;
 }
