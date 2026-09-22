@@ -5,7 +5,7 @@ import { parseAccuTimePack } from "@/lib/accutime";
 import { buildAccuTimeArtifacts } from "@/lib/accutime-export";
 import type { ProEventScale } from "@/lib/accutime-points";
 
-const PRO_SCALES: ProEventScale[] = ["regular", "indy", "countdown", "countdown_finale"];
+const PRO_SCALES: ProEventScale[] = ["regular", "indy", "countdown", "PC2"];
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
