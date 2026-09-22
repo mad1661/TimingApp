@@ -59,7 +59,10 @@ const DOS_EOF = /\x1A+/g;
 
 function num(v: string | undefined): number | null {
   if (v === undefined) return null;
-  const t = v.trim();
+  // Negative reaction times print as "- .005" — sign, space, digits — which
+  // parseFloat rejects wholesale. Collapse internal whitespace first, or every
+  // red light imports as a missing RT.
+  const t = v.replace(/\s+/g, "");
   if (!t) return null;
   const n = parseFloat(t);
   return Number.isFinite(n) ? n : null;
