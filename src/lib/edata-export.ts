@@ -21,8 +21,15 @@ import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
  * state, body ('YY Make Model), engine (MAKE  CID), RT, dial-in, ET, MPH.
  *
  * The timing data carries none of member/city/body/engine, so those merge in
- * from the event's tech cards, matched per class by car number first and
- * driver name second. A run with no tech card exports those fields blank.
+ * from the tech cards already in the store (whatever /tech-cards, the
+ * backfill, or the import control on /edata saved), matched per class by car
+ * number first and driver name second. Every stored card is readable: cards
+ * whose event_name matches the runs' event (or is blank) are trusted fully,
+ * while a card tagged with a different event string — the /tech-cards page
+ * and the backfill scrape tag with their own source's naming, which rarely
+ * equals the getresults one — still applies, but only where the driver name
+ * doesn't contradict it, so a reused car number from another event can't put
+ * the wrong person on a row. A run with no card exports those fields blank.
  *
  * Pair ordering: left lane first, then right, matching how the getresults →
  * EDAT conversions have been produced (a red-lighting left-lane car stays on
@@ -246,42 +253,70 @@ function tcScore(tc: EdataTechCard): number {
   return s;
 }
 
+/** A card plus whether its event tag matches (or doesn't contradict) the runs'. */
+interface TechCand {
+  tc: EdataTechCard;
+  local: boolean;
+}
+
 interface CategoryTechIndex {
-  byCar: Map<string, EdataTechCard>;
-  byName: Map<string, EdataTechCard>;
+  byCar: Map<string, TechCand>;
+  byName: Map<string, TechCand>;
   /** "D WILKERSON" (first initial + last) — for abbreviated timing names. */
-  byInitial: Map<string, EdataTechCard | null>;
+  byInitial: Map<string, TechCand | null>;
   /** The class code the tech cards agree on, when they agree on exactly one. */
   code: string | null;
 }
 
-function indexTechCards(cards: EdataTechCard[]): CategoryTechIndex {
-  const byCar = new Map<string, EdataTechCard>();
-  const byName = new Map<string, EdataTechCard>();
-  const byInitial = new Map<string, EdataTechCard | null>();
-  const codes = new Set<string>();
-  for (const tc of cards) {
-    const car = norm(tc.car_number);
-    if (car) {
-      const prev = byCar.get(car);
-      if (!prev || tcScore(tc) > tcScore(prev)) byCar.set(car, tc);
-    }
-    const name = norm(`${tc.first_name || ""} ${tc.last_name || ""}`);
-    if (name) {
-      const prev = byName.get(name);
-      if (!prev || tcScore(tc) > tcScore(prev)) byName.set(name, tc);
-    }
-    const initialKey = initialLastKey(`${tc.first_name || ""} ${tc.last_name || ""}`);
-    if (initialKey) {
-      // Two different people can share an initial + last name (father/son) —
-      // an ambiguous key matches nobody rather than guessing.
-      const prev = byInitial.get(initialKey);
-      if (prev === undefined) byInitial.set(initialKey, tc);
-      else if (prev && norm(`${prev.first_name} ${prev.last_name}`) !== name) byInitial.set(initialKey, null);
-    }
-    const code = norm(tc.category);
-    if (/^[A-Z0-9]{1,6}$/.test(code)) codes.add(code);
+/** Current-event cards outrank other-event ones; fuller records win ties. */
+function bestCand(cands: TechCand[]): TechCand {
+  const pool = cands.some((c) => c.local) ? cands.filter((c) => c.local) : cands;
+  return pool.reduce((a, b) => (tcScore(b.tc) > tcScore(a.tc) ? b : a));
+}
+
+/**
+ * Like bestCand, but for name-derived keys where two DIFFERENT people can
+ * collide (father/son sharing an initial + last name): if the preferred pool
+ * still holds more than one distinct name, match nobody rather than guess.
+ */
+function uniqueCand(cands: TechCand[]): TechCand | null {
+  const pool = cands.some((c) => c.local) ? cands.filter((c) => c.local) : cands;
+  const names = new Set(pool.map((c) => norm(`${c.tc.first_name || ""} ${c.tc.last_name || ""}`)));
+  if (names.size > 1) return null;
+  return pool.reduce((a, b) => (tcScore(b.tc) > tcScore(a.tc) ? b : a));
+}
+
+function indexTechCards(cands: TechCand[]): CategoryTechIndex {
+  const carCands = new Map<string, TechCand[]>();
+  const nameCands = new Map<string, TechCand[]>();
+  const initialCands = new Map<string, TechCand[]>();
+  const add = (map: Map<string, TechCand[]>, key: string, c: TechCand) => {
+    const list = map.get(key);
+    if (list) list.push(c);
+    else map.set(key, [c]);
+  };
+  for (const c of cands) {
+    const car = norm(c.tc.car_number);
+    if (car) add(carCands, car, c);
+    const name = norm(`${c.tc.first_name || ""} ${c.tc.last_name || ""}`);
+    if (name) add(nameCands, name, c);
+    const initialKey = initialLastKey(name);
+    if (initialKey) add(initialCands, initialKey, c);
   }
+
+  const byCar = new Map<string, TechCand>();
+  for (const [k, list] of carCands) byCar.set(k, bestCand(list));
+  const byName = new Map<string, TechCand>();
+  for (const [k, list] of nameCands) byName.set(k, bestCand(list));
+  const byInitial = new Map<string, TechCand | null>();
+  for (const [k, list] of initialCands) byInitial.set(k, uniqueCand(list));
+
+  // Class-code consensus, from current-event cards when there are any.
+  const codePool = cands.some((c) => c.local) ? cands.filter((c) => c.local) : cands;
+  const codes = new Set(
+    codePool.map((c) => norm(c.tc.category)).filter((code) => /^[A-Z0-9]{1,6}$/.test(code)),
+  );
+
   return { byCar, byName, byInitial, code: codes.size === 1 ? [...codes][0] : null };
 }
 
@@ -296,16 +331,31 @@ function initialLastKey(name: string | null): string | null {
   return `${initial} ${last}`;
 }
 
+/**
+ * Whether the run's driver name could be this card's racer. True when either
+ * side has no usable name; otherwise the first initial + last name must agree
+ * (which also accepts the timing system's abbreviated "D. Wilkerson").
+ */
+function nameCompatible(run: RunRow, tc: EdataTechCard): boolean {
+  const runKey = initialLastKey(run.name);
+  if (!runKey) return true;
+  const tcKey = initialLastKey(`${tc.first_name || ""} ${tc.last_name || ""}`);
+  return !tcKey || tcKey === runKey;
+}
+
 function techCardForRun(run: RunRow, index: CategoryTechIndex): EdataTechCard | null {
   // Category is already scoped by the caller; within it, car number is the
   // strongest join, exact name next, and the timing system's abbreviated
-  // "D. Wilkerson" style last (only when it singles out one card).
+  // "D. Wilkerson" style last (only when it singles out one card). A card
+  // tagged with a different event only joins by car number when the driver
+  // name doesn't contradict it — car numbers get reused across events.
   const byCar = index.byCar.get(norm(run.car_number));
-  if (byCar) return byCar;
+  if (byCar && (byCar.local || nameCompatible(run, byCar.tc))) return byCar.tc;
   const byName = index.byName.get(norm(run.name));
-  if (byName) return byName;
+  if (byName) return byName.tc;
   const key = initialLastKey(run.name);
-  return (key && index.byInitial.get(key)) || null;
+  const byInitial = key ? index.byInitial.get(key) : null;
+  return byInitial ? byInitial.tc : null;
 }
 
 // ——— Line assembly ———
@@ -378,12 +428,17 @@ export function buildEdataExport(
     else byCategory.set(cat, [run]);
   }
 
-  // Tech cards scoped to this event: cards tagged with another event's name
-  // are someone else's entries.
+  // Every stored card is usable — the /tech-cards page and the backfill tag
+  // cards with their own source's event naming, which rarely equals the
+  // getresults string, so an exact-match filter would throw away cards that
+  // were imported precisely for this event. Cards whose tag matches (or is
+  // blank) are "local" and outrank the rest; other-event cards fill gaps
+  // under the name-compatibility guard in techCardForRun.
   const eventNames = new Set(runs.map((r) => norm(r.event_name)).filter(Boolean));
-  const eventCards = techCards.filter(
-    (tc) => !norm(tc.event_name) || eventNames.size === 0 || eventNames.has(norm(tc.event_name)),
-  );
+  const isLocal = (tc: EdataTechCard) => {
+    const tag = norm(tc.event_name);
+    return !tag || eventNames.size === 0 || eventNames.has(tag);
+  };
 
   // Stable class numbering: known classes in RACE_CLASSES order (pros first),
   // anything else alphabetically after them.
@@ -395,7 +450,9 @@ export function buildEdataExport(
 
   categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
     const techIndex = indexTechCards(
-      eventCards.filter((tc) => techCardMatchesCategory(tc, category, fallbackCode)),
+      techCards
+        .filter((tc) => techCardMatchesCategory(tc, category, fallbackCode))
+        .map((tc) => ({ tc, local: isLocal(tc) })),
     );
     // The entry system's own abbreviation beats our name-table guess.
     const code = techIndex.code || fallbackCode;
