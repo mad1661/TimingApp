@@ -66,9 +66,14 @@ export default function EdataPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [exporting, setExporting] = useState(false);
-  const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportFiles, setExportFiles] = useState<ExportFile[] | null>(null);
+  const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [exportError, setExportError] = useState("");
+  const [selectedClasses, setSelectedClasses] = useState<Set<string>>(new Set());
+  // Guards against a slow response for a previously typed event landing after
+  // a newer one.
+  const exportFetchSeq = useRef(0);
 
   // Default to the loaded event so the common case needs no typing.
   useEffect(() => {
@@ -112,33 +117,69 @@ export default function EdataPage() {
     }
   }
 
-  async function handleBuildExport() {
-    if (!eventCode.trim() || !season.trim()) {
-      setExportError("Set the event code and season first.");
-      return;
-    }
-    setExporting(true);
+  async function loadExportClasses(ec: string, s: string) {
+    const seq = ++exportFetchSeq.current;
+    setExportLoading(true);
     setExportError("");
-    setExportResult(null);
     try {
       const res = await fetch(
-        `/api/edata-export?event_code=${encodeURIComponent(eventCode.trim())}&season=${encodeURIComponent(season.trim())}`,
+        `/api/edata-export?event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`,
         { cache: "no-store" },
       );
       const body = await res.json();
+      if (seq !== exportFetchSeq.current) return;
       if (!res.ok) throw new Error(body.error || "Export failed");
-      setExportResult(body as ExportResult);
+      const result = body as ExportResult;
+      setExportFiles(result.files);
+      setExportWarnings(result.warnings);
+      // Everything starts checked — the common case is "give me the event".
+      setSelectedClasses(new Set(result.files.map((f) => f.filename)));
     } catch (err) {
+      if (seq !== exportFetchSeq.current) return;
+      setExportFiles(null);
+      setExportWarnings([]);
       setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {
-      setExporting(false);
+      if (seq === exportFetchSeq.current) setExportLoading(false);
     }
   }
 
-  function handleDownloadZip() {
-    if (!exportResult || exportResult.files.length === 0) return;
+  // The class checklist loads itself whenever the event/season fields settle,
+  // so downloading is: tick the classes, hit Download EDAT.
+  useEffect(() => {
+    const ec = eventCode.trim();
+    const s = season.trim();
+    setExportFiles(null);
+    setExportWarnings([]);
+    setExportError("");
+    setSelectedClasses(new Set());
+    if (!ec || !s) {
+      exportFetchSeq.current++; // cancel anything in flight
+      return;
+    }
+    const t = setTimeout(() => loadExportClasses(ec, s), 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventCode, season]);
+
+  function toggleClass(filename: string) {
+    setSelectedClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) next.delete(filename);
+      else next.add(filename);
+      return next;
+    });
+  }
+
+  function handleDownloadEdata() {
+    const picked = (exportFiles || []).filter((f) => selectedClasses.has(f.filename));
+    if (picked.length === 0) return;
+    if (picked.length === 1) {
+      downloadBytes(picked[0].filename, edataBytes(picked[0].content), "text/plain");
+      return;
+    }
     const entries: Record<string, Uint8Array> = {};
-    for (const f of exportResult.files) entries[f.filename] = edataBytes(f.content);
+    for (const f of picked) entries[f.filename] = edataBytes(f.content);
     downloadBytes("RACEDATA.zip", zipSync(entries), "application/zip");
   }
 
@@ -330,20 +371,29 @@ export default function EdataPage() {
           <div>
             <h2 className="text-white font-bold text-lg">Export EDAT / RACEDATA</h2>
             <p className="text-xs text-gray-400 mt-1 max-w-xl">
-              Writes the event&apos;s elimination rounds (E1, E2, … , finals) as CompuLink StarTrak
-              EDAT files — one C#EDAT.TXT per class — using the event code and season above.
-              Member numbers, full names, city, body and engine merge in from the event&apos;s tech
-              cards where a car (or driver name) matches. Only rounds already on file are written;
-              nothing is invented. Pairs are left lane then right; rounds imported from EData (no
-              lanes) are written winner-first, CompuLink&apos;s own convention.
+              Tick the classes you want, then Download EDAT — one C#EDAT.TXT for a single class,
+              a RACEDATA.zip when several are picked. The list shows every class with elimination
+              rounds on file for the event code and season above. Member numbers, full names,
+              city, body and engine merge in from the event&apos;s tech cards where a car (or driver
+              name) matches; only rounds already on file are written, nothing is invented. Pairs
+              are left lane then right; rounds imported from EData (no lanes) are written
+              winner-first, CompuLink&apos;s own convention.
             </p>
           </div>
           <button
-            onClick={handleBuildExport}
-            disabled={exporting}
+            onClick={handleDownloadEdata}
+            disabled={selectedClasses.size === 0}
             className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
+            title={
+              selectedClasses.size > 1
+                ? "Downloads the selected classes as RACEDATA.zip"
+                : "Downloads the selected class's EDAT file"
+            }
           >
-            {exporting ? "Building…" : "Build EDAT files"}
+            Download EDAT
+            {selectedClasses.size > 0
+              ? ` (${selectedClasses.size} ${selectedClasses.size === 1 ? "class" : "classes → zip"})`
+              : ""}
           </button>
         </div>
 
@@ -353,73 +403,102 @@ export default function EdataPage() {
           </div>
         )}
 
-        {exportResult && exportResult.files.length > 0 && (
+        {exportLoading && (
+          <p className="mt-3 text-sm text-gray-500">Loading classes with elimination data…</p>
+        )}
+
+        {!exportLoading && exportFiles && exportFiles.length === 0 && (
+          <p className="mt-3 text-sm text-gray-500">
+            No elimination rounds on file for this event yet.
+          </p>
+        )}
+
+        {!exportLoading && exportFiles && exportFiles.length > 0 && (
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
-              <p className="text-sm text-white font-semibold">
-                {exportResult.files.length} class{exportResult.files.length === 1 ? "" : "es"} ·{" "}
-                {exportResult.files.reduce((n, f) => n + f.pairs, 0)} pairings
+            <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-xs text-gray-400">
+                {selectedClasses.size} of {exportFiles.length} class
+                {exportFiles.length === 1 ? "" : "es"} selected ·{" "}
+                {exportFiles
+                  .filter((f) => selectedClasses.has(f.filename))
+                  .reduce((n, f) => n + f.pairs, 0)}{" "}
+                pairings
               </p>
               <button
-                onClick={handleDownloadZip}
-                className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
+                onClick={() =>
+                  setSelectedClasses(
+                    selectedClasses.size === exportFiles.length
+                      ? new Set()
+                      : new Set(exportFiles.map((f) => f.filename)),
+                  )
+                }
+                className="text-xs text-gray-400 hover:text-white font-semibold"
               >
-                Download RACEDATA.zip
+                {selectedClasses.size === exportFiles.length ? "Select none" : "Select all"}
               </button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-gray-400 text-xs uppercase tracking-wider">
                   <tr>
-                    <th className="text-left px-4 py-2 font-medium">File</th>
-                    <th className="text-left px-3 py-2 font-medium">Class</th>
+                    <th className="px-4 py-2 w-8"></th>
+                    <th className="text-left px-2 py-2 font-medium">Class</th>
+                    <th className="text-left px-3 py-2 font-medium">File</th>
                     <th className="text-left px-3 py-2 font-medium">Rounds</th>
                     <th className="text-right px-3 py-2 font-medium">Pairings</th>
-                    <th className="text-right px-3 py-2 font-medium">Tech cards</th>
-                    <th className="text-right px-4 py-2 font-medium"></th>
+                    <th className="text-right px-4 py-2 font-medium">Tech cards</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {exportResult.files.map((f) => (
-                    <tr key={f.filename} className="border-t border-nhra-border/60">
-                      <td className="px-4 py-2 text-white font-mono text-xs">{f.filename}</td>
-                      <td className="px-3 py-2 text-gray-300">
-                        {f.category} <span className="text-gray-500">({f.classCode})</span>
-                      </td>
-                      <td className="px-3 py-2 text-gray-400">{f.rounds.join(" · ")}</td>
-                      <td className="px-3 py-2 text-right text-gray-300">{f.pairs}</td>
-                      <td
-                        className={`px-3 py-2 text-right ${
-                          f.enriched === 0 ? "text-gray-600" : "text-gray-300"
+                  {exportFiles.map((f) => {
+                    const checked = selectedClasses.has(f.filename);
+                    return (
+                      <tr
+                        key={f.filename}
+                        onClick={() => toggleClass(f.filename)}
+                        className={`border-t border-nhra-border/60 cursor-pointer ${
+                          checked ? "bg-nhra-red/5" : "hover:bg-white/[0.02]"
                         }`}
-                        title="Runs whose member / city / body / engine came from a tech card"
                       >
-                        {f.enriched}/{f.runs}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <button
-                          onClick={() => downloadBytes(f.filename, edataBytes(f.content), "text/plain")}
-                          className="text-xs text-nhra-red hover:text-red-400 font-semibold"
+                        <td className="px-4 py-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleClass(f.filename)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="accent-nhra-red cursor-pointer"
+                          />
+                        </td>
+                        <td className={`px-2 py-2 ${checked ? "text-white" : "text-gray-400"}`}>
+                          {f.category} <span className="text-gray-500">({f.classCode})</span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-400 font-mono text-xs">{f.filename}</td>
+                        <td className="px-3 py-2 text-gray-400">{f.rounds.join(" · ")}</td>
+                        <td className="px-3 py-2 text-right text-gray-300">{f.pairs}</td>
+                        <td
+                          className={`px-4 py-2 text-right ${
+                            f.enriched === 0 ? "text-gray-600" : "text-gray-300"
+                          }`}
+                          title="Runs whose member / city / body / engine came from a tech card"
                         >
-                          Download
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                          {f.enriched}/{f.runs}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         )}
 
-        {exportResult && exportResult.warnings.length > 0 && (
+        {exportFiles && exportFiles.length > 0 && exportWarnings.length > 0 && (
           <div className="mt-3 px-4 py-3 border border-yellow-500/30 rounded-xl bg-yellow-500/5">
             <p className="text-xs font-semibold text-yellow-500 mb-1">
-              {exportResult.warnings.length} thing
-              {exportResult.warnings.length === 1 ? "" : "s"} to check
+              {exportWarnings.length} thing{exportWarnings.length === 1 ? "" : "s"} to check
             </p>
             <ul className="text-xs text-gray-400 space-y-0.5 list-disc list-inside">
-              {exportResult.warnings.map((w, i) => (
+              {exportWarnings.map((w, i) => (
                 <li key={i}>{w}</li>
               ))}
             </ul>
