@@ -37,6 +37,45 @@ interface ExportResult {
   warnings: string[];
 }
 
+interface AccuSession {
+  classCode: string;
+  className: string;
+  raceDate: string | null;
+  qualifiers: number;
+  qualSessions: number;
+  elimRounds: string[];
+  drivers: number;
+  treeBase: number;
+  warnings: string[];
+}
+
+interface AccuTextFile {
+  filename: string;
+  category: string;
+  content?: string;
+  rounds?: string[];
+  pairs?: number;
+  runs?: number;
+  enriched?: number;
+}
+
+interface AccuResult {
+  sessions: AccuSession[];
+  edat: (AccuTextFile & { content: string })[];
+  qdat: (AccuTextFile & { content: string })[];
+  finalsPdfBase64: string | null;
+  qualifyingPdfBase64: string | null;
+  coverage: { category: string; enriched: number; runs: number }[];
+  warnings: string[];
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 // EData is a DOS-era format — encode downloads as latin1 bytes, like the
 // import path reads them.
 function edataBytes(content: string): Uint8Array {
@@ -81,6 +120,12 @@ export default function EdataPage() {
   // Guards against a slow response for a previously typed event landing after
   // a newer one.
   const exportFetchSeq = useRef(0);
+
+  const [accuUploading, setAccuUploading] = useState(false);
+  const [accuResult, setAccuResult] = useState<AccuResult | null>(null);
+  const [accuError, setAccuError] = useState("");
+  const [accuDragOver, setAccuDragOver] = useState(false);
+  const accuFileRef = useRef<HTMLInputElement>(null);
 
   // Default to the loaded event so the common case needs no typing.
   useEffect(() => {
@@ -212,6 +257,49 @@ export default function EdataPage() {
       else next.add(filename);
       return next;
     });
+  }
+
+  async function handleAccuUpload(files: File[]) {
+    const valid = files.filter((f) => /\.(acc|dat|qly|ini|dbf)$/i.test(f.name));
+    if (valid.length === 0) {
+      setAccuError("Upload AccuTime files: .acc, or the .dat / .qly / Class.ini / Drivers.dbf set.");
+      return;
+    }
+    setAccuUploading(true);
+    setAccuError("");
+    setAccuResult(null);
+    try {
+      const form = new FormData();
+      for (const f of valid) form.append("files", f);
+      if (live.config?.eventName) form.append("event_name", live.config.eventName);
+      if (eventCode.trim()) form.append("event_code", eventCode.trim());
+      if (season.trim()) form.append("season", season.trim());
+      const res = await fetch("/api/accutime-export", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "AccuTime export failed");
+      setAccuResult(body as AccuResult);
+    } catch (err) {
+      setAccuError(err instanceof Error ? err.message : "AccuTime export failed");
+    } finally {
+      setAccuUploading(false);
+      if (accuFileRef.current) accuFileRef.current.value = "";
+    }
+  }
+
+  function accuAllEntries(): Record<string, Uint8Array> {
+    const entries: Record<string, Uint8Array> = {};
+    if (!accuResult) return entries;
+    for (const f of accuResult.edat) entries[f.filename] = edataBytes(f.content);
+    for (const f of accuResult.qdat) entries[f.filename] = edataBytes(f.content);
+    if (accuResult.finalsPdfBase64) entries["FinalRoundResults.pdf"] = base64ToBytes(accuResult.finalsPdfBase64);
+    if (accuResult.qualifyingPdfBase64) entries["Qualifying.pdf"] = base64ToBytes(accuResult.qualifyingPdfBase64);
+    return entries;
+  }
+
+  function handleDownloadAccuZip() {
+    const entries = accuAllEntries();
+    if (Object.keys(entries).length === 0) return;
+    downloadBytes("RACEDATA.zip", zipSync(entries), "application/zip");
   }
 
   function handleDownloadEdata() {
@@ -598,6 +686,165 @@ export default function EdataPage() {
             </p>
             <ul className="text-xs text-gray-400 space-y-0.5 list-disc list-inside">
               {exportWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* ——— AccuTime export: build the whole Compulink package from the
+          timing computer's own session files ——— */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
+        <div className="mb-2">
+          <h2 className="text-white font-bold text-lg">AccuTime export</h2>
+          <p className="text-xs text-gray-400 mt-1 max-w-2xl">
+            Drop an AccuTime session and get the full Compulink package: qualifying{" "}
+            <span className="font-mono">*QDAT.TXT</span>, eliminations{" "}
+            <span className="font-mono">*EDAT.TXT</span>, a StarTrak qualifying PDF and the Final
+            Round Results PDF (with each class&apos;s round-by-round elimination page). Upload the{" "}
+            <span className="font-mono">.acc</span> archive, or the{" "}
+            <span className="font-mono">.dat</span> / <span className="font-mono">.qly</span> /{" "}
+            <span className="font-mono">Class.ini</span> / <span className="font-mono">Drivers.dbf</span>{" "}
+            files directly. Member #, city, body and engine merge from the session&apos;s own driver
+            database and the shared tech cards.
+          </p>
+        </div>
+
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setAccuDragOver(true);
+          }}
+          onDragLeave={() => setAccuDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setAccuDragOver(false);
+            handleAccuUpload(Array.from(e.dataTransfer.files));
+          }}
+          onClick={() => accuFileRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl px-6 py-8 text-center cursor-pointer transition-colors ${
+            accuDragOver ? "border-nhra-red bg-nhra-red/5" : "border-nhra-border hover:border-gray-600"
+          }`}
+        >
+          <input
+            ref={accuFileRef}
+            type="file"
+            multiple
+            accept=".acc,.dat,.qly,.ini,.dbf,.ACC,.DAT,.QLY,.INI,.DBF"
+            className="hidden"
+            onChange={(e) => handleAccuUpload(Array.from(e.target.files || []))}
+          />
+          <p className="text-white font-medium mb-1">
+            {accuUploading ? "Building the export package…" : "Drop AccuTime session files here"}
+          </p>
+          <p className="text-xs text-gray-500">
+            race.acc, or race.dat + race.qly + Class.ini + Drivers.dbf
+          </p>
+        </div>
+
+        {accuError && (
+          <div className="mt-3 bg-red-500/10 border border-red-500/40 text-red-400 rounded-xl px-4 py-3 text-sm">
+            {accuError}
+          </div>
+        )}
+
+        {accuResult && accuResult.sessions.length > 0 && (
+          <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-sm text-white font-semibold">
+                {accuResult.sessions.length} session
+                {accuResult.sessions.length === 1 ? "" : "s"} ·{" "}
+                {accuResult.edat.length} EDAT · {accuResult.qdat.length} QDAT ·{" "}
+                {[accuResult.finalsPdfBase64 && "finals PDF", accuResult.qualifyingPdfBase64 && "qualifying PDF"]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              <button
+                onClick={handleDownloadAccuZip}
+                className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
+              >
+                Download RACEDATA.zip
+              </button>
+            </div>
+            <div className="divide-y divide-nhra-border/60">
+              {accuResult.sessions.map((s) => {
+                const cov = accuResult.coverage.find((c) => c.category === s.className);
+                return (
+                  <div key={s.className} className="px-4 py-2.5 text-sm">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span className="text-white font-medium">
+                        {s.className} <span className="text-gray-500">({s.classCode})</span>
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {s.qualifiers} qualifiers · {s.qualSessions} sessions ·{" "}
+                        {s.elimRounds.length ? s.elimRounds.join(" ") : "no elim rounds"}
+                        {cov ? ` · tech cards ${cov.enriched}/${cov.runs}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Individual downloads */}
+            <div className="px-4 py-3 bg-nhra-darker/40 border-t border-nhra-border flex flex-wrap gap-2">
+              {accuResult.edat.map((f) => (
+                <button
+                  key={f.filename}
+                  onClick={() => downloadBytes(f.filename, edataBytes(f.content), "text/plain")}
+                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 font-mono"
+                >
+                  {f.filename}
+                </button>
+              ))}
+              {accuResult.qdat.map((f) => (
+                <button
+                  key={f.filename}
+                  onClick={() => downloadBytes(f.filename, edataBytes(f.content), "text/plain")}
+                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500 font-mono"
+                >
+                  {f.filename}
+                </button>
+              ))}
+              {accuResult.finalsPdfBase64 && (
+                <button
+                  onClick={() =>
+                    downloadBytes(
+                      "FinalRoundResults.pdf",
+                      base64ToBytes(accuResult.finalsPdfBase64!),
+                      "application/pdf",
+                    )
+                  }
+                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500"
+                >
+                  Final Round Results PDF
+                </button>
+              )}
+              {accuResult.qualifyingPdfBase64 && (
+                <button
+                  onClick={() =>
+                    downloadBytes(
+                      "Qualifying.pdf",
+                      base64ToBytes(accuResult.qualifyingPdfBase64!),
+                      "application/pdf",
+                    )
+                  }
+                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500"
+                >
+                  Qualifying PDF
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {accuResult && accuResult.warnings.length > 0 && (
+          <div className="mt-3 px-4 py-3 border border-yellow-500/30 rounded-xl bg-yellow-500/5">
+            <p className="text-xs font-semibold text-yellow-500 mb-1">
+              {accuResult.warnings.length} note{accuResult.warnings.length === 1 ? "" : "s"}
+            </p>
+            <ul className="text-xs text-gray-400 space-y-0.5 list-disc list-inside">
+              {accuResult.warnings.map((w, i) => (
                 <li key={i}>{w}</li>
               ))}
             </ul>
