@@ -39,19 +39,27 @@ export async function POST(request: NextRequest) {
     const seriesHeader = (form.get("series_header") as string) || "";
 
     // Header logos: PNG/JPEG data URLs the client rasterized, one per slot of
-    // the three-logo row (left / event / right). Anything else is ignored so a
-    // bad value can't break the PDFs.
-    const logo = (field: string): string | undefined => {
+    // the three-logo row (left / event / right). A bad value can't break the
+    // PDFs — but a skipped logo is reported, never dropped silently (that
+    // silence was half of the "logos missing from the finals PDF" bug).
+    const logoWarnings: string[] = [];
+    const logo = (field: string, label: string): string | undefined => {
       const v = form.get(field);
-      if (typeof v !== "string") return undefined;
-      if (!/^data:image\/(png|jpe?g);base64,/.test(v)) return undefined;
-      if (v.length > 3_000_000) return undefined;
+      if (v === null) return undefined;
+      if (typeof v !== "string" || !/^data:image\/(png|jpe?g);base64,/.test(v)) {
+        logoWarnings.push(`${label} header logo isn't a PNG/JPEG image — the PDFs print without it.`);
+        return undefined;
+      }
+      if (v.length > 3_000_000) {
+        logoWarnings.push(`${label} header logo is too large — the PDFs print without it. Re-add it with a smaller image.`);
+        return undefined;
+      }
       return v;
     };
     const logos = {
-      left: logo("logo_left"),
-      center: logo("logo_center"),
-      right: logo("logo_right"),
+      left: logo("logo_left", "Left"),
+      center: logo("logo_center", "Event"),
+      right: logo("logo_right", "Right"),
     };
 
     if (files.length === 0) {
@@ -120,7 +128,7 @@ export async function POST(request: NextRequest) {
         points: artifacts.points,
         pointsSkipped: artifacts.pointsSkipped,
         idx: artifacts.idx,
-        warnings: [...parseWarnings, ...artifacts.warnings],
+        warnings: [...parseWarnings, ...artifacts.warnings, ...logoWarnings],
       },
       { headers: NO_STORE_HEADERS },
     );
