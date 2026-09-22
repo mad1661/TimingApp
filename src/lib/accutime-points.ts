@@ -62,6 +62,20 @@ const ALCOHOL_CLASS_CODES = new Set(["TAD", "TAFC"]);
 
 // Held off for now per Mark: no points for the pro categories — their
 // QDAT/EDAT/PDF exports still build.
+//
+// When pro scoring gets built, use the NHRA Mission Foods system (source:
+// nhra.com/how-points-are-earned/nhra-mission-foods-drag-racing-series-points),
+// which differs from the sportsman tables above in every part:
+//   Regular season — rounds W 100 / RU 80 / R3 60 / R2 40 / R1 20;
+//   participation 10 (one valid qual attempt: stage under power + take the
+//   Tree); qual position 1st 8, 2nd 7, 3rd 6, 4th 5, 5-6th 4, 7-8th 3,
+//   9-12th 2, 13-16th 1; per-session ET bonus 3/2/1 (none if the session is
+//   incomplete).
+//   Indy (U.S. Nationals) — W 150 / RU 120 / R3 90 / R2 60 / R1 30;
+//   participation 15; qual 10 down to 3; session bonus 4/3/2/1.
+//   Countdown — regular scale except Pomona 2 uses the Indy scale; the
+//   post-Indy reset seeds 1st 2100, 2nd 2080, then −10 per spot (10th 2000,
+//   11th+ keep stepping −10).
 export const PRO_CLASS_CODES = new Set(["TF", "FC", "PS", "PSM", "TFM", "MMPS", "PM"]);
 
 function bracketFor(table: PointsBracket[], fieldSize: number): PointsBracket {
