@@ -67,7 +67,7 @@ export function parseTechCardWorkbook(buffer: Buffer, eventName: string): TechCa
       engine_year: get(["Engine Year", "Engine_Year", "engine_year"]),
       body_type: get(["Body Type", "Body_Type", "body_type", "Body Typ", "vehiclemodel"]),
       body_year: get(["Body Year", "Body_Year", "body_year", "vehicleyear"]),
-      cu_cc: get(["CU/CC", "CUCC", "cu_cc", "CU CC", "enginesize"]),
+      cu_cc: get(["CU/CC", "CUCC", "cu_cc", "CU CC", "CUI/CC", "CUI", "CID", "Cubic Inches", "enginesize"]),
       hp: get(["HP", "hp", "Horsepower", "horsepower"]),
       factored_hp: get(["Factored HP", "Factored_HP", "factored_hp"]),
       member_number: get(["Member #", "Member", "member_number", "Membership", "Member Number", "nhramember"]),

@@ -66,6 +66,13 @@ export default function EdataPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [tcUploading, setTcUploading] = useState(false);
+  const [tcResult, setTcResult] = useState<{ files: number; total: number; saved: number } | null>(
+    null,
+  );
+  const [tcError, setTcError] = useState("");
+  const tcFileRef = useRef<HTMLInputElement>(null);
+
   const [exportLoading, setExportLoading] = useState(false);
   const [exportFiles, setExportFiles] = useState<ExportFile[] | null>(null);
   const [exportWarnings, setExportWarnings] = useState<string[]>([]);
@@ -114,6 +121,42 @@ export default function EdataPage() {
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function handleTechCardUpload(files: File[]) {
+    const valid = files.filter((f) => /\.(xlsx|xls|csv)$/i.test(f.name));
+    if (valid.length === 0) {
+      setTcError("Tech cards are the Compulink .xlsx / .csv exports.");
+      return;
+    }
+    setTcUploading(true);
+    setTcError("");
+    setTcResult(null);
+    try {
+      let total = 0;
+      let saved = 0;
+      for (const f of valid) {
+        const form = new FormData();
+        form.append("file", f);
+        // Tag with the loaded event so the cards scope to it; untagged cards
+        // still enrich everything.
+        if (live.config?.eventName) form.append("event_name", live.config.eventName);
+        const res = await fetch("/api/tech-cards", { method: "POST", body: form });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ? `${f.name}: ${body.error}` : `${f.name}: upload failed`);
+        total += body.total || 0;
+        saved += body.saved || 0;
+      }
+      setTcResult({ files: valid.length, total, saved });
+      // Rebuild the class list so names and tech-card coverage pick up the
+      // fresh cards immediately.
+      if (eventCode.trim() && season.trim()) loadExportClasses(eventCode.trim(), season.trim());
+    } catch (err) {
+      setTcError(err instanceof Error ? err.message : "Tech card upload failed");
+    } finally {
+      setTcUploading(false);
+      if (tcFileRef.current) tcFileRef.current.value = "";
     }
   }
 
@@ -371,29 +414,51 @@ export default function EdataPage() {
           <div>
             <h2 className="text-white font-bold text-lg">Export EDAT / RACEDATA</h2>
             <p className="text-xs text-gray-400 mt-1 max-w-xl">
-              Tick the classes you want, then Download EDAT — one C#EDAT.TXT for a single class,
-              a RACEDATA.zip when several are picked. The list shows every class with elimination
-              rounds on file for the event code and season above. Member numbers, full names,
-              city, body and engine merge in from the event&apos;s tech cards where a car (or driver
-              name) matches; only rounds already on file are written, nothing is invented. Pairs
-              are left lane then right; rounds imported from EData (no lanes) are written
-              winner-first, CompuLink&apos;s own convention.
+              Import the tech cards, tick the classes you want, then Download EDAT — one
+              C#EDAT.TXT for a single class, a RACEDATA.zip when several are picked. The list
+              shows every class with elimination rounds on file for the event code and season
+              above. Full names, member numbers, city, body and engine merge in from the tech
+              cards, matched within each class by car number (or driver name); only rounds
+              already on file are written, nothing is invented. Pairs are left lane then right;
+              rounds imported from EData (no lanes) are written winner-first, CompuLink&apos;s own
+              convention.
             </p>
           </div>
+        </div>
+
+        {/* Step 1: tech cards — the entry records that turn a bare timing row
+            into full name / city / body / engine. */}
+        <div className="mt-4 border border-nhra-border rounded-xl px-4 py-3 bg-nhra-darker/50 flex items-center justify-between gap-4 flex-wrap">
+          <div className="min-w-[16rem] flex-1">
+            <p className="text-sm text-white font-semibold">1 · Import tech cards</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              The Compulink tech-card export (.xlsx / .csv) with car number, name, city/state,
+              member #, class, body and engine. Without it the files carry only what the timing
+              system shows — often just an abbreviated name.
+            </p>
+            {tcResult && (
+              <p className="text-xs text-green-400 mt-1">
+                {tcResult.total} card{tcResult.total === 1 ? "" : "s"} imported from{" "}
+                {tcResult.files} file{tcResult.files === 1 ? "" : "s"} ({tcResult.saved} new or
+                updated).
+              </p>
+            )}
+            {tcError && <p className="text-xs text-red-400 mt-1">{tcError}</p>}
+          </div>
+          <input
+            ref={tcFileRef}
+            type="file"
+            multiple
+            accept=".xlsx,.XLSX,.xls,.XLS,.csv,.CSV"
+            className="hidden"
+            onChange={(e) => handleTechCardUpload(Array.from(e.target.files || []))}
+          />
           <button
-            onClick={handleDownloadEdata}
-            disabled={selectedClasses.size === 0}
-            className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
-            title={
-              selectedClasses.size > 1
-                ? "Downloads the selected classes as RACEDATA.zip"
-                : "Downloads the selected class's EDAT file"
-            }
+            onClick={() => tcFileRef.current?.click()}
+            disabled={tcUploading}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500 disabled:opacity-40"
           >
-            Download EDAT
-            {selectedClasses.size > 0
-              ? ` (${selectedClasses.size} ${selectedClasses.size === 1 ? "class" : "classes → zip"})`
-              : ""}
+            {tcUploading ? "Importing…" : "Import tech cards"}
           </button>
         </div>
 
@@ -417,8 +482,8 @@ export default function EdataPage() {
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
               <p className="text-xs text-gray-400">
-                {selectedClasses.size} of {exportFiles.length} class
-                {exportFiles.length === 1 ? "" : "es"} selected ·{" "}
+                <span className="text-white font-semibold">2 · Pick classes</span> —{" "}
+                {selectedClasses.size} of {exportFiles.length} selected ·{" "}
                 {exportFiles
                   .filter((f) => selectedClasses.has(f.filename))
                   .reduce((n, f) => n + f.pairs, 0)}{" "}
@@ -489,6 +554,40 @@ export default function EdataPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {!exportLoading && exportFiles && exportFiles.length > 0 && (
+          <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
+            {(() => {
+              const totalRuns = exportFiles.reduce((n, f) => n + f.runs, 0);
+              const missing = totalRuns - exportFiles.reduce((n, f) => n + f.enriched, 0);
+              return missing > 0 ? (
+                <p className="text-xs text-yellow-500">
+                  {missing} of {totalRuns} runs missing tech cards — those rows export with only
+                  what the timing system shows. Import tech cards above to fill them.
+                </p>
+              ) : (
+                <p className="text-xs text-green-400">
+                  Every run has a tech card — full names and entry details included.
+                </p>
+              );
+            })()}
+            <button
+              onClick={handleDownloadEdata}
+              disabled={selectedClasses.size === 0}
+              className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
+              title={
+                selectedClasses.size > 1
+                  ? "Downloads the selected classes as RACEDATA.zip"
+                  : "Downloads the selected class's EDAT file"
+              }
+            >
+              3 · Download EDAT
+              {selectedClasses.size > 0
+                ? ` (${selectedClasses.size === 1 ? "1 class" : `${selectedClasses.size} classes → zip`})`
+                : ""}
+            </button>
           </div>
         )}
 
