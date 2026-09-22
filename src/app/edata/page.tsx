@@ -3,6 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import { strToU8, zipSync } from "fflate";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { RACE_CLASSES } from "@/lib/schedule-classes";
+
+// Class picker options for sessions whose Class.ini carries no code: real
+// racing classes only (the schedule placeholders — Secure "X", Track Prep… —
+// are not timing classes), one entry per code.
+const ACCU_CLASS_OPTIONS: { code: string; name: string }[] = (() => {
+  const seen = new Set<string>();
+  const out: { code: string; name: string }[] = [];
+  for (const c of RACE_CLASSES) {
+    if (!c.isRacing) continue;
+    const code = c.code.trim().toUpperCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    out.push({ code, name: c.name.toUpperCase() });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+})();
 
 interface PerFile {
   name: string;
@@ -40,6 +57,7 @@ interface ExportResult {
 interface AccuSession {
   classCode: string;
   className: string;
+  seriesName: string | null;
   raceDate: string | null;
   qualifiers: number;
   qualSessions: number;
@@ -80,6 +98,82 @@ function base64ToBytes(b64: string): Uint8Array {
 // import path reads them.
 function edataBytes(content: string): Uint8Array {
   return strToU8(content, true);
+}
+
+interface AccuEntry {
+  file: File;
+  path: string;
+}
+
+// ——— Header logos: the racedata-zip-to-pdf three-slot row (left / event /
+// right), stamped across the top of the qualifying + Final Round Results
+// PDFs. Kept in localStorage so the logos survive a refresh. ———
+
+type AccuLogoSlot = "left" | "center" | "right";
+
+const ACCU_LOGO_SLOTS: { key: AccuLogoSlot; label: string; align: string }[] = [
+  { key: "left", label: "Click to add left logo", align: "justify-start" },
+  { key: "center", label: "Click to add event logo", align: "justify-center" },
+  { key: "right", label: "Click to add right logo", align: "justify-end" },
+];
+
+const ACCU_LOGOS_LS_KEY = "timindata_accutime_logos";
+
+// Rasterize any picked image (PNG / JPG / WebP / SVG) to a PNG data URL jsPDF
+// can embed, capped so a header logo stays a sane size.
+async function fileToLogoDataUrl(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("unreadable image"));
+      el.src = url;
+    });
+    const natW = img.naturalWidth || 600;
+    const natH = img.naturalHeight || 210;
+    const scale = Math.min(1, 1600 / natW, 420 / natH);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(natW * scale));
+    canvas.height = Math.max(1, Math.round(natH * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas unavailable");
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Folder drops arrive as directory entries, and which folder a file came from
+// is a class-grouping signal server-side — so the drop is walked recursively
+// and every file keeps its relative path.
+async function collectAccuDrop(dt: DataTransfer): Promise<AccuEntry[]> {
+  const entries = Array.from(dt.items || []).map((it) =>
+    typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null,
+  );
+  if (!entries.some(Boolean)) {
+    return Array.from(dt.files).map((f) => ({ file: f, path: f.webkitRelativePath || f.name }));
+  }
+  const out: AccuEntry[] = [];
+  async function walk(entry: FileSystemEntry, prefix: string): Promise<void> {
+    if (entry.isFile) {
+      const file = await new Promise<File>((res, rej) =>
+        (entry as FileSystemFileEntry).file(res, rej),
+      );
+      out.push({ file, path: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      // readEntries returns results in chunks — keep reading until empty.
+      let batch: FileSystemEntry[];
+      do {
+        batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
+        for (const e of batch) await walk(e, `${prefix + entry.name}/`);
+      } while (batch.length > 0);
+    }
+  }
+  for (const e of entries) if (e) await walk(e, "");
+  return out;
 }
 
 function downloadBytes(filename: string, bytes: Uint8Array, mime: string) {
@@ -130,6 +224,54 @@ export default function EdataPage() {
   );
   const [accuDragOver, setAccuDragOver] = useState(false);
   const accuFileRef = useRef<HTMLInputElement>(null);
+  // The uploaded session files are kept so the package can be rebuilt with a
+  // picked class or an edited series header without re-dropping them.
+  const accuFilesRef = useRef<AccuEntry[]>([]);
+  const [accuSeries, setAccuSeries] = useState("");
+  const accuSeriesEdited = useRef(false);
+  const [accuClassPick, setAccuClassPick] = useState("");
+  const [accuLogos, setAccuLogos] = useState<Record<AccuLogoSlot, string | null>>({
+    left: null,
+    center: null,
+    right: null,
+  });
+  const accuLogoInputRef = useRef<HTMLInputElement>(null);
+  const accuLogoSlotRef = useRef<AccuLogoSlot>("left");
+
+  // Restore the last-used header logos.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(ACCU_LOGOS_LS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<Record<AccuLogoSlot, unknown>>;
+      const pick = (v: unknown) => (typeof v === "string" && v.startsWith("data:image/") ? v : null);
+      setAccuLogos({ left: pick(parsed.left), center: pick(parsed.center), right: pick(parsed.right) });
+    } catch {
+      // corrupt store — start clean
+    }
+  }, []);
+
+  function updateLogo(slot: AccuLogoSlot, dataUrl: string | null) {
+    const next = { ...accuLogos, [slot]: dataUrl };
+    setAccuLogos(next);
+    try {
+      localStorage.setItem(ACCU_LOGOS_LS_KEY, JSON.stringify(next));
+    } catch {
+      // quota full — the logos still apply for this session
+    }
+  }
+
+  async function handleLogoPick(files: FileList | null) {
+    const f = files?.[0];
+    if (!f) return;
+    try {
+      updateLogo(accuLogoSlotRef.current, await fileToLogoDataUrl(f));
+    } catch {
+      setAccuError(`${f.name}: couldn't be read as an image.`);
+    } finally {
+      if (accuLogoInputRef.current) accuLogoInputRef.current.value = "";
+    }
+  }
 
   // Default to the loaded event so the common case needs no typing.
   useEffect(() => {
@@ -289,14 +431,14 @@ export default function EdataPage() {
     });
   }
 
-  async function handleAccuUpload(files: File[]) {
+  async function handleAccuUpload(entries: AccuEntry[]) {
     // .acc is AccuTime's password-locked archive — it can't be opened here, so
     // it's dropped from the upload with a note rather than failing everything.
-    const accFiles = files.filter((f) => /\.acc$/i.test(f.name));
-    const valid = files.filter((f) => /\.(dat|qly|ini|dbf|zip)$/i.test(f.name));
+    const accFiles = entries.filter((e) => /\.acc$/i.test(e.path));
+    const valid = entries.filter((e) => /\.(dat|qly|ini|dbf|zip)$/i.test(e.path));
     setAccuNote(
       accFiles.length > 0
-        ? `${accFiles.map((f) => f.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use the loose .qly / .dat / Class.ini / Drivers.dbf files from the same folder instead.`
+        ? `${accFiles.map((e) => e.file.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use the loose .qly / .dat / Class.ini / Drivers.dbf files from the same folder instead.`
         : "",
     );
     if (valid.length === 0) {
@@ -308,16 +450,24 @@ export default function EdataPage() {
       if (accuFileRef.current) accuFileRef.current.value = "";
       return;
     }
+    accuFilesRef.current = valid;
     setAccuUploading(true);
     setAccuError("");
     setAccuResult(null);
     setAccuProgress({ stage: "Uploading session files…", pct: 0 });
     try {
       const form = new FormData();
-      for (const f of valid) form.append("files", f);
+      // The relative path rides along as the filename — which folder a file
+      // came from tells the server which class session it belongs to.
+      for (const e of valid) form.append("files", e.file, e.path);
       if (live.config?.eventName) form.append("event_name", live.config.eventName);
       if (eventCode.trim()) form.append("event_code", eventCode.trim());
       if (season.trim()) form.append("season", season.trim());
+      if (accuClassPick) form.append("class_code", accuClassPick);
+      if (accuSeries.trim()) form.append("series_header", accuSeries.trim());
+      if (accuLogos.left) form.append("logo_left", accuLogos.left);
+      if (accuLogos.center) form.append("logo_center", accuLogos.center);
+      if (accuLogos.right) form.append("logo_right", accuLogos.right);
       const { ok, body } = await postAccuForm(form, (pct) => {
         if (pct !== null && pct < 1) {
           setAccuProgress({ stage: "Uploading session files…", pct });
@@ -327,7 +477,14 @@ export default function EdataPage() {
         }
       });
       if (!ok) throw new Error((body.error as string) || "AccuTime export failed");
-      setAccuResult(body as unknown as AccuResult);
+      const parsed = body as unknown as AccuResult;
+      setAccuResult(parsed);
+      // Prefill the header field with the session's own series title (Class.ini
+      // [Reports]) unless the user already typed one.
+      if (!accuSeriesEdited.current) {
+        const s = parsed.sessions.find((x) => x.seriesName)?.seriesName;
+        if (s) setAccuSeries(s);
+      }
     } catch (err) {
       setAccuError(err instanceof Error ? err.message : "AccuTime export failed");
     } finally {
@@ -750,17 +907,112 @@ export default function EdataPage() {
         <div className="mb-2">
           <h2 className="text-white font-bold text-lg">AccuTime export</h2>
           <p className="text-xs text-gray-400 mt-1 max-w-2xl">
-            Drop an AccuTime session and get the full Compulink package: qualifying{" "}
-            <span className="font-mono">*QDAT.TXT</span>, eliminations{" "}
-            <span className="font-mono">*EDAT.TXT</span>, a StarTrak qualifying PDF and the Final
-            Round Results PDF (with each class&apos;s round-by-round elimination page). Upload the{" "}
+            Drop AccuTime sessions and get the full package: Compulink-compatible qualifying{" "}
+            <span className="font-mono">*QDAT.TXT</span> and eliminations{" "}
+            <span className="font-mono">*EDAT.TXT</span>, plus an AccuTime-branded qualifying PDF
+            and Final Round Results PDF (with each class&apos;s round-by-round elimination page).
+            Upload the{" "}
             <span className="font-mono">.dat</span> / <span className="font-mono">.qly</span> /{" "}
             <span className="font-mono">Class.ini</span> / <span className="font-mono">Drivers.dbf</span>{" "}
             files from the session folder (a zip of them works too). The{" "}
             <span className="font-mono">.acc</span> archive is password-locked and isn&apos;t
-            needed — the loose files carry the same data. Member #, city, body and engine merge
-            from the session&apos;s own driver database and the shared tech cards.
+            needed — the loose files carry the same data. Several classes can go in one drop:
+            one folder or zip per class, or matching names (FC.dat + FC.qly + FC-Class.ini).
+            Member #, city, body and engine merge from the session&apos;s own driver database and
+            the shared tech cards.
           </p>
+        </div>
+
+        {/* Header logos — the same three-slot row as the Final Round Results
+            Builder, printed across the top of both PDFs. */}
+        <input
+          ref={accuLogoInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleLogoPick(e.target.files)}
+        />
+        <p className="text-xs text-gray-400 mb-1.5">
+          Sheet header logos <span className="text-gray-500">— print across the top of the qualifying and Final Round Results PDFs; leave empty for text-only headers</span>
+        </p>
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {ACCU_LOGO_SLOTS.map((slot) => {
+            const img = accuLogos[slot.key];
+            return (
+              <div key={slot.key} className="relative group">
+                <button
+                  onClick={() => {
+                    accuLogoSlotRef.current = slot.key;
+                    accuLogoInputRef.current?.click();
+                  }}
+                  className={`w-full h-[105px] rounded-xl flex items-center px-2 transition-colors ${
+                    img
+                      ? `${slot.align} border border-nhra-border/60 bg-white/[0.03] hover:border-gray-600`
+                      : "justify-center border-2 border-dashed border-nhra-border hover:border-gray-600"
+                  }`}
+                  title={img ? "Click to replace this logo" : slot.label}
+                >
+                  {img ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={img}
+                      alt={`${slot.key} logo`}
+                      className="max-h-[97px] max-w-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs text-gray-500">{slot.label}</span>
+                  )}
+                </button>
+                {img && (
+                  <button
+                    onClick={() => updateLogo(slot.key, null)}
+                    className="absolute top-1.5 right-1.5 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-black/70 border border-nhra-border text-gray-300 hover:text-white text-xs"
+                    title="Remove this logo"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <label className="text-xs text-gray-400 flex-1 min-w-[16rem]">
+            Header / series line (PDF banner)
+            <input
+              value={accuSeries}
+              onChange={(e) => {
+                accuSeriesEdited.current = true;
+                setAccuSeries(e.target.value);
+              }}
+              placeholder="prefills from Class.ini — e.g. NHRA Mission Foods Drag Racing Series"
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+            />
+          </label>
+          <label className="text-xs text-gray-400 w-64">
+            Class when Class.ini has none
+            <select
+              value={accuClassPick}
+              onChange={(e) => setAccuClassPick(e.target.value)}
+              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white"
+            >
+              <option value="">— pick a class —</option>
+              {ACCU_CLASS_OPTIONS.map((o) => (
+                <option key={`${o.code}-${o.name}`} value={o.code}>
+                  {o.name} ({o.code})
+                </option>
+              ))}
+            </select>
+          </label>
+          {accuFilesRef.current.length > 0 && !accuUploading && (
+            <button
+              onClick={() => handleAccuUpload(accuFilesRef.current)}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500"
+            >
+              Rebuild package
+            </button>
+          )}
         </div>
 
         <div
@@ -772,7 +1024,7 @@ export default function EdataPage() {
           onDrop={(e) => {
             e.preventDefault();
             setAccuDragOver(false);
-            handleAccuUpload(Array.from(e.dataTransfer.files));
+            void collectAccuDrop(e.dataTransfer).then(handleAccuUpload);
           }}
           onClick={() => accuFileRef.current?.click()}
           className={`border-2 border-dashed rounded-xl px-6 py-8 text-center cursor-pointer transition-colors ${
@@ -785,13 +1037,21 @@ export default function EdataPage() {
             multiple
             accept=".dat,.qly,.ini,.dbf,.zip,.DAT,.QLY,.INI,.DBF,.ZIP"
             className="hidden"
-            onChange={(e) => handleAccuUpload(Array.from(e.target.files || []))}
+            onChange={(e) =>
+              handleAccuUpload(
+                Array.from(e.target.files || []).map((f) => ({
+                  file: f,
+                  path: f.webkitRelativePath || f.name,
+                })),
+              )
+            }
           />
           <p className="text-white font-medium mb-1">
             {accuUploading ? "Working…" : "Drop AccuTime session files here"}
           </p>
           <p className="text-xs text-gray-500">
-            race.dat + race.qly + Class.ini + Drivers.dbf — no .acc needed, it&apos;s locked
+            race.dat + race.qly + Class.ini + Drivers.dbf — folders and zips welcome; no .acc
+            needed, it&apos;s locked
           </p>
         </div>
 
@@ -830,6 +1090,16 @@ export default function EdataPage() {
           </div>
         )}
 
+        {accuResult && accuResult.sessions.some((s) => !s.classCode) && (
+          <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
+            {accuResult.sessions.filter((s) => !s.classCode).length === accuResult.sessions.length
+              ? "No class code was found in the session files"
+              : "A session came through without a class code"}{" "}
+            — Class.ini normally carries it. Pick the class above and hit Rebuild package;
+            until then those files export with the class marked UNKNOWN.
+          </div>
+        )}
+
         {accuResult && accuResult.sessions.length > 0 && (
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
@@ -849,13 +1119,13 @@ export default function EdataPage() {
               </button>
             </div>
             <div className="divide-y divide-nhra-border/60">
-              {accuResult.sessions.map((s) => {
+              {accuResult.sessions.map((s, i) => {
                 const cov = accuResult.coverage.find((c) => c.category === s.className);
                 return (
-                  <div key={s.className} className="px-4 py-2.5 text-sm">
+                  <div key={`${s.className}-${i}`} className="px-4 py-2.5 text-sm">
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <span className="text-white font-medium">
-                        {s.className} <span className="text-gray-500">({s.classCode})</span>
+                        {s.className} <span className="text-gray-500">({s.classCode || "?"})</span>
                       </span>
                       <span className="text-xs text-gray-400">
                         {s.qualifiers} qualifiers · {s.qualSessions} sessions ·{" "}

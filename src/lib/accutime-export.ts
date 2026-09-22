@@ -22,6 +22,7 @@ import {
   buildQualifyingPdf,
   type PdfCategory,
   type PdfEvent,
+  type PdfLogos,
   type PdfRoundRow,
   type QualPdfCategory,
 } from "./racedata-pdf";
@@ -61,7 +62,7 @@ function toEdataCard(tc: EdataTechCard): EdataTechCard {
 export function buildAccuTimeArtifacts(
   sessions: AccuTimeSession[],
   storedTechCards: EdataTechCard[],
-  opts: { eventName?: string } = {},
+  opts: { eventName?: string; seriesHeader?: string; logos?: PdfLogos } = {},
 ): AccuTimeArtifacts {
   const warnings: string[] = [];
 
@@ -138,7 +139,7 @@ export function buildAccuTimeArtifacts(
     if (qEntries.length) {
       qualCats.push({
         name: session.className,
-        brand: "CompuLink StarTrak",
+        brand: "AccuTime",
         lowEt: session.lowEt ? `${session.lowEt.et.toFixed(3)}  ${session.lowEt.car} ${session.lowEt.name}` : "",
         topSpeed: session.topSpeed
           ? `${session.topSpeed.mph.toFixed(2)}  ${session.topSpeed.car} ${session.topSpeed.name}`
@@ -258,17 +259,21 @@ export function buildAccuTimeArtifacts(
         });
       }
 
-      finalsCats.push({ name: session.className, brand: "CompuLink StarTrak", hasDI, rows, rounds });
+      finalsCats.push({ name: session.className, brand: "AccuTime", hasDI, rows, rounds });
     }
   });
 
   const first = ordered[0];
+  // The series banner changes per event (Lucas Oil / Mission Foods / …): the
+  // page's header field wins, then the session's own Class.ini title. Never a
+  // hardcoded default.
   const pdfEvent: PdfEvent = {
-    series: first?.seriesName || undefined,
+    series: (opts.seriesHeader || "").trim() || first?.seriesName || undefined,
     track: undefined,
     dates: first?.raceDate ? prettyDate(first.raceDate) : undefined,
     roundDate: first?.raceDate ? shortDate(first.raceDate) : undefined,
-    brand: "CompuLink StarTrak",
+    brand: "AccuTime",
+    logos: opts.logos,
   };
 
   const finalsPdf = finalsCats.length ? buildRacedataPdf(pdfEvent, finalsCats) : null;

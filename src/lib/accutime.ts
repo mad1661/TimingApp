@@ -97,6 +97,8 @@ export interface AccuTimeParseOptions {
   eventCode?: string;
   eventName?: string;
   season?: string;
+  /** Fallback class code (user-picked on the page) for sessions whose Class.ini gave none. */
+  classCode?: string;
 }
 
 interface PackFile {
@@ -144,8 +146,13 @@ function splitCsv(line: string): string[] {
   return line.split(",").map((f) => f.trim().replace(/^"(.*)"$/, "$1"));
 }
 
+// Code → name lookup for the class picker and Class.ini resolution. Racing
+// classes only: RACE_CLASSES also holds schedule placeholders ("Secure" is
+// code "X", plus Track Prep etc.), and mapping through those turned an
+// unknown-class fallback into SECURE/X on every export.
 const CLASS_NAME_BY_CODE = new Map<string, string>();
 for (const c of RACE_CLASSES) {
+  if (!c.isRacing) continue;
   const code = c.code.trim().toUpperCase();
   if (code && !CLASS_NAME_BY_CODE.has(code)) CLASS_NAME_BY_CODE.set(code, c.name.toUpperCase());
 }
@@ -176,11 +183,32 @@ export function parseClassIni(text: string): ClassIniInfo {
   const values = (name: string): string[] =>
     (sections.get(name) || []).map((l) => l.replace(/^[^=]*=/, "").trim());
 
-  // The class code is the one [Menu] value that's letters, not a number.
-  const classCode =
-    values("menu")
-      .map((v) => v.toUpperCase())
-      .find((v) => /^[A-Z][A-Z0-9/]{0,5}$/.test(v) && !/^\d+$/.test(v)) || "";
+  // The class code is the one [Menu] value that's letters, not a number
+  // (sample: "[Menu] 11=FC"). AccuTime variants may file it elsewhere, so
+  // aliased sections are tried next, then an explicit Class= key anywhere.
+  const NOT_A_CODE = new Set(["YES", "NO", "ON", "OFF", "TRUE", "FALSE", "NONE"]);
+  const looksLikeCode = (v: string) =>
+    /^[A-Z][A-Z0-9/]{0,5}$/.test(v) && !/^\d+$/.test(v) && !NOT_A_CODE.has(v);
+  let classCode = "";
+  for (const sec of ["menu", "class", "classes", "class menu"]) {
+    classCode =
+      values(sec)
+        .map((v) => v.toUpperCase())
+        .find(looksLikeCode) || "";
+    if (classCode) break;
+  }
+  if (!classCode) {
+    outer: for (const lines of sections.values()) {
+      for (const l of lines) {
+        const m = l.match(/^(?:class\s*code|class)\s*=\s*(.+)$/i);
+        const v = m ? m[1].trim().toUpperCase() : "";
+        if (v && looksLikeCode(v)) {
+          classCode = v;
+          break outer;
+        }
+      }
+    }
+  }
 
   // [Race Date] 0=20260918084551
   let raceDate: string | null = null;
@@ -442,15 +470,233 @@ function splitQualElim(
   return { qual, elim };
 }
 
+// ——— Session grouping: one drop can hold many classes ———
+
+/**
+ * Identifying stem of a filename: basename without extension, lowercased, with
+ * the generic "class" word stripped so "FC-Class.ini" and "FC.dat" agree on
+ * "fc". AccuTime's default names ("race.dat", "Class.ini", "Drivers.dbf")
+ * reduce to generic stems that identify nothing.
+ */
+function stemOf(name: string): string {
+  const base = name.split(/[\\/]/).pop() || name;
+  let stem = base.replace(/\.[^.]+$/, "").toLowerCase();
+  stem = stem.replace(/(^|[-_ .])class(?=[-_ .]|$)/g, "$1");
+  return stem.replace(/^[-_ .]+|[-_ .]+$/g, "");
+}
+
+const GENERIC_STEMS = new Set(["", "race", "drivers", "driver"]);
+
+function isIdentifying(stem: string): boolean {
+  return !GENERIC_STEMS.has(stem);
+}
+
+function isDatFile(f: PackFile): boolean {
+  return /\.dat$/i.test(f.name) && isJetDb(f.data);
+}
+function isQlyFile(f: PackFile): boolean {
+  return /\.qly$/i.test(f.name);
+}
+function isIniFile(f: PackFile): boolean {
+  return /\.ini$/i.test(f.name);
+}
+function isDbfFile(f: PackFile): boolean {
+  return /\.dbf$/i.test(f.name) || /drivers/i.test(f.name.split(/[\\/]/).pop() || "");
+}
+
+/** The class codes a Drivers db mentions (IndexClass) — a pairing signal. */
+function dbfClassCodes(data: Uint8Array): Set<string> {
+  const out = new Set<string>();
+  try {
+    const reader = new MDBReader(toBuffer(data));
+    const names = reader.getTableNames();
+    const tableName = names.find((n) => n.toLowerCase() === "drivers") || names[0];
+    if (!tableName) return out;
+    for (const row of reader.getTable(tableName).getData()) {
+      const c = String(row["IndexClass"] ?? "").trim().toUpperCase();
+      if (c) out.add(c);
+    }
+  } catch {
+    // unreadable db — no signal
+  }
+  return out;
+}
+
+interface SessionGroup {
+  label: string;
+  files: PackFile[];
+}
+
+/**
+ * Split a pile of loose files into per-class session groups. Pairing order:
+ * shared directory (folder drops and zip members carry relative paths), then
+ * matching basename stem ("FC.dat" + "FC.qly" + "FC-Class.ini", or a shared
+ * race-id like "20260918084551"), then each Class.ini's own class code against
+ * the driver db, then the only-one-left rule. Files that still can't be
+ * placed are reported in the warnings — never silently dropped — and every
+ * session that did resolve is still exported.
+ */
+function splitLooseSessions(
+  files: PackFile[],
+  topWarnings: string[],
+  baseLabel: string,
+): SessionGroup[] {
+  const byDir = new Map<string, PackFile[]>();
+  for (const f of files) {
+    const norm = f.name.replace(/\\/g, "/");
+    const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
+    const list = byDir.get(dir);
+    if (list) list.push(f);
+    else byDir.set(dir, [f]);
+  }
+  const groups: SessionGroup[] = [];
+  for (const [dir, bucket] of byDir) {
+    const label = dir ? `${baseLabel} · ${dir}` : baseLabel;
+    groups.push(...splitBucket(bucket, label, topWarnings));
+  }
+  return groups;
+}
+
+function splitBucket(bucket: PackFile[], label: string, topWarnings: string[]): SessionGroup[] {
+  const dats = bucket.filter(isDatFile);
+  const qlys = bucket.filter((f) => isQlyFile(f) && !isDatFile(f));
+  const inis = bucket.filter((f) => isIniFile(f) && !isDatFile(f) && !isQlyFile(f));
+  const dbfs = bucket.filter((f) => isDbfFile(f) && !isDatFile(f) && !isQlyFile(f) && !isIniFile(f));
+
+  // One class at most — the whole bucket is one session, exactly as before.
+  if (dats.length <= 1 && qlys.length <= 1 && inis.length <= 1 && dbfs.length <= 1) {
+    return [{ label, files: bucket }];
+  }
+
+  interface Sess {
+    stem: string;
+    files: PackFile[];
+    hasQly: boolean;
+    hasIni: boolean;
+    dbfCodes: Set<string> | null;
+    dbf: PackFile | null;
+  }
+  const sessions: Sess[] = [];
+  const unmatched: PackFile[] = [];
+
+  // Anchors: every .dat starts a session.
+  for (const dat of dats) sessions.push({ stem: stemOf(dat.name), files: [dat], hasQly: false, hasIni: false, dbfCodes: null, dbf: null });
+
+  // .qly: stem match first, then the only-one-left rule; a leftover with an
+  // identifying stem is a qualifying-only session of its own.
+  const pendingQlys: PackFile[] = [];
+  for (const qly of qlys) {
+    const stem = stemOf(qly.name);
+    const match = isIdentifying(stem) ? sessions.find((s) => s.stem === stem && !s.hasQly) : null;
+    if (match) {
+      match.files.push(qly);
+      match.hasQly = true;
+    } else {
+      pendingQlys.push(qly);
+    }
+  }
+  if (pendingQlys.length === 1) {
+    const without = sessions.filter((s) => !s.hasQly);
+    if (without.length === 1) {
+      without[0].files.push(pendingQlys[0]);
+      without[0].hasQly = true;
+      pendingQlys.length = 0;
+    }
+  }
+  for (const qly of pendingQlys.slice()) {
+    const stem = stemOf(qly.name);
+    if (isIdentifying(stem) || sessions.length === 0) {
+      sessions.push({ stem, files: [qly], hasQly: true, hasIni: false, dbfCodes: null, dbf: null });
+      pendingQlys.splice(pendingQlys.indexOf(qly), 1);
+    }
+  }
+  unmatched.push(...pendingQlys);
+
+  // Driver DBs: a stem match claims one session; a lone generic Drivers.dbf is
+  // the shared entry database and joins every session.
+  const looseDbfs: PackFile[] = [];
+  for (const dbf of dbfs) {
+    const stem = stemOf(dbf.name);
+    const match = isIdentifying(stem) ? sessions.find((s) => s.stem === stem && !s.dbf) : null;
+    if (match) {
+      match.files.push(dbf);
+      match.dbf = dbf;
+    } else {
+      looseDbfs.push(dbf);
+    }
+  }
+  if (looseDbfs.length === 1) {
+    for (const s of sessions) {
+      if (!s.dbf) {
+        s.files.push(looseDbfs[0]);
+        s.dbf = looseDbfs[0];
+      }
+    }
+  } else {
+    unmatched.push(...looseDbfs);
+  }
+
+  // Class.ini files: stem match first, then the ini's own class code against
+  // the session's driver-db classes, then the only-one-left rule.
+  const pendingInis: PackFile[] = [];
+  for (const ini of inis) {
+    const stem = stemOf(ini.name);
+    const match = isIdentifying(stem) ? sessions.find((s) => s.stem === stem && !s.hasIni) : null;
+    if (match) {
+      match.files.push(ini);
+      match.hasIni = true;
+    } else {
+      pendingInis.push(ini);
+    }
+  }
+  for (const ini of pendingInis.slice()) {
+    const code = parseClassIni(latin1(ini.data)).classCode;
+    if (!code) continue;
+    const candidates = sessions.filter((s) => {
+      if (s.hasIni || !s.dbf) return false;
+      if (!s.dbfCodes) s.dbfCodes = dbfClassCodes(s.dbf.data);
+      return s.dbfCodes.has(code);
+    });
+    if (candidates.length === 1) {
+      candidates[0].files.push(ini);
+      candidates[0].hasIni = true;
+      pendingInis.splice(pendingInis.indexOf(ini), 1);
+    }
+  }
+  if (pendingInis.length === 1) {
+    const without = sessions.filter((s) => !s.hasIni);
+    if (without.length === 1) {
+      without[0].files.push(pendingInis[0]);
+      without[0].hasIni = true;
+      pendingInis.length = 0;
+    }
+  }
+  unmatched.push(...pendingInis);
+
+  if (unmatched.length > 0) {
+    topWarnings.push(
+      `${label}: could not tell which class these belong to — ${unmatched
+        .map((f) => f.name)
+        .join(", ")}. Group each class's files in their own folder or give them matching names (FC.dat + FC.qly + FC-Class.ini) and re-drop.`,
+    );
+  }
+
+  return sessions.map((s) => ({
+    label: isIdentifying(s.stem) ? `${label} · ${s.stem.toUpperCase()}` : label,
+    files: s.files,
+  }));
+}
+
 export function parseAccuTimePack(
   inputFiles: PackFile[],
   opts: AccuTimeParseOptions = {},
 ): { sessions: AccuTimeSession[]; warnings: string[] } {
   const topWarnings: string[] = [];
 
-  // Expand .acc / .zip archives; each archive is its own session group, and
-  // any loose files form one more.
-  const groups: { label: string; files: PackFile[] }[] = [];
+  // Expand .acc / .zip archives, then split archives and loose files alike
+  // into per-class session groups — one drop can hold many classes, zipped,
+  // loose, or mixed.
+  const groups: SessionGroup[] = [];
   const loose: PackFile[] = [];
   for (const f of inputFiles) {
     if (isZip(f.data)) {
@@ -467,7 +713,7 @@ export function parseAccuTimePack(
         const files = Object.entries(members)
           .filter(([name]) => !name.endsWith("/"))
           .map(([name, data]) => ({ name, data }));
-        groups.push({ label: f.name, files });
+        groups.push(...splitLooseSessions(files, topWarnings, f.name));
       } catch {
         topWarnings.push(`${f.name}: could not be read as a zip archive — skipped.`);
       }
@@ -475,18 +721,18 @@ export function parseAccuTimePack(
       loose.push(f);
     }
   }
-  if (loose.length) groups.push({ label: "uploaded files", files: loose });
+  if (loose.length) groups.push(...splitLooseSessions(loose, topWarnings, "uploaded files"));
 
   const sessions: AccuTimeSession[] = [];
 
   for (const group of groups) {
     const warnings: string[] = [];
     const find = (re: RegExp) => group.files.find((f) => re.test(f.name));
-    const datFile = group.files.find((f) => /\.dat$/i.test(f.name) && isJetDb(f.data));
+    const datFile = group.files.find(isDatFile);
     const qlyFile = find(/\.qly$/i);
     const iniFile = find(/class\.ini$/i) || find(/\.ini$/i);
     const dbfFile = group.files.find(
-      (f) => /\.dbf$/i.test(f.name) || /drivers/i.test(f.name),
+      (f) => isDbfFile(f) && !isDatFile(f) && !isQlyFile(f) && !isIniFile(f),
     );
 
     if (!datFile && !qlyFile) {
@@ -499,10 +745,19 @@ export function parseAccuTimePack(
     const ini = iniFile
       ? parseClassIni(latin1(iniFile.data))
       : { classCode: "", raceDate: null, seriesName: null, roundNumber: null };
-    if (!iniFile) warnings.push("No Class.ini — class code and race date are unknown; set the class by hand if it reads wrong.");
+    if (!iniFile) warnings.push("No Class.ini — the race date is unknown.");
 
-    const classCode = ini.classCode || "X";
-    const className = CLASS_NAME_BY_CODE.get(classCode) || classCode;
+    // Class.ini's own code wins; the user's pick fills in only when the ini
+    // gave nothing. Never "X" — that's the schedule's Secure placeholder, and
+    // falling back to it printed X/SECURE on every export of a classless
+    // session.
+    const classCode = ini.classCode || (opts.classCode || "").trim().toUpperCase();
+    const className = classCode ? CLASS_NAME_BY_CODE.get(classCode) || classCode : "UNKNOWN";
+    if (!classCode) {
+      warnings.push(
+        `${group.label}: no class code found — Class.ini normally carries it in the [Menu] section (FC, TF, PS, …). Pick the class on the page and rebuild, or add Class.ini to the upload.`,
+      );
+    }
 
     // Drivers.dbf: the session's own entry records.
     let drivers: EdataTechCard[] = [];

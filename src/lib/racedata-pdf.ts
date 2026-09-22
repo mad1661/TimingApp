@@ -47,6 +47,13 @@ export interface PdfCategory {
   rounds: PdfRound[];
 }
 
+/** Header logos (PNG/JPEG data URLs), the racedata-zip-to-pdf three-slot row. */
+export interface PdfLogos {
+  left?: string;
+  center?: string;
+  right?: string;
+}
+
 export interface PdfEvent {
   dates?: string;
   track?: string;
@@ -54,9 +61,45 @@ export interface PdfEvent {
   roundDate?: string;
   series?: string;
   brand?: string;
+  logos?: PdfLogos;
 }
 
-const SERIES_DEFAULT = "NHRA LUCAS OIL DRAG RACING SERIES";
+// The logo band mirrors the source app's .logo-row: three slots across the
+// top (left / event / right aligned), image max-height ~105px ≈ 76pt.
+const LOGO_BAND_H = 76;
+
+/**
+ * Draw the three-slot logo row at yTop and return the vertical space it used
+ * (0 when no logos, so pages without them keep their original layout).
+ */
+function drawLogoRow(doc: jsPDF, event: PdfEvent, yTop: number, W: number, margin: number): number {
+  const slots = [event.logos?.left, event.logos?.center, event.logos?.right];
+  if (!slots.some(Boolean)) return 0;
+  const slotW = (W - margin * 2) / 3 - 8;
+  slots.forEach((dataUrl, i) => {
+    if (!dataUrl) return;
+    try {
+      const props = doc.getImageProperties(dataUrl);
+      // Fit inside the slot; don't blow small logos up past ~natural size.
+      const scale = Math.min(slotW / props.width, LOGO_BAND_H / props.height, 1);
+      const w = props.width * scale;
+      const h = props.height * scale;
+      const x = i === 0 ? margin : i === 1 ? (W - w) / 2 : W - margin - w;
+      doc.addImage(dataUrl, x, yTop + (LOGO_BAND_H - h) / 2, w, h);
+    } catch {
+      // Unreadable image — the sheet still prints with text branding only.
+    }
+  });
+  return LOGO_BAND_H + 10;
+}
+
+// The series banner changes event to event ("NHRA Lucas Oil…", "NHRA Mission
+// Foods…"), so no default is invented: the caller passes the session's own
+// series title (Class.ini [Reports] or the page's header field), and when
+// there is none the line falls back to the track name or stays blank.
+function seriesLine(event: PdfEvent): string {
+  return event.series || event.track || "";
+}
 
 function fitText(doc: jsPDF, txt: string, maxW: number): string {
   txt = String(txt || "");
@@ -98,7 +141,10 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
   const H = 792;
 
   // ---------- Summary page(s) ----------
-  let y = 40 + 76 + 16; // no logos in the automated export; keep the same top gap
+  // The 76pt top band is the logo row's home; with no logos the gap stays, so
+  // the layout matches the original sheets either way.
+  drawLogoRow(doc, event, 40, W, 36);
+  let y = 40 + LOGO_BAND_H + 16;
 
   doc.setFont("times", "bold");
   doc.setFontSize(10.5);
@@ -119,7 +165,7 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
   doc.setFont("times", "normal");
   doc.setFontSize(8);
   doc.setTextColor(90);
-  doc.text(event.brand || "CompuLink StarTrak", W - 36, y, { align: "right" });
+  doc.text(event.brand || "AccuTime", W - 36, y, { align: "right" });
   doc.setTextColor(0);
   y += 14;
 
@@ -203,10 +249,10 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     if (!cat.rounds.length) continue;
     doc.addPage();
     drawPageBorder();
-    let ry = 62;
+    let ry = 62 + drawLogoRow(doc, event, 44, W, 44);
     doc.setFont("times", "bold");
     doc.setFontSize(14);
-    doc.text(event.series || SERIES_DEFAULT, W / 2, ry, { align: "center" });
+    doc.text(seriesLine(event), W / 2, ry, { align: "center" });
     ry += 22;
     doc.setFontSize(12);
     doc.text(cat.name.toUpperCase(), 44, ry);
@@ -220,7 +266,7 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     ry += 8;
     doc.setFont("times", "normal");
     doc.setFontSize(8.5);
-    const clLabel = cat.brand || event.brand || "CompuLink StarTrak";
+    const clLabel = cat.brand || event.brand || "AccuTime";
     const clW = doc.getTextWidth(clLabel);
     dottedRule(doc, 44, rRight - clW - 8, ry - 2);
     doc.text(clLabel, rRight, ry, { align: "right" });
@@ -338,10 +384,10 @@ export function buildQualifyingPdf(event: PdfEvent, categories: QualPdfCategory[
 
   function pageHeader(): number {
     drawBorder();
-    let y = 58;
+    let y = 58 + drawLogoRow(doc, event, 44, W, 44);
     doc.setFont("times", "bold");
     doc.setFontSize(14);
-    doc.text(event.series || SERIES_DEFAULT, W / 2, y, { align: "center" });
+    doc.text(seriesLine(event), W / 2, y, { align: "center" });
     y += 18;
     doc.setFontSize(10.5);
     doc.text(event.track || "", W / 2, y, { align: "center" });
@@ -374,7 +420,7 @@ export function buildQualifyingPdf(event: PdfEvent, categories: QualPdfCategory[
     doc.text("Qualifying", 40 + cw + 10, y);
     doc.setFont("times", "normal");
     doc.setFontSize(8.5);
-    doc.text(cat.brand || event.brand || "CompuLink StarTrak", right, y, { align: "right" });
+    doc.text(cat.brand || event.brand || "AccuTime", right, y, { align: "right" });
     y += 6;
     dottedRule(doc, 40, right, y);
     y += 10;

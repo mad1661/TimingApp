@@ -30,6 +30,26 @@ export async function POST(request: NextRequest) {
     const eventName = (form.get("event_name") as string) || "";
     const eventCode = (form.get("event_code") as string) || "";
     const season = (form.get("season") as string) || "";
+    // Page-level overrides: the user-picked class (applied only to sessions
+    // whose Class.ini gave no code) and the per-event series banner.
+    const classCode = (form.get("class_code") as string) || "";
+    const seriesHeader = (form.get("series_header") as string) || "";
+
+    // Header logos: PNG/JPEG data URLs the client rasterized, one per slot of
+    // the three-logo row (left / event / right). Anything else is ignored so a
+    // bad value can't break the PDFs.
+    const logo = (field: string): string | undefined => {
+      const v = form.get(field);
+      if (typeof v !== "string") return undefined;
+      if (!/^data:image\/(png|jpe?g);base64,/.test(v)) return undefined;
+      if (v.length > 3_000_000) return undefined;
+      return v;
+    };
+    const logos = {
+      left: logo("logo_left"),
+      center: logo("logo_center"),
+      right: logo("logo_right"),
+    };
 
     if (files.length === 0) {
       return NextResponse.json({ error: "No files uploaded" }, { status: 400, headers: NO_STORE_HEADERS });
@@ -43,6 +63,7 @@ export async function POST(request: NextRequest) {
       eventCode,
       eventName,
       season,
+      classCode,
     });
 
     // Merge in the shared tech-card store (every-card read, v1.40.1).
@@ -53,7 +74,11 @@ export async function POST(request: NextRequest) {
       console.error("AccuTime export: tech cards unavailable:", err);
     }
 
-    const artifacts = buildAccuTimeArtifacts(sessions, storedCards, { eventName });
+    const artifacts = buildAccuTimeArtifacts(sessions, storedCards, {
+      eventName,
+      seriesHeader,
+      logos,
+    });
 
     const toB64 = (bytes: Uint8Array | null) =>
       bytes ? Buffer.from(bytes).toString("base64") : null;
@@ -63,6 +88,7 @@ export async function POST(request: NextRequest) {
         sessions: sessions.map((s) => ({
           classCode: s.classCode,
           className: s.className,
+          seriesName: s.seriesName,
           raceDate: s.raceDate,
           qualifiers: s.qualifying.length,
           qualSessions: s.qualSessions,

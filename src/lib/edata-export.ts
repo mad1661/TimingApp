@@ -232,7 +232,9 @@ function classInfo(category: string, runs: RunRow[]): { code: string; order: num
     .join("")
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 4);
-  return { code: initials || "X", order: RACE_CLASSES.length };
+  // "UNK", not "X" — X is the schedule's Secure placeholder code and reads as
+  // a real class downstream.
+  return { code: initials || "UNK", order: RACE_CLASSES.length };
 }
 
 // ——— Tech card ↔ run matching (same shape as the no-shows cross-reference:
