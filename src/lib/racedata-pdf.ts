@@ -70,12 +70,12 @@ const LOGO_BAND_H = 76;
 
 /**
  * Draw the three-slot logo row at yTop and return the vertical space it used
- * (0 when no logos, so pages without them keep their original layout).
+ * (0 when no logos, so a page without them keeps its original layout).
  *
- * This is the one shared header-band helper: EVERY page of both PDFs —
- * summary continuations, elimination continuations, qualifying pages — goes
- * through it, so a multi-page download carries the logos on page 2+ too
- * (v1.43.3; previously only first pages were stamped).
+ * Product rule (v1.43.4, per Mark): logos appear on the FIRST page of the
+ * Final Round Results PDF only. Every other page — summary continuations,
+ * the per-class elimination pages, and the entire qualifying sheet — uses
+ * the original text-only header, so this helper is called exactly once.
  */
 function drawLogoRow(doc: jsPDF, event: PdfEvent, yTop: number, W: number, margin: number): number {
   const slots = [event.logos?.left, event.logos?.center, event.logos?.right];
@@ -147,7 +147,8 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
 
   // ---------- Summary page(s) ----------
   // The 76pt top band is the logo row's home; with no logos the gap stays, so
-  // the layout matches the original sheets either way.
+  // the layout matches the original sheets either way. This is the only page
+  // in either PDF that carries the logos.
   drawLogoRow(doc, event, 40, W, 36);
   let y = 40 + LOGO_BAND_H + 16;
 
@@ -180,18 +181,11 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
   const catGap = 9;
   const bottom = H - 34;
 
-  // Summary continuation pages carry the same header band as page 1; with no
-  // logos the page keeps its original text-only top.
-  const newSummaryPage = (): number => {
-    doc.addPage();
-    const band = drawLogoRow(doc, event, 40, W, 36);
-    return band ? 40 + band + 6 : 44;
-  };
-
   for (const cat of categories) {
     const need = headH + cat.rows.length * rowH + catGap;
     if (y + Math.min(need, headH + 2 * rowH) > bottom) {
-      y = newSummaryPage();
+      doc.addPage();
+      y = 44;
     }
     doc.setFont("times", "bold");
     doc.setFontSize(6);
@@ -215,7 +209,8 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     doc.setFontSize(8.5);
     for (const r of cat.rows) {
       if (y > bottom) {
-        y = newSummaryPage();
+        doc.addPage();
+        y = 44;
         doc.setFont("times", "normal");
         doc.setFontSize(8.5);
       }
@@ -260,7 +255,7 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     if (!cat.rounds.length) continue;
     doc.addPage();
     drawPageBorder();
-    let ry = 62 + drawLogoRow(doc, event, 44, W, 44);
+    let ry = 62;
     doc.setFont("times", "bold");
     doc.setFontSize(14);
     doc.text(seriesLine(event), W / 2, ry, { align: "center" });
@@ -307,13 +302,10 @@ export function buildRacedataPdf(event: PdfEvent, categories: PdfCategory[]): Ui
     doc.text("* WINNERS of each pair appear First", 46, ry);
     ry += 12;
 
-    // Elimination continuation pages get the border AND the header band, so
-    // long round-by-round listings keep the logos past their first page.
     const newPage = (): number => {
       doc.addPage();
       drawPageBorder();
-      const band = drawLogoRow(doc, event, 44, W, 44);
-      return band ? 44 + band + 6 : 52;
+      return 52;
     };
 
     for (const rd of cat.rounds) {
@@ -386,6 +378,10 @@ export interface QualPdfCategory {
  * Pos / # / Class / Driver / Hometown / Car / Motor / E.T. / Index / Ov-Un,
  * with the Low E.T. and Top Speed banner and a dotted cut line after the
  * field-size row when one is set.
+ *
+ * Deliberately NO header logos (per Mark, v1.43.4): `event.logos` may arrive
+ * here — the logo package still flows to the server for the finals PDF — but
+ * the qualifying render ignores it and keeps the text-only AccuTime chrome.
  */
 export function buildQualifyingPdf(event: PdfEvent, categories: QualPdfCategory[]): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "letter" });
@@ -398,7 +394,7 @@ export function buildQualifyingPdf(event: PdfEvent, categories: QualPdfCategory[
 
   function pageHeader(): number {
     drawBorder();
-    let y = 58 + drawLogoRow(doc, event, 44, W, 44);
+    let y = 58;
     doc.setFont("times", "bold");
     doc.setFontSize(14);
     doc.text(seriesLine(event), W / 2, y, { align: "center" });
