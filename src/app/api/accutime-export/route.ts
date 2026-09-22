@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllTechCards } from "@/lib/db";
 import type { EdataTechCard } from "@/lib/edata-export";
-import { parseAccuTimePack } from "@/lib/accutime";
+import {
+  applyAccuClassPick,
+  mergeAccuTimeSessions,
+  parseAccuTimePack,
+  sanitizeAccuSessions,
+  type AccuTimeSession,
+} from "@/lib/accutime";
 import { buildAccuTimeArtifacts } from "@/lib/accutime-export";
 import type { ProEventScale } from "@/lib/accutime-points";
 
@@ -17,7 +23,7 @@ const NO_STORE_HEADERS = {
 };
 
 /**
- * POST /api/accutime-export  (multipart: files[], event_name?)
+ * POST /api/accutime-export  (multipart: files[], prior_sessions?, event_name?)
  *
  * Parses AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf, or a
  * zip of them — the .acc archive itself is password-locked and gets skipped
@@ -25,6 +31,13 @@ const NO_STORE_HEADERS = {
  * Compulink export package
  * as JSON: QDAT + EDAT text files plus base64 finals / qualifying PDFs. The
  * client saves them individually or as a RACEDATA.zip.
+ *
+ * `prior_sessions` is the client's saved class pack (the `sessionsFull` from
+ * an earlier response, kept in the browser): the fresh parse MERGES into it by
+ * class — same class replaces just that class, a new class is added — and the
+ * whole package rebuilds from the full set, so dropping Top Fuel later never
+ * wipes the Funny Car already built. With prior sessions and no files this is
+ * a pure rebuild (class pick / series header / logo changes after a refresh).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -62,20 +75,44 @@ export async function POST(request: NextRequest) {
       right: logo("logo_right", "Right"),
     };
 
-    if (files.length === 0) {
+    // The browser's saved class pack — the accumulated sessions from earlier
+    // drops. A corrupt value never fails the upload; the fresh files still
+    // build (with a warning that the saved classes weren't included).
+    const priorWarnings: string[] = [];
+    let priorSessions: AccuTimeSession[] = [];
+    const priorRaw = form.get("prior_sessions");
+    if (typeof priorRaw === "string" && priorRaw) {
+      try {
+        priorSessions = sanitizeAccuSessions(JSON.parse(priorRaw));
+      } catch {
+        priorWarnings.push(
+          "The class data saved in this browser couldn't be read — this package holds only the files just dropped. Re-drop the missing classes.",
+        );
+      }
+    }
+    // A class picked after the fact has to reach stored sessions too — a
+    // rebuild from the pack never goes back through parseAccuTimePack.
+    priorSessions = applyAccuClassPick(priorSessions, classCode);
+
+    if (files.length === 0 && priorSessions.length === 0) {
       return NextResponse.json({ error: "No files uploaded" }, { status: 400, headers: NO_STORE_HEADERS });
     }
 
-    const packFiles = await Promise.all(
-      files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })),
-    );
+    let newSessions: AccuTimeSession[] = [];
+    let parseWarnings: string[] = [];
+    if (files.length > 0) {
+      const packFiles = await Promise.all(
+        files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })),
+      );
+      ({ sessions: newSessions, warnings: parseWarnings } = parseAccuTimePack(packFiles, {
+        eventCode,
+        eventName,
+        season,
+        classCode,
+      }));
+    }
 
-    const { sessions, warnings: parseWarnings } = parseAccuTimePack(packFiles, {
-      eventCode,
-      eventName,
-      season,
-      classCode,
-    });
+    const { sessions, merge } = mergeAccuTimeSessions(priorSessions, newSessions);
 
     // Merge in the shared tech-card store (every-card read, v1.40.1).
     let storedCards: EdataTechCard[] = [];
@@ -128,7 +165,11 @@ export async function POST(request: NextRequest) {
         points: artifacts.points,
         pointsSkipped: artifacts.pointsSkipped,
         idx: artifacts.idx,
-        warnings: [...parseWarnings, ...artifacts.warnings, ...logoWarnings],
+        // The full merged pack, for the browser to save and post back with the
+        // next drop — plus what this drop did to it.
+        sessionsFull: sessions,
+        merge,
+        warnings: [...priorWarnings, ...parseWarnings, ...artifacts.warnings, ...logoWarnings],
       },
       { headers: NO_STORE_HEADERS },
     );

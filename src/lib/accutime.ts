@@ -1346,3 +1346,108 @@ export function parseAccuTimePack(
 
   return { sessions, warnings: topWarnings };
 }
+
+// ——— Class-pack accumulation (v1.44.0) ———
+// Mark drops classes one at a time (FC now, TF an hour later), so the client
+// keeps every parsed session locally and posts the saved set back with each
+// new drop. These helpers are the server side of that: merge the fresh parse
+// into the saved pack by class, and re-validate what the browser sent.
+
+/** Merge key for the class pack: the class code when known, else the name. */
+export function accuSessionKey(s: Pick<AccuTimeSession, "classCode" | "className">): string {
+  return (s.classCode || s.className || "UNKNOWN").trim().toUpperCase();
+}
+
+export interface AccuMergeInfo {
+  /** Class names newly added to the pack by this drop. */
+  added: string[];
+  /** Class names already in the pack that this drop replaced. */
+  replaced: string[];
+}
+
+/**
+ * Merge freshly parsed sessions into the accumulated pack: a class already in
+ * the pack is replaced by its new drop (in place, keeping its position),
+ * everything else is kept — so uploading class B never wipes class A.
+ */
+export function mergeAccuTimeSessions(
+  prior: AccuTimeSession[],
+  fresh: AccuTimeSession[],
+): { sessions: AccuTimeSession[]; merge: AccuMergeInfo } {
+  const out = [...prior];
+  const added: string[] = [];
+  const replaced: string[] = [];
+  for (const s of fresh) {
+    const key = accuSessionKey(s);
+    const i = out.findIndex((p) => accuSessionKey(p) === key);
+    if (i >= 0) {
+      out[i] = s;
+      if (!replaced.includes(s.className)) replaced.push(s.className);
+    } else {
+      out.push(s);
+      added.push(s.className);
+    }
+  }
+  return { sessions: out, merge: { added, replaced } };
+}
+
+/**
+ * Re-validate sessions the browser stored and posted back. The shape is our
+ * own (the server produced it), so this only guards against a corrupt or
+ * hand-edited store: wrong-typed fields fall back to empty defaults and
+ * non-session entries are dropped.
+ */
+export function sanitizeAccuSessions(raw: unknown): AccuTimeSession[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AccuTimeSession[] = [];
+  for (const v of raw) {
+    if (!v || typeof v !== "object") continue;
+    const s = v as Partial<AccuTimeSession>;
+    if (typeof s.className !== "string" || !s.className) continue;
+    out.push({
+      classCode: typeof s.classCode === "string" ? s.classCode : "",
+      className: s.className,
+      raceDate: typeof s.raceDate === "string" ? s.raceDate : null,
+      seriesName: typeof s.seriesName === "string" ? s.seriesName : null,
+      treeBase: typeof s.treeBase === "number" ? s.treeBase : 0.5,
+      qualifying: Array.isArray(s.qualifying) ? s.qualifying : [],
+      qualSessions: typeof s.qualSessions === "number" ? s.qualSessions : 0,
+      qualSessionPasses: Array.isArray(s.qualSessionPasses) ? s.qualSessionPasses : [],
+      runs: Array.isArray(s.runs) ? s.runs : [],
+      elimRounds: Array.isArray(s.elimRounds) ? s.elimRounds : [],
+      lowEt: s.lowEt && typeof s.lowEt === "object" ? s.lowEt : null,
+      topSpeed: s.topSpeed && typeof s.topSpeed === "object" ? s.topSpeed : null,
+      drivers: Array.isArray(s.drivers) ? s.drivers : [],
+      warnings: Array.isArray(s.warnings) ? s.warnings.filter((w): w is string => typeof w === "string") : [],
+    });
+  }
+  return out;
+}
+
+/**
+ * Fill the page's class pick into STORED sessions that parsed without a code.
+ * A fresh parse applies the pick inside parseAccuTimePack, but a rebuild from
+ * the saved pack never re-parses — and the pick has to reach the runs'
+ * category too, because that's what groups the EDAT files and names the
+ * class's PDF pages.
+ */
+export function applyAccuClassPick(sessions: AccuTimeSession[], classCode: string): AccuTimeSession[] {
+  const code = (classCode || "").trim().toUpperCase();
+  if (!code) return sessions;
+  return sessions.map((s) => {
+    if (s.classCode) return s;
+    const className = CLASS_NAME_BY_CODE.get(code) || code;
+    const oldName = s.className;
+    return {
+      ...s,
+      classCode: code,
+      className,
+      runs: s.runs.map((r) => (r.category === oldName ? { ...r, category: className } : r)),
+      drivers: s.drivers.map((d) => ({
+        ...d,
+        category: d.category || code,
+        class_name: d.class_name === oldName ? className : d.class_name,
+      })),
+    };
+  });
+}
