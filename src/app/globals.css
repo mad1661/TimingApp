@@ -226,6 +226,20 @@ body {
   [data-theme="light"] .hover\:text-red-400:hover { color: #dc2626; }
 }
 
+/* Charts: recharts takes its colours as SVG attributes and an inline tooltip
+   style tuned for the dark theme. CSS outranks the attributes; the inline
+   tooltip style needs !important. */
+[data-theme="light"] .recharts-cartesian-axis-tick-value,
+[data-theme="light"] .recharts-label { fill: #475569; }
+[data-theme="light"] .recharts-cartesian-grid line { stroke: #e2e8f0; }
+[data-theme="light"] .recharts-tooltip-cursor { fill: rgb(15 23 42 / 0.05); }
+[data-theme="light"] .recharts-default-tooltip {
+  background-color: #ffffff !important;
+  border-color: #dce2ea !important;
+  color: #0f172a !important;
+  box-shadow: 0 12px 28px -14px rgb(15 23 42 / 0.3) !important;
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   width: 10px;

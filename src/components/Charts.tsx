@@ -6,8 +6,15 @@ import {
 } from "recharts";
 
 const AXIS = "#94a3b8";
-const GRID = "#33384f";
-const TOOLTIP = { backgroundColor: "#12121f", border: "1px solid #33384f", borderRadius: 8, color: "#e2e8f0", fontSize: 13 };
+const GRID = "#243044";
+const TOOLTIP = {
+  backgroundColor: "#0e131d",
+  border: "1px solid #2a3549",
+  borderRadius: 10,
+  color: "#e8edf5",
+  fontSize: 13,
+  boxShadow: "0 12px 28px -12px rgb(0 0 0 / 0.8)",
+};
 const RED = "#ef4444";
 const GREEN = "#22c55e";
 
