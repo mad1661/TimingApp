@@ -173,6 +173,7 @@ body {
 [data-theme="light"] .bg-nhra-darker { background-color: #f1f4f8; }
 [data-theme="light"] .bg-nhra-dark { background-color: #ffffff; }
 [data-theme="light"] .bg-nhra-card { background-color: #ffffff; }
+[data-theme="light"] .bg-nhra-border { background-color: #dce2ea; }
 [data-theme="light"] .hover\:bg-nhra-card:hover { background-color: #eaeff5; }
 [data-theme="light"] :is(.bg-nhra-darker\/20, .bg-nhra-darker\/30, .bg-nhra-darker\/40, .bg-nhra-darker\/50) { background-color: #f5f7fa; }
 [data-theme="light"] :is(.hover\:bg-nhra-darker\/40, .hover\:bg-nhra-darker\/50, .hover\:bg-nhra-border\/20, .hover\:bg-nhra-border\/30):hover { background-color: #edf1f6; }
@@ -184,6 +185,8 @@ body {
 /* Borders / dividers */
 [data-theme="light"] .border-nhra-border { border-color: #dce2ea; }
 [data-theme="light"] .divide-nhra-border > :not(:last-child) { border-color: #dce2ea; }
+[data-theme="light"] :is(.border-nhra-border\/20, .border-nhra-border\/30, .border-nhra-border\/40, .border-nhra-border\/50, .border-nhra-border\/60) { border-color: #e3e8ef; }
+[data-theme="light"] :is(.divide-nhra-border\/40, .divide-nhra-border\/60) > :not(:last-child) { border-color: #e3e8ef; }
 
 /* Accent (#5aa9ff is too pale on white — darken for buttons, links, borders) */
 [data-theme="light"] .bg-nhra-accent { background-color: #2563eb; }
@@ -197,6 +200,20 @@ body {
 [data-theme="light"] .text-gray-400 { color: #475569; }
 [data-theme="light"] .text-gray-500 { color: #64748b; }
 [data-theme="light"] .text-gray-600 { color: #64748b; }
+
+/* Status colours are the pale 300-500 shades picked for dark surfaces; on
+   white they wash out. Use the deeper shades of the same hues. */
+[data-theme="light"] .text-green-400 { color: #15803d; }
+[data-theme="light"] :is(.text-red-300, .text-red-400) { color: #dc2626; }
+[data-theme="light"] :is(.text-yellow-300, .text-yellow-400, .text-yellow-500) { color: #a16207; }
+[data-theme="light"] :is(.text-amber-300, .text-amber-400) { color: #b45309; }
+[data-theme="light"] :is(.text-orange-300, .text-orange-400) { color: #c2410c; }
+[data-theme="light"] :is(.text-blue-300, .text-blue-400) { color: #1d4ed8; }
+[data-theme="light"] :is(.text-purple-300, .text-purple-400) { color: #7e22ce; }
+[data-theme="light"] .text-green-400\/70 { color: rgb(21 128 61 / 0.8); }
+[data-theme="light"] .text-red-400\/60 { color: rgb(220 38 38 / 0.75); }
+[data-theme="light"] :is(.text-yellow-400\/70, .text-yellow-500\/70, .text-yellow-500\/80, .text-yellow-500\/90) { color: rgb(161 98 7 / 0.85); }
+[data-theme="light"] :is(.text-blue-300\/80, .text-blue-400\/40, .text-blue-400\/60, .text-blue-400\/70) { color: rgb(29 78 216 / 0.75); }
 
 /* ...but keep text white when it sits on a solid colored surface (buttons,
    badges, the logo) — higher specificity wins over the remaps above. */
