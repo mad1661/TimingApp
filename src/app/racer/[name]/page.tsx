@@ -301,7 +301,7 @@ export default function RacerPage() {
       {runs.length > 0 && (
         <>
           {/* Stats Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-8 gap-3 sm:gap-4 mb-8">
             <StatCard label="Total Runs" value={runs.length} />
             <StatCard label="Wins" value={wins.length} sub={`${elimRuns.length > 0 ? ((wins.length / elimRuns.length) * 100).toFixed(0) : 0}% win rate`} />
             <StatCard label="Best ET" value={bestET?.toFixed(3) ?? "-"} />

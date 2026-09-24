@@ -25,7 +25,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <>
       <Navbar />
-      <main className="lg:ml-64 min-h-screen p-4 lg:p-8">
+      <main className="lg:ml-64 min-h-screen px-4 pt-4 pb-10 sm:px-6 lg:px-8 lg:pt-7">
         <div className="print:hidden">
           <EventBanner />
         </div>
