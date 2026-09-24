@@ -89,19 +89,20 @@ export default function Navbar() {
               <p className="mt-1 truncate text-[0.7rem] font-medium text-gray-500">Rice is Great All Year</p>
             </div>
           </Link>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <ThemeToggle />
-            <button
-              onClick={() => setMobileOpen(false)}
-              className="lg:hidden flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-nhra-card hover:text-white"
-              aria-label="Close navigation"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+          <ThemeToggle />
         </div>
+
+        {mobileOpen && (
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="lg:hidden absolute left-full top-3 ml-3 flex h-10 w-10 items-center justify-center rounded-full border border-nhra-border bg-nhra-card text-gray-300 shadow-lg"
+            aria-label="Close navigation"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
 
         <div className="flex-1 overflow-y-auto border-t border-nhra-border/60 px-3 pb-7 [mask-image:linear-gradient(to_bottom,#000_calc(100%-1.75rem),transparent)]">
           {NAV_SECTIONS.map((section) => (

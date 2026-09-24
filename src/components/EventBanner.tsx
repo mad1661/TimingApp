@@ -39,7 +39,7 @@ export default function EventBanner() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {live.isActive && live.config.intervalSeconds > 0 && (
-            <div className="flex items-center gap-2 rounded-lg border border-green-500/25 bg-green-500/10 px-2.5 py-1.5">
+            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-green-500/25 bg-green-500/10 px-2.5 py-1.5">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
