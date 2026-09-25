@@ -54,9 +54,10 @@ button { font-family: var(--mono); cursor: pointer; }
 .dim { color: var(--lbl-dim); }
 .neg { color: var(--red) !important; }
 
-/* ════ Control bar ════ */
+/* ════ Control bar (sticky — one-handed track use) ════ */
 .ctrlbar {
   order: 0;
+  position: sticky; top: 0; z-index: 40;
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 0.4rem;
   padding: 0.45rem 0.8rem;
@@ -110,27 +111,58 @@ button { font-family: var(--mono); cursor: pointer; }
 #hdr-category { color: var(--white); font-weight: 800; font-size: 0.95rem; }
 #hdr-round { color: var(--gold); font-weight: 800; font-size: 0.95rem; }
 
-/* ════ Lane panels ════ */
+/* ════ Board layout ════
+   Desktop: the middle of the board IS the timeslip — LEFT lane card
+   (left-justified) | live splits rows | RIGHT lane card (mirrored).
+   Each lane is two blocks: the "main" card (photo, name, COPY, combo) in
+   #lanes, and the secondary "extras" (tech grid, old runs) in #lane-extras —
+   so the phone can put the live times between them, timeslip-style. */
 #lanes {
   order: 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr) minmax(0, 1fr);
+  gap: 0;
+}
+#lanes.wide4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(300px, 0.9fr) repeat(2, minmax(0, 1fr));
+}
+#lane-extras {
+  order: 4;
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0;
   min-height: 0;
+  border-top: 1px solid var(--line);
 }
-#lanes.wide4 { grid-template-columns: repeat(4, 1fr); }
+#lane-extras.wide4 { grid-template-columns: repeat(4, 1fr); }
 .lane {
   border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
   padding: 0.55rem 0.8rem 0.7rem;
   display: flex; flex-direction: column; gap: 0.55rem;
   min-width: 0;
 }
 .lane:last-child { border-right: none; }
+
+/* Winner/loser (Timing Talk winner field only — never derived here) */
+.lane.winner {
+  background: rgba(56,209,124,0.08);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.lane.mirror.winner { box-shadow: inset -3px 0 0 var(--green); }
+.lane.loser { opacity: 0.62; }
+
+/* Mirrored (right-hand) lanes: photo on the outside, text justified right */
+.lane.mirror { text-align: right; }
+.lane.mirror .lane-top { flex-direction: row-reverse; }
+.lane.mirror .lane-tag { justify-content: flex-end; }
+.lane.mirror .drv-sub { justify-content: flex-end; }
+.lane.mirror .photo-btns { justify-content: flex-end; }
+.lane.mirror .tc-row { flex-direction: row-reverse; }
+.lane.mirror .tc-row .lbl { text-align: right; }
 .lane-tag { display: flex; align-items: center; gap: 0.5rem; }
 .lane-tag .win-tag {
-  color: var(--btn-fg); background: var(--gold); border-radius: 2px;
+  color: #06180d; background: var(--green); border-radius: 2px;
   font-size: 0.58rem; font-weight: 800; padding: 0.05rem 0.4rem;
   letter-spacing: 0.12em;
 }
@@ -207,41 +239,53 @@ button { font-family: var(--mono); cursor: pointer; }
 .oldruns .or-empty { color: var(--lbl-dim); font-size: 0.66rem; padding: 0.3rem 0; }
 .oldruns-scroll { max-height: 9.2rem; overflow-y: auto; scrollbar-width: thin; }
 
-/* ════ Live splits board ════ */
+/* ════ Live splits — the timeslip in the middle of the board ════
+   Each row: LEFT value(s) | label | RIGHT value(s), like a printed slip. */
 #splits-sec {
-  order: 4;
-  border-top: 2px solid var(--line);
   background: var(--panel);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   padding: 0.5rem 0.8rem 0.6rem;
+  min-width: 0;
 }
-.splits-head { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 0.45rem; }
-#splits {
+.splits-head { display: flex; align-items: baseline; justify-content: center; gap: 0.8rem; margin-bottom: 0.3rem; }
+#splits { display: flex; flex-direction: column; }
+.split-cell {
   display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 0.4rem 0.5rem;
+  grid-template-columns: 1fr minmax(4.6rem, auto) 1fr;
+  align-items: baseline;
+  gap: 0 0.6rem;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.22rem 0;
 }
-.split-cell { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; min-width: 0; }
+.split-cell:last-child { border-bottom: none; }
+.split-cell.wide4 { grid-template-columns: 1fr 1fr minmax(4rem, auto) 1fr 1fr; gap: 0 0.4rem; }
 .sv {
   color: var(--val); font-weight: 800;
-  font-size: clamp(1.05rem, 2.1vw, 1.9rem);
-  line-height: 1.1; white-space: nowrap;
+  font-size: clamp(1.15rem, 1.9vw, 1.9rem);
+  line-height: 1.15; white-space: nowrap;
   display: flex; align-items: baseline; gap: 0.25rem;
+  min-width: 0;
 }
+/* left-lane values hug the label; right-lane values mirror */
+.split-cell .sv:first-child, .split-cell.wide4 .sv:nth-child(-n+2) { justify-content: flex-end; }
 .sv.empty { color: var(--lbl-dim); font-weight: 400; }
-.sv .lt { color: var(--lbl-dim); font-size: 0.55em; font-weight: 700; }
-.sv.et-val { font-size: clamp(1.2rem, 2.5vw, 2.2rem); color: var(--white); }
-.sv.win { color: var(--gold); }
+.sv .lt { color: var(--lbl-dim); font-size: 0.5em; font-weight: 700; }
+.sv.et-val { font-size: clamp(1.35rem, 2.3vw, 2.3rem); color: var(--white); }
+.sv.win { color: var(--green); }
+.split-cell.wide4 .sv { font-size: clamp(0.9rem, 1.4vw, 1.4rem); }
+.split-cell.wide4 .sv.et-val { font-size: clamp(1rem, 1.7vw, 1.7rem); }
 .sl {
-  color: var(--lbl); font-size: 0.6rem; font-weight: 700;
+  color: var(--lbl); font-size: 0.62rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.12em;
-  border-top: 1px solid var(--line);
-  padding-top: 0.25rem; width: 100%; text-align: center;
-  white-space: nowrap;
+  text-align: center; white-space: nowrap;
+  align-self: center;
 }
 
 /* ════ Weather band ════ */
 #weather-sec {
-  order: 5;
+  order: 6;
   border-top: 1px solid var(--line);
   padding: 0.5rem 0.8rem 0.55rem;
   display: grid;
@@ -254,7 +298,7 @@ button { font-family: var(--mono); cursor: pointer; }
 
 /* ════ Footer ════ */
 #footer {
-  order: 6;
+  order: 7;
   border-top: 1px solid var(--line);
   padding: 0.3rem 0.8rem;
   color: var(--lbl-dim); font-size: 0.62rem; letter-spacing: 0.08em;
@@ -287,33 +331,87 @@ button { font-family: var(--mono); cursor: pointer; }
   border-bottom: 1px solid var(--line);
 }
 
-/* ════ Responsive — tablet (≤900px) ════ */
+/* ════ Responsive — timeslip layout (≤900px) ════
+   Phone order: sticky controls → event → lane cards (photo + name + COPY)
+   → timeslip-style live times (big rows) → weather line → old runs/tech. */
 @media (max-width: 900px) {
-  #lanes, #lanes.wide4 { grid-template-columns: 1fr; }
-  .lane { border-right: none; }
+  .cbtn { min-height: 44px; }
+  #lanes, #lanes.wide4, #lane-extras, #lane-extras.wide4 { grid-template-columns: 1fr; }
+  .lane { border-right: none; border-bottom: 1px solid var(--line); }
   #lanes.wide4 .photo-box { display: block; }
-  /* splits move directly under the header on small screens */
-  #splits-sec { order: 2; border-top: none; border-bottom: 2px solid var(--line); }
-  #splits { grid-template-columns: repeat(5, 1fr); }
-  .sv { font-size: clamp(1.1rem, 4.5vw, 1.7rem); }
-  .sv.et-val { font-size: clamp(1.25rem, 5.5vw, 2rem); }
-  #weather-sec { grid-template-columns: repeat(3, 1fr); }
+  #lane-extras { order: 8; border-top: 1px solid var(--line); }
+
+  /* lane cards first, then the live times, reading like a printed slip */
+  #lanes > .lane { order: 1; }
+  #lanes > #splits-sec { order: 9; }
+  #splits-sec { border-left: none; border-right: none; border-top: 2px solid var(--line); }
+  #splits { display: flex; flex-direction: column; gap: 0; }
+  .split-cell {
+    display: grid;
+    grid-template-columns: 5.4rem 1fr 1fr;
+    align-items: baseline;
+    gap: 0 0.5rem;
+    border-bottom: 1px solid var(--line);
+    padding: 0.28rem 0;
+  }
+  .split-cell:last-child { border-bottom: none; }
+  .sl {
+    order: -1;
+    border-top: none; padding-top: 0;
+    text-align: left; white-space: normal;
+    font-size: 0.62rem;
+  }
+  .sv { justify-content: flex-end; font-size: clamp(1.4rem, 6.5vw, 2rem); }
+  .sv.et-val { font-size: clamp(1.55rem, 7.5vw, 2.3rem); }
+  .sv .lt { font-size: 0.42em; }
+  /* 4-wide slip: values shrink so four fit the row */
+  .split-cell.wide4 { grid-template-columns: 4.6rem repeat(4, 1fr); gap: 0 0.3rem; }
+  .split-cell.wide4 .sv { font-size: clamp(0.95rem, 4vw, 1.4rem); }
+  .split-cell.wide4 .sv.et-val { font-size: clamp(1.05rem, 4.5vw, 1.6rem); }
+
+  /* weather: one compact line, never clipped */
+  #weather-sec {
+    order: 6;
+    display: flex; flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    padding: 0.45rem 0.8rem;
+  }
+  .wx-cell { flex-direction: row; align-items: baseline; gap: 0.35rem; }
+  .wx-val { font-size: 1rem; }
+  .wx-cell .lbl { font-size: 0.52rem; }
+
+  .photo-box { width: 38%; }
+  .photo-frame { aspect-ratio: 4/3; }
 }
 
-/* ════ Responsive — phone (≤480px) ════ */
+/* ════ Responsive — phone portrait (≤480px) ════ */
 @media (max-width: 480px) {
-  .cbtn { flex: 1 1 calc(50% - 0.45rem); min-height: 44px; font-size: 0.7rem; }
   .ctrl-group { width: 100%; }
-  .mode-note { margin: 0.15rem 0 0; width: 100%; }
+  .cbtn { flex: 1 1 calc(50% - 0.45rem); min-height: 48px; font-size: 0.74rem; }
+  .mode-note { margin: 0.1rem 0 0; width: 100%; }
   .ctrl-right { width: 100%; justify-content: space-between; }
-  #splits { grid-template-columns: repeat(5, 1fr); gap: 0.3rem 0.25rem; }
-  .sl { font-size: 0.5rem; letter-spacing: 0.06em; }
-  .lane-top { flex-direction: column; }
-  .photo-box { width: 100%; max-width: none; }
+  #clock { display: none; } /* the phone has its own clock */
+  .drv-name { font-size: 1.2rem; }
+  .photo-box { width: 42%; }
   .pbtn { min-height: 44px; flex: 1; }
   .tc-grid { grid-template-columns: 1fr; }
-  #weather-sec { grid-template-columns: repeat(2, 1fr); }
-  .drv-name { font-size: 1.05rem; }
+}
+
+/* ════ Responsive — short landscape (phone rotated) ════
+   Wide enough for the desktop 3-column board; undo the stacked slip. */
+@media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
+  .ctrlbar { position: static; }
+  #lanes { grid-template-columns: minmax(0, 1fr) minmax(270px, 0.9fr) minmax(0, 1fr); }
+  #lane-extras { grid-template-columns: 1fr 1fr; }
+  #lanes > .lane, #lanes > #splits-sec { order: 0; }
+  #splits-sec { border-left: 1px solid var(--line); border-right: 1px solid var(--line); border-top: none; }
+  .split-cell { grid-template-columns: 1fr minmax(4rem, auto) 1fr; padding: 0.14rem 0; }
+  .split-cell.wide4 { grid-template-columns: 1fr 1fr minmax(3.6rem, auto) 1fr 1fr; }
+  .sl { order: 0; text-align: center; font-size: 0.52rem; white-space: nowrap; }
+  .sv { font-size: clamp(0.9rem, 2.4vw, 1.3rem); }
+  .sv.et-val { font-size: clamp(1rem, 2.8vw, 1.5rem); }
+  .photo-box { width: 30%; }
+  .photo-frame { aspect-ratio: 16/10; }
 }
 </style>
 </head>
@@ -353,17 +451,11 @@ button { font-family: var(--mono); cursor: pointer; }
   No timing device selected &mdash; open <b>&#9881; settings</b> (top right) and pick a device.
 </div>
 
-<!-- ════ Lane panels (built by JS) ════ -->
+<!-- ════ Lane cards + center timeslip splits (built by JS) ════ -->
 <main id="lanes"></main>
 
-<!-- ════ Live splits ════ -->
-<section id="splits-sec">
-  <div class="splits-head">
-    <span class="lbl">Live Splits</span>
-    <span class="lbl dim">&middot; Timing Talk</span>
-  </div>
-  <div id="splits"></div>
-</section>
+<!-- ════ Secondary per-lane detail: tech card + old runs (built by JS) ════ -->
+<section id="lane-extras"></section>
 
 <!-- ════ Weather ════ -->
 <section id="weather-sec">
@@ -497,10 +589,10 @@ async function getJSON(url, ms = 15000) {
   finally { clearTimeout(t); }
 }
 
-/* ════ Build lane panels ════ */
-function lanePanelHTML(side) {
+/* ════ Build lane cards + center timeslip + extras ════ */
+function laneMainHTML(side, mirror) {
   return `
-  <div class="lane" id="lane-${side}">
+  <div class="lane${mirror ? " mirror" : ""}" id="lane-${side}">
     <div class="lane-tag">
       <span class="lbl">${SIDE_NAME[side]}</span>
       <span class="win-tag hidden" id="wintag-${side}">WIN</span>
@@ -532,8 +624,14 @@ function lanePanelHTML(side) {
       <div class="copy-lines empty" id="copy-${side}">no lines on card</div>
       <div class="copy-combo hidden" id="combo-${side}"><span class="lbl">Combo</span><span id="combov-${side}"></span></div>
     </div>
+  </div>`;
+}
+
+function laneExtraHTML(side, mirror) {
+  return `
+  <div class="lane${mirror ? " mirror" : ""}" id="lane-extra-${side}">
     <div>
-      <span class="lbl">Tech Card</span>
+      <span class="lbl">Tech Card &mdash; ${SIDE_NAME[side]}</span>
       <div class="tc-grid" id="tc-${side}">
         <div class="tc-row"><span class="lbl">Car</span><span class="tcv" id="tc-car-${side}">&mdash;</span></div>
         <div class="tc-row"><span class="lbl">Class</span><span class="tcv" id="tc-class-${side}">&mdash;</span></div>
@@ -561,20 +659,43 @@ function lanePanelHTML(side) {
   </div>`;
 }
 
-function splitCellHTML(field, sides) {
-  const values = sides.map((s) =>
-    `<span class="sv empty${field.et ? " et-val" : ""}" id="sv-${s}-${field.key}"><span class="lt">${SIDE_TAG[s]}</span><span id="svv-${s}-${field.key}">&mdash;</span></span>`
-  ).join("");
-  return `<div class="split-cell">${values}<span class="sl">${field.label}</span></div>`;
+function svHTML(s, field) {
+  return `<span class="sv empty${field.et ? " et-val" : ""}" id="sv-${s}-${field.key}"><span class="lt">${SIDE_TAG[s]}</span><span id="svv-${s}-${field.key}">&mdash;</span></span>`;
+}
+
+// Timeslip row: left-lane value(s) | label | right-lane value(s).
+function splitCellHTML(field, wide4) {
+  const leftGroup = (wide4 ? ["left", "right"] : ["left"]).map((s) => svHTML(s, field)).join("");
+  const rightGroup = (wide4 ? ["lane3", "lane4"] : ["right"]).map((s) => svHTML(s, field)).join("");
+  return `<div class="split-cell${wide4 ? " wide4" : ""}">${leftGroup}<span class="sl">${field.label}</span>${rightGroup}</div>`;
+}
+
+function splitsSectionHTML(wide4) {
+  return `
+  <section id="splits-sec">
+    <div class="splits-head">
+      <span class="lbl">Live Splits</span>
+      <span class="lbl dim">&middot; Timing Talk</span>
+    </div>
+    <div id="splits">${SPLIT_FIELDS.map((f) => splitCellHTML(f, wide4)).join("")}</div>
+  </section>`;
 }
 
 function buildBoard(wide4) {
   state.wide4 = wide4;
   const sides = wide4 ? SIDES4 : SIDES2;
   const lanes = $("lanes");
+  const extras = $("lane-extras");
   lanes.classList.toggle("wide4", wide4);
-  lanes.innerHTML = sides.map(lanePanelHTML).join("");
-  $("splits").innerHTML = SPLIT_FIELDS.map((f) => splitCellHTML(f, sides)).join("");
+  extras.classList.toggle("wide4", wide4);
+  // Middle of the board is the timeslip; lanes flank it (right side mirrored).
+  lanes.innerHTML = wide4
+    ? laneMainHTML("left") + laneMainHTML("right") + splitsSectionHTML(true) +
+      laneMainHTML("lane3", true) + laneMainHTML("lane4", true)
+    : laneMainHTML("left") + splitsSectionHTML(false) + laneMainHTML("right", true);
+  extras.innerHTML = wide4
+    ? laneExtraHTML("left") + laneExtraHTML("right") + laneExtraHTML("lane3", true) + laneExtraHTML("lane4", true)
+    : laneExtraHTML("left") + laneExtraHTML("right", true);
   sides.forEach((side) => {
     $(`pnext-${side}`).addEventListener("click", () => photoNext(side, false));
     $(`preject-${side}`).addEventListener("click", () => photoNext(side, true));
@@ -610,6 +731,9 @@ function clearSplits() {
     SPLIT_FIELDS.forEach((f) => setSplit(side, f.key, null));
     const wt = $(`wintag-${side}`);
     if (wt) wt.classList.add("hidden");
+    [$(`lane-${side}`), $(`lane-extra-${side}`)].forEach((el) => {
+      if (el) el.classList.remove("winner", "loser");
+    });
   });
   state.prevVals = {};
 }
@@ -640,6 +764,12 @@ function renderSplits(race, { flash }) {
     });
     const wt = $(`wintag-${side}`);
     if (wt) wt.classList.toggle("hidden", side !== win);
+    // Winner goes green, loser dims — straight from the Timing Talk winner field.
+    [$(`lane-${side}`), $(`lane-extra-${side}`)].forEach((el) => {
+      if (!el) return;
+      el.classList.toggle("winner", win === side);
+      el.classList.toggle("loser", !!win && win !== side);
+    });
   });
 }
 
@@ -823,19 +953,35 @@ function rejectPhoto(name, url) {
   localStorage.setItem("tt-ann-photo-rejects", JSON.stringify(all));
 }
 
+// Image search: TimingApp proxy first (DDG-backed — same result quality as the
+// Omarchy widget), Openverse CC as a fallback. Reasons are logged, not hidden.
+async function searchPhotos(name) {
+  const proxied = await getJSON(`${HIST_API}/photo-search?q=${encodeURIComponent(`${name} NHRA drag racing`)}`, 12000);
+  if (proxied && Array.isArray(proxied.photos) && proxied.photos.length) {
+    return proxied.photos.map((p) => ({ url: p.url, thumb: p.thumb || p.url, source: p.source || "web" }));
+  }
+  console.warn(`[photos] proxy ${proxied ? `returned 0 results` : `unreachable/error`} for "${name}" — trying Openverse`);
+  const ov = await getJSON(`${PHOTO_API}?q=${encodeURIComponent(`${name} drag racing`)}&page_size=20`, 10000);
+  if (ov && Array.isArray(ov.results) && ov.results.length) {
+    return ov.results.filter((r) => r.url).map((r) => ({ url: r.url, thumb: r.thumbnail || r.url, source: r.source || "openverse" }));
+  }
+  console.warn(`[photos] no results from any source for "${name}"`);
+  return [];
+}
+
 async function loadPhotos(side, name, tc, token) {
-  const st = { list: [], idx: 0, name: name || "" };
+  const st = { list: [], idx: 0, name: name || "", searching: !!name };
   state.photos[side] = st;
+  if (tc && fmt(tc.photo_url)) st.list.push({ url: tc.photo_url, thumb: tc.photo_url, source: "tech card" });
   renderPhoto(side);
-  if (tc && fmt(tc.photo_url)) st.list.push({ url: tc.photo_url, source: "tech card" });
   if (name) {
-    const q = encodeURIComponent(`${name} drag racing`);
-    const d = await getJSON(`${PHOTO_API}?q=${q}&page_size=20`, 10000);
+    const found = await searchPhotos(name);
     if (token !== state.loadToken || state.photos[side] !== st) return;
     const rejected = new Set(photoRejects()[name] || []);
-    ((d && d.results) || []).forEach((r) => {
-      if (r.url && !rejected.has(r.url)) st.list.push({ url: r.url, source: r.source || "web" });
-    });
+    found.forEach((p) => { if (!rejected.has(p.url)) st.list.push(p); });
+    st.searching = false;
+  } else {
+    st.searching = false;
   }
   renderPhoto(side);
 }
@@ -847,7 +993,7 @@ function renderPhoto(side) {
   if (!frame || !cap) return;
   if (!st || !st.list.length) {
     frame.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M5.5 21a6.5 6.5 0 0113 0"/></svg>';
-    cap.textContent = "no photo";
+    cap.textContent = st && st.searching ? "searching\u2026" : "no photo found";
     return;
   }
   st.idx = ((st.idx % st.list.length) + st.list.length) % st.list.length;
@@ -855,9 +1001,16 @@ function renderPhoto(side) {
   frame.innerHTML = "";
   const img = document.createElement("img");
   img.alt = st.name;
+  img.referrerPolicy = "no-referrer"; // many photo hosts block hotlinks by referrer
   img.src = p.url;
   img.onerror = () => {
-    // dead link — drop it (session only) and advance
+    if (p.thumb && p.thumb !== p.url && !p.triedThumb) {
+      // full-size blocked (hotlink protection) — the search thumbnail still works
+      p.triedThumb = true;
+      img.src = p.thumb;
+      return;
+    }
+    console.warn(`[photos] dead/blocked image dropped: ${p.url}`);
     st.list.splice(st.idx, 1);
     renderPhoto(side);
   };
@@ -1033,13 +1186,13 @@ async function ensureHistPairs() {
 }
 
 /* ════ Live subscription (RTDB — the ONLY live source) ════ */
+let unsubs = [];
 function subscribe(deviceId) {
-  if (!deviceId) {
-    $("nodevice").classList.remove("hidden");
-    return;
-  }
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  if (!deviceId) return; // banner text is handled by loadDevices()
   $("nodevice").classList.add("hidden");
-  onValue(ref(rtdb, `/devices/${deviceId}/status`), (snap) => {
+  unsubs.push(onValue(ref(rtdb, `/devices/${deviceId}/status`), (snap) => {
     const st = snap.val() || {};
     $("live-dot").classList.toggle("on", !!st.online);
     $("track-name").textContent = fmt(st.trackName) || fmt(st.raceName) || "";
@@ -1049,8 +1202,8 @@ function subscribe(deviceId) {
       const fallback = [fmt(st.promoter), fmt(st.raceName) || fmt(st.trackName)].filter(Boolean).join(" \u00b7 ");
       if (fallback) $("event-name").textContent = fallback;
     }
-  });
-  onValue(ref(rtdb, `/devices/${deviceId}/raceState/current`), (snap) => {
+  }));
+  unsubs.push(onValue(ref(rtdb, `/devices/${deviceId}/raceState/current`), (snap) => {
     const race = snap.val();
     if (!race) return;
     state.latestRace = race;
@@ -1059,7 +1212,7 @@ function subscribe(deviceId) {
       setModeNote();
     }
     // hold / history / off: keep tracking, never overwrite the screen
-  });
+  }));
 }
 
 /* ════ Event header from history events (name only — not live data) ════ */
@@ -1090,28 +1243,127 @@ async function loadEventHeader() {
   });
 }
 
-/* ════ Device directory (settings) ════ */
+/* ════ Device directory + auto-pick ════
+   Order of trust: ?device= override > saved tt-selected-device >
+   freshest ONLINE real device (test/smoke devices never preferred),
+   confirmed by an actual pair in raceState/current. If /api/tracks is
+   down or empty, the same list is rebuilt straight from RTDB. */
+const RTDB_REST = FIREBASE_CONFIG.databaseURL;
+const TEST_DEVICE_RE = /test|smoke|admin|demo/i;
+
+function isTestDevice(t) {
+  return TEST_DEVICE_RE.test(`${t.deviceId || ""} ${t.trackName || ""} ${t.name || ""}`);
+}
+
+async function rtdbDeviceList() {
+  const ids = await getJSON(`${RTDB_REST}/devices.json?shallow=true`, 8000);
+  if (!ids) return [];
+  const entries = await Promise.all(Object.keys(ids).map(async (id) => {
+    const st = await getJSON(`${RTDB_REST}/devices/${encodeURIComponent(id)}/status.json`, 8000);
+    if (!st) return null;
+    return {
+      deviceId: id,
+      trackName: fmt(st.trackName) || fmt(st.raceName) || id,
+      online: !!st.online,
+      lastSeen: st.lastSeen || 0,
+    };
+  }));
+  return entries.filter(Boolean);
+}
+
+async function hasLivePair(id) {
+  const r = await getJSON(`${RTDB_REST}/devices/${encodeURIComponent(id)}/raceState/current.json`, 8000);
+  if (!r) return false;
+  const l = r.left || {}, rr = r.right || {};
+  return !!(fmt(l.name) || fmt(l.car_num) || fmt(rr.name) || fmt(rr.car_num) || fmt(r.category));
+}
+
+function orderDevices(tracks) {
+  const byFresh = (a, b) => (b.lastSeen || 0) - (a.lastSeen || 0);
+  const online = tracks.filter((t) => t.online);
+  const real = online.filter((t) => !isTestDevice(t)).sort(byFresh);
+  const test = online.filter(isTestDevice).sort(byFresh);
+  return [...real, ...test];
+}
+
+// Known race-day Pi — last-resort fallback when the directory fails entirely.
+const KNOWN_LIVE_DEVICE = "timing-pi-88a29e674758";
+
+async function pickDevice(tracks) {
+  const ordered = orderDevices(tracks);
+  // Prefer the freshest online device that actually has a pair loaded.
+  for (const t of ordered.slice(0, 6)) {
+    if (await hasLivePair(t.deviceId)) return t.deviceId;
+  }
+  if (ordered.length) return ordered[0].deviceId;
+  // Directory empty/unreachable: take the known Pi if RTDB says it's alive.
+  const st = await getJSON(`${RTDB_REST}/devices/${KNOWN_LIVE_DEVICE}/status.json`, 8000);
+  if ((st && st.online) || (await hasLivePair(KNOWN_LIVE_DEVICE))) {
+    console.warn(`[device] directory empty — falling back to known live Pi ${KNOWN_LIVE_DEVICE}`);
+    return KNOWN_LIVE_DEVICE;
+  }
+  return "";
+}
+
+function showNoDevice(msg) {
+  const el = $("nodevice");
+  el.classList.remove("hidden");
+  el.innerHTML = "";
+  const b = document.createElement("b");
+  b.textContent = "No live timing device. ";
+  const rest = document.createElement("span");
+  rest.textContent = `${msg} \u2014 pick one in \u2699 settings (top right) or open with ?device=<id>.`;
+  el.append(b, rest);
+}
+
 async function loadDevices() {
+  let tracks = [];
   const d = await getJSON(`${TT_API}/tracks`);
-  const tracks = (d && d.tracks) || [];
+  if (d && Array.isArray(d.tracks)) {
+    tracks = d.tracks.map((t) => ({ ...t, deviceId: t.deviceId || t.id }));
+  }
+  if (!tracks.some((t) => t.online)) {
+    // /api/tracks unreachable, empty, or nothing online — RTDB is the truth.
+    const fromRtdb = await rtdbDeviceList();
+    if (fromRtdb.length) tracks = fromRtdb;
+  }
+
   const sel = $("set-device");
   sel.innerHTML = '<option value="">\u2014 select device \u2014</option>';
-  tracks.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
-  tracks.forEach((t) => {
+  const offline = tracks.filter((t) => !t.online).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  [...orderDevices(tracks), ...offline].forEach((t) => {
     const o = document.createElement("option");
-    o.value = t.deviceId || t.id;
-    o.textContent = `${t.online ? "\u25cf " : "\u25cb "}${t.trackName || t.name || t.deviceId}`;
+    o.value = t.deviceId;
+    o.textContent = `${t.online ? "\u25cf " : "\u25cb "}${t.trackName || t.name || t.deviceId}${isTestDevice(t) ? " (test)" : ""}`;
     if (o.value === state.deviceId) o.selected = true;
     sel.appendChild(o);
   });
-  // Auto-pick: freshest online device when nothing selected yet
+
+  const fromQuery = !!new URLSearchParams(location.search).get("device");
   if (!state.deviceId) {
-    const online = tracks.filter((t) => t.online);
-    if (online.length) {
-      state.deviceId = online[0].deviceId || online[0].id;
-      localStorage.setItem("tt-selected-device", state.deviceId);
-      sel.value = state.deviceId;
-      subscribe(state.deviceId);
+    const picked = await pickDevice(tracks);
+    if (picked) {
+      state.deviceId = picked;
+      localStorage.setItem("tt-selected-device", picked);
+      sel.value = picked;
+      subscribe(picked);
+    } else if (tracks.length) {
+      showNoDevice("None of the known devices are online right now.");
+    } else {
+      showNoDevice("Device directory unreachable (API and RTDB).");
+    }
+  } else if (!fromQuery) {
+    // A remembered device that is offline or a test/smoke box must not shadow a
+    // real Pi that is live right now (stale auto-picks used to cause exactly that).
+    const cur = tracks.find((t) => t.deviceId === state.deviceId);
+    if (!cur || !cur.online || isTestDevice(cur)) {
+      const picked = await pickDevice(tracks);
+      if (picked && picked !== state.deviceId) {
+        state.deviceId = picked;
+        localStorage.setItem("tt-selected-device", picked);
+        sel.value = picked;
+        subscribe(picked);
+      }
     }
   }
 }
@@ -1209,18 +1461,22 @@ function clearTest() {
   state.testTimers.forEach(clearTimeout);
   state.testTimers = [];
 }
+let testRunCount = 0;
 function testPair(nLanes) {
   clearTest();
   state.mode = "hold"; // simulate on a frozen screen so real live data can't interleave
   setModeNote();
   $("mode-note").innerHTML = `<b>TEST RUN</b> \u00b7 simulated \u00b7 press CURRENT for live`;
+  // Every other test run, lane 2 throws a red light so the red R/T is easy to check.
+  const redLightLane = testRunCount++ % 2 === 0 ? 1 : -1;
   const mk = (i) => {
     const dial = 8.9 + i * 0.45 + Math.random() * 0.4;
     const et = dial + (Math.random() * 0.35 - 0.1);
+    const rt = i === redLightLane ? -(0.005 + Math.random() * 0.06) : Math.random() * 0.12;
     return {
       name: `TEST DRIVER ${String.fromCharCode(65 + i)}`, car_num: `${100 * (i + 1)}X`,
       class_name: "TEST", member_num: "",
-      dial_in: dial.toFixed(2), rt: (Math.random() * 0.12).toFixed(3),
+      dial_in: dial.toFixed(2), rt: (rt < 0 ? "-" : "") + Math.abs(rt).toFixed(3).replace(/^0/, ""),
       sixty: (dial * 0.141).toFixed(3), three30: (dial * 0.385).toFixed(3),
       six60: (dial * 0.6).toFixed(3), six60_speed: (100 + Math.random() * 30).toFixed(2),
       thousand: (dial * 0.78).toFixed(3), et: et.toFixed(3),
@@ -1238,8 +1494,12 @@ function testPair(nLanes) {
     });
     if (upTo >= seq.length - 1) {
       r.complete = true;
-      const ets = sides.map((s) => parseFloat(full[s].et) - parseFloat(full[s].dial_in) + parseFloat(full[s].rt));
-      const wi = ets.indexOf(Math.min(...ets));
+      const pkgs = sides.map((s, i) => {
+        const pkg = parseFloat(full[s].et) - parseFloat(full[s].dial_in) + parseFloat(full[s].rt);
+        // a red light loses no matter the package
+        return parseFloat(full[s].rt) < 0 ? pkg + 100 : pkg;
+      });
+      const wi = pkgs.indexOf(Math.min(...pkgs));
       r.winner = sides[wi];
       r[sides[wi]].mov = (Math.random() * 0.2).toFixed(4);
     }
