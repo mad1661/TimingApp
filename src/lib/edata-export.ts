@@ -661,6 +661,7 @@ export function buildEdataExport(
     let pairs = 0;
     let runCount = 0;
     let enriched = 0;
+    const noRt: string[] = [];
 
     for (const rd of rounds) {
       lines.push(rd.label);
@@ -669,6 +670,13 @@ export function buildEdataExport(
           const tc = techCardForRun(r, techIndex);
           if (tc) enriched++;
           lines.push(runLine(r, tc, code, quarterMile));
+          // A completed pass always has a reaction time; a blank one is a
+          // hole in the stored row (or on getresults) and prints as a blank
+          // on the sheet, so it's called out here rather than found in print.
+          const finished = (quarterMile ? r.ft1320 : finishEt(r)) !== null;
+          if (finished && (r.rt === null || r.rt === undefined)) {
+            noRt.push(`${rd.label.toLowerCase()} #${(r.car_number || "").trim() || "?"}${r.name ? ` ${r.name}` : ""}`);
+          }
         }
         if (pair.single) {
           lines.push(singleMarker(pair.runs[0], techCardForRun(pair.runs[0], techIndex)));
@@ -679,6 +687,12 @@ export function buildEdataExport(
     }
 
     lines.push("End of File");
+
+    if (noRt.length) {
+      warnings.push(
+        `${category}: no reaction time on file for ${noRt.join(", ")} — the pass has an ET, so the RT is missing from the stored row. Check it on getresults and fix the row before printing.`,
+      );
+    }
 
     files.push({
       filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}EDAT.TXT`,
