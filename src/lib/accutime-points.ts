@@ -69,7 +69,7 @@ const ALCOHOL_CLASS_CODES = new Set(["TAD", "TAFC"]);
 // Source: nhra.com/how-points-are-earned/nhra-mission-foods-drag-racing-series-points.
 // Two value sets exist: the regular scale (every event except Indy, and every
 // Countdown event except Pomona 2) and the Indy scale (the U.S. Nationals and
-// Pomona 2, the final Countdown race). The event-scale picker on /edata
+// Pomona 2, the final Countdown race). The event-scale picker on /dataout
 // selects which one an export uses; Countdown itself scores the regular
 // values, only its Pomona 2 finale steps up to Indy's.
 export const PRO_CLASS_CODES = new Set(["TF", "FC", "PS", "PSM", "TFM", "MMPS", "PM"]);
@@ -107,7 +107,7 @@ export const PRO_SCALE_INDY: ProScaleValues = {
   sessionBonus: [4, 3, 2, 1],
 };
 
-/** The /edata event-scale picker options, in display order. */
+/** The /dataout event-scale picker options, in display order. */
 export const PRO_EVENT_SCALES: { value: ProEventScale; label: string }[] = [
   { value: "regular", label: "Regular season" },
   { value: "indy", label: "U.S. Nationals (Indy scale)" },

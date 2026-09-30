@@ -1,6 +1,7 @@
 import type { RunRow } from "./db";
 import { RACE_CLASSES } from "./schedule-classes";
 import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
+import { finishEt, finishMph } from "./run-finish";
 
 /**
  * Builder for CompuLink StarTrak "EData" elimination files (C##EDAT.TXT) — the
@@ -22,7 +23,7 @@ import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
  *
  * The timing data carries none of member/city/body/engine, so those merge in
  * from the tech cards already in the store (whatever /tech-cards, the
- * backfill, or the import control on /edata saved), matched per class by car
+ * backfill, or the import control on /dataout saved), matched per class by car
  * number first and driver name second. Every stored card is readable: cards
  * whose event_name matches the runs' event (or is blank) are trusted fully,
  * while a card tagged with a different event string — the /tech-cards page
@@ -84,10 +85,24 @@ export interface EdataExportResult {
   warnings: string[];
 }
 
+export interface DataOutExportOptions {
+  /**
+   * Class number per normalized category for the C#… filenames, so a class's
+   * EDAT and QDAT share one number even when only one of the two has data.
+   * Defaults to sequential numbering in class order over the file's own
+   * categories.
+   */
+  classNumbers?: Map<string, number>;
+}
+
 const EOL = "\r\n";
 
 function isElimRound(round: string | null | undefined): boolean {
   return !!round && (/^E\d+$/.test(round) || round === "F");
+}
+
+function isQualRound(round: string | null | undefined): boolean {
+  return !!round && /^Q\d*$/i.test(round.trim());
 }
 
 function roundOrder(round: string): number {
@@ -102,7 +117,7 @@ function roundLabel(round: string): string {
   return m ? `ROUND ${parseInt(m[1], 10)}` : round;
 }
 
-function isRunWinner(run: RunRow): boolean {
+export function isRunWinner(run: RunRow): boolean {
   const r = (run.result || "").trim().toUpperCase();
   return r === "W" || (!r && run.is_winner === 1);
 }
@@ -206,6 +221,16 @@ export function engineString(tc: EdataTechCard): string {
 
 export function fullName(tc: EdataTechCard): string {
   return csvSafe(`${tc.first_name || ""} ${tc.last_name || ""}`);
+}
+
+/** "1969" — QDAT prints the four-digit year; tech cards often carry two. */
+export function bodyYearFull(tc: EdataTechCard | null): string {
+  if (!tc) return "";
+  const digits = (tc.body_year || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 4) return digits;
+  const two = digits.slice(-2);
+  return `${parseInt(two, 10) < 50 ? "20" : "19"}${two}`;
 }
 
 // ——— Class codes and category ordering ———
@@ -441,9 +466,111 @@ function singleMarker(run: RunRow, tc: EdataTechCard | null): string {
   return `SINGLE,${member},,0,,,,,,,,`;
 }
 
-function tsMillis(ts: string): number {
+function tsMillis(ts: string | null | undefined): number {
+  if (!ts) return 0;
   const d = parseTsToDate(ts);
   return d ? d.getTime() : 0;
+}
+
+/**
+ * Every stored card is usable — the /tech-cards page and the backfill tag
+ * cards with their own source's event naming, which rarely equals the
+ * getresults string, so an exact-match filter would throw away cards that
+ * were imported precisely for this event. Cards whose tag matches (or is
+ * blank) are "local" and outrank the rest; other-event cards fill gaps under
+ * the name-compatibility guard in findTechCard.
+ */
+export function localCardTest(runs: RunRow[]): (tc: EdataTechCard) => boolean {
+  const eventNames = new Set(runs.map((r) => norm(r.event_name)).filter(Boolean));
+  return (tc) => {
+    const tag = norm(tc.event_name);
+    return !tag || eventNames.size === 0 || eventNames.has(tag);
+  };
+}
+
+/**
+ * Whether a class's finish line is the quarter or the eighth: a class with
+ * any 1320 data is quarter-mile; otherwise fall back to the 660.
+ */
+function isQuarterMileClass(catRuns: RunRow[]): boolean {
+  return (
+    catRuns.some((r) => r.ft1320 !== null || r.mph_1320 !== null) ||
+    !catRuns.some((r) => r.ft660 !== null)
+  );
+}
+
+export interface ElimPair {
+  /** Left lane first when lanes are known, else winner first. */
+  runs: RunRow[];
+  /** A bye — one racer, written with a SINGLE marker. */
+  single: boolean;
+}
+
+export interface ElimRound {
+  /** App round code: E1, E2, …, F. */
+  round: string;
+  /** Compulink heading: ROUND 1, …, FINALS. */
+  label: string;
+  pairs: ElimPair[];
+}
+
+/**
+ * One category's elimination rounds as pairings, in run order — the shared
+ * shape behind the EDAT text and the Final Round Results PDF. Pairs come from
+ * the timestamp grouping; a timing-system reset (same car twice in one pair)
+ * keeps the row with the most recorded data. Rows within a pair are left
+ * lane first when lanes are known, otherwise winner first (CompuLink's own
+ * ordering, and what EData-imported rows preserve).
+ */
+export function elimRoundsForCategory(
+  catRuns: RunRow[],
+  category: string,
+  warnings: string[] = [],
+): ElimRound[] {
+  const elimRuns = catRuns.filter((r) => isElimRound(r.round));
+  const roundCodes = [...new Set(elimRuns.map((r) => r.round as string))].sort(
+    (a, b) => roundOrder(a) - roundOrder(b),
+  );
+
+  return roundCodes.map((round) => {
+    const roundRuns = elimRuns.filter((r) => r.round === round);
+    const groups = [...groupRunsByTimestamp(roundRuns).entries()].sort(
+      (a, b) => tsMillis(a[0]) - tsMillis(b[0]),
+    );
+
+    const pairs: ElimPair[] = [];
+    for (const [, groupRuns] of groups) {
+      const byCar = new Map<string, RunRow>();
+      const anonymous: RunRow[] = [];
+      for (const r of groupRuns) {
+        const key = norm(r.car_number);
+        if (!key) {
+          anonymous.push(r);
+          continue;
+        }
+        const existing = byCar.get(key);
+        if (!existing || dataScore(r) > dataScore(existing)) byCar.set(key, r);
+      }
+      const pairRuns = [...byCar.values(), ...anonymous];
+
+      pairRuns.sort((a, b) => {
+        const la = laneOrder(a.lane);
+        const lb = laneOrder(b.lane);
+        if (la !== null && lb !== null && la !== lb) return la - lb;
+        return (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0);
+      });
+
+      if (pairRuns.length > 2) {
+        warnings.push(
+          `${category} ${round}: ${pairRuns.length} cars share one pairing (4-wide?) — written as consecutive lines.`,
+        );
+      }
+
+      pairs.push({ runs: pairRuns, single: pairRuns.length === 1 });
+    }
+
+    return { round, label: roundLabel(round), pairs };
+  });
 }
 
 /**
@@ -456,6 +583,7 @@ function tsMillis(ts: string): number {
 export function buildEdataExport(
   runs: RunRow[],
   techCards: EdataTechCard[] = [],
+  opts: DataOutExportOptions = {},
 ): EdataExportResult {
   const warnings: string[] = [];
 
@@ -469,17 +597,7 @@ export function buildEdataExport(
     else byCategory.set(cat, [run]);
   }
 
-  // Every stored card is usable — the /tech-cards page and the backfill tag
-  // cards with their own source's event naming, which rarely equals the
-  // getresults string, so an exact-match filter would throw away cards that
-  // were imported precisely for this event. Cards whose tag matches (or is
-  // blank) are "local" and outrank the rest; other-event cards fill gaps
-  // under the name-compatibility guard in techCardForRun.
-  const eventNames = new Set(runs.map((r) => norm(r.event_name)).filter(Boolean));
-  const isLocal = (tc: EdataTechCard) => {
-    const tag = norm(tc.event_name);
-    return !tag || eventNames.size === 0 || eventNames.has(tag);
-  };
+  const isLocal = localCardTest(runs);
 
   // Stable class numbering: known classes in RACE_CLASSES order (pros first),
   // anything else alphabetically after them.
@@ -498,81 +616,37 @@ export function buildEdataExport(
     // The entry system's own abbreviation beats our name-table guess.
     const code = techIndex.code || fallbackCode;
 
-    // Whether this class's finish line is the quarter or the eighth: a class
-    // with any 1320 data is quarter-mile; otherwise fall back to the 660.
-    const quarterMile =
-      catRuns.some((r) => r.ft1320 !== null || r.mph_1320 !== null) ||
-      !catRuns.some((r) => r.ft660 !== null);
-
-    const roundCodes = [...new Set(catRuns.map((r) => r.round as string))].sort(
-      (a, b) => roundOrder(a) - roundOrder(b),
-    );
+    const quarterMile = isQuarterMileClass(catRuns);
+    const rounds = elimRoundsForCategory(catRuns, category, warnings);
 
     const lines: string[] = [`Compulink StarTrak ${category.toUpperCase()} Elimination Results`];
     let pairs = 0;
     let runCount = 0;
     let enriched = 0;
 
-    for (const round of roundCodes) {
-      const roundRuns = catRuns.filter((r) => r.round === round);
-      const groups = [...groupRunsByTimestamp(roundRuns).entries()].sort(
-        (a, b) => tsMillis(a[0]) - tsMillis(b[0]),
-      );
-
-      lines.push(roundLabel(round));
-
-      for (const [, groupRuns] of groups) {
-        // Collapse timing-system resets: same car twice in one pair keeps the
-        // row with the most recorded data.
-        const byCar = new Map<string, RunRow>();
-        const anonymous: RunRow[] = [];
-        for (const r of groupRuns) {
-          const key = norm(r.car_number);
-          if (!key) {
-            anonymous.push(r);
-            continue;
-          }
-          const existing = byCar.get(key);
-          if (!existing || dataScore(r) > dataScore(existing)) byCar.set(key, r);
-        }
-        const pairRuns = [...byCar.values(), ...anonymous];
-
-        // Left lane first when lanes are known; otherwise winner first
-        // (CompuLink's own ordering, and what EData-imported rows preserve).
-        pairRuns.sort((a, b) => {
-          const la = laneOrder(a.lane);
-          const lb = laneOrder(b.lane);
-          if (la !== null && lb !== null && la !== lb) return la - lb;
-          return (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0);
-        });
-
-        if (pairRuns.length > 2) {
-          warnings.push(
-            `${category} ${round}: ${pairRuns.length} cars share one pairing (4-wide?) — written as consecutive lines.`,
-          );
-        }
-
-        for (const r of pairRuns) {
+    for (const rd of rounds) {
+      lines.push(rd.label);
+      for (const pair of rd.pairs) {
+        for (const r of pair.runs) {
           const tc = techCardForRun(r, techIndex);
           if (tc) enriched++;
           lines.push(runLine(r, tc, code, quarterMile));
         }
-        if (pairRuns.length === 1) {
-          lines.push(singleMarker(pairRuns[0], techCardForRun(pairRuns[0], techIndex)));
+        if (pair.single) {
+          lines.push(singleMarker(pair.runs[0], techCardForRun(pair.runs[0], techIndex)));
         }
-
         pairs++;
-        runCount += pairRuns.length;
+        runCount += pair.runs.length;
       }
     }
 
     lines.push("End of File");
 
     files.push({
-      filename: `C${catIndex + 1}EDAT.TXT`,
+      filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}EDAT.TXT`,
       category,
       classCode: code,
-      rounds: roundCodes,
+      rounds: rounds.map((r) => r.round),
       pairs,
       runs: runCount,
       enriched,
@@ -636,7 +710,8 @@ export function buildQdatFile(
         csvSafe(e.classOrIndex),
         csvSafe(e.body),
         csvSafe(e.bodyYear),
-        csvSafe(e.engine),
+        // "CHEV  665" keeps its two spaces, as the golden files (and EDAT) print it.
+        e.engine.replace(/,/g, " ").trim(),
         csvSafe(e.hp),
         csvSafe(e.factoredHp),
         csvSafe(e.name),
@@ -650,4 +725,350 @@ export function buildQdatFile(
 
   lines.push("End of File");
   return lines.join(EOL) + EOL;
+}
+
+// ——— QDAT from stored runs: qualifying order off getresults ———
+
+/**
+ * The qualifying file built from the app's own stored runs, the way
+ * buildEdataExport builds EDAT. The sheet's ORDER is the racer's qualifying
+ * position as getresults shows it: every grid row carries a "Q Pos" column
+ * (`qual_pos`), and the one on a racer's most recent pass — the elimination
+ * rows carry the final ladder position — is the number the timing system
+ * settled on. Nothing is re-ranked here; a racer with no position on any
+ * pass is written after the ladder, in best-ET order, and said so.
+ *
+ * Which pass is the "best" one (the ET, index and difference printed on the
+ * line) depends on how the class qualifies, read from the qualifying passes'
+ * dial-in column rather than the class name:
+ *
+ *   - no dial-in on the qualifying passes (pros, Top Dragster/Sportsman):
+ *     lowest ET;
+ *   - one index shared by the whole field (Super Comp 8.90, Super Gas 9.90,
+ *     Super Street 10.90): closest to the index without going under it, and
+ *     the closest breakout only when every pass broke out;
+ *   - a per-car index (Stock, Super Stock, Comp): furthest under the index.
+ */
+
+export interface QdatExportFile {
+  /** C1QDAT.TXT, C2QDAT.TXT, … — the same class number as the class's EDAT. */
+  filename: string;
+  category: string;
+  classCode: string;
+  /** Qualifying rounds present (Q1, Q2, …), in run order. */
+  rounds: string[];
+  /** Qualifiers written. */
+  entries: number;
+  /** Entries placed by a getresults qualifying position; the rest follow in best-ET order. */
+  positioned: number;
+  /** How many of the qualifiers found a tech card to fill the entry fields. */
+  enriched: number;
+  content: string;
+  /** The written entries, in sheet order — the qualifying PDF is drawn from these. */
+  qualifiers: QdatEntry[];
+  lowEt: { et: number; car: string; name: string } | null;
+  topSpeed: { mph: number; car: string; name: string } | null;
+  /** Whether the class qualifies against an index (Index / Ov-Un columns on the sheet). */
+  hasIndex: boolean;
+}
+
+export interface QdatExportResult {
+  files: QdatExportFile[];
+  warnings: string[];
+}
+
+interface QualifierAgg {
+  car: string;
+  /** Most recent pass — its name / class designation / member number are the current ones. */
+  latest: RunRow;
+  /** Qualifying passes only (Q rounds). */
+  qualPasses: RunRow[];
+  /** The Q Pos on the racer's most recent pass that carries one. */
+  lastPos: number | null;
+  lastPosTs: number;
+  lastPosSeq: number;
+}
+
+function qualRoundOrder(round: string): number {
+  const m = round.trim().match(/^Q(\d*)$/i);
+  return m ? (m[1] ? parseInt(m[1], 10) : 0) : 999;
+}
+
+function passEt(run: RunRow, quarterMile: boolean): number | null {
+  const et = quarterMile ? run.ft1320 : finishEt(run);
+  return et !== null && et !== undefined && et > 0 ? et : null;
+}
+
+function passMph(run: RunRow, quarterMile: boolean): number | null {
+  const mph = quarterMile ? run.mph_1320 : finishMph(run);
+  return mph !== null && mph !== undefined && mph > 0 ? mph : null;
+}
+
+function passIndex(run: RunRow): number | null {
+  return run.dial_in !== null && run.dial_in !== undefined && run.dial_in > 0 ? run.dial_in : null;
+}
+
+type QualRule = "lowest" | "closest_over" | "furthest_under";
+
+/** How the class ranks a qualifying pass — from the field's dial-in column, not its name. */
+function qualRuleFor(qualPasses: RunRow[]): QualRule {
+  const indexes = new Set(qualPasses.map(passIndex).filter((v): v is number => v !== null));
+  if (indexes.size === 0) return "lowest";
+  return indexes.size === 1 ? "closest_over" : "furthest_under";
+}
+
+function bestQualPass(passes: RunRow[], rule: QualRule, quarterMile: boolean): RunRow | null {
+  const timed = passes.filter((p) => passEt(p, quarterMile) !== null);
+  if (timed.length === 0) return null;
+  const et = (p: RunRow) => passEt(p, quarterMile) as number;
+  if (rule === "lowest") return timed.reduce((a, b) => (et(b) < et(a) ? b : a));
+
+  const indexed = timed.filter((p) => passIndex(p) !== null);
+  if (indexed.length === 0) return timed.reduce((a, b) => (et(b) < et(a) ? b : a));
+  const margin = (p: RunRow) => et(p) - (passIndex(p) as number);
+
+  if (rule === "furthest_under") return indexed.reduce((a, b) => (margin(b) < margin(a) ? b : a));
+
+  const clean = indexed.filter((p) => margin(p) >= 0);
+  const pool = clean.length > 0 ? clean : indexed;
+  return pool.reduce((a, b) => (Math.abs(margin(b)) < Math.abs(margin(a)) ? b : a));
+}
+
+/** A class designation as the timing system prints it ("E/SA", "TF", "SC") — not a dial-in or a blank. */
+function classDesignation(run: RunRow): string {
+  const v = (run.class_index || "").trim();
+  if (!v || /^[\d.]+$/.test(v)) return "";
+  return v;
+}
+
+/**
+ * Build one QDAT file per category from the event's stored runs. Only
+ * categories with qualifying passes (Q rounds) are written; a racer's
+ * position is the Q Pos on their most recent pass of any round, so an event
+ * whose eliminations are on file gets the final ladder order.
+ */
+export function buildQdatExport(
+  runs: RunRow[],
+  techCards: EdataTechCard[] = [],
+  opts: DataOutExportOptions = {},
+): QdatExportResult {
+  const warnings: string[] = [];
+
+  const byCategory = new Map<string, RunRow[]>();
+  for (const run of runs) {
+    const cat = (run.category || "").trim();
+    if (!cat) continue;
+    const list = byCategory.get(cat);
+    if (list) list.push(run);
+    else byCategory.set(cat, [run]);
+  }
+
+  const isLocal = localCardTest(runs);
+
+  const categories = [...byCategory.entries()]
+    .filter(([, catRuns]) => catRuns.some((r) => isQualRound(r.round)))
+    .map(([category, catRuns]) => ({ category, catRuns, ...classInfo(category, catRuns) }))
+    .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
+
+  const files: QdatExportFile[] = [];
+
+  categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
+    const techIndex = indexTechCards(
+      techCards
+        .filter((tc) => techCardMatchesCategory(tc, category, fallbackCode))
+        .map((tc) => ({ tc, local: isLocal(tc) })),
+    );
+    const code = techIndex.code || fallbackCode;
+    const quarterMile = isQuarterMileClass(catRuns);
+
+    // One aggregate per racer — car number first, name for the rare bare row.
+    const racers = new Map<string, QualifierAgg>();
+    // Oldest first, so "latest" and "last position" fall out of a forward walk.
+    const ordered = [...catRuns].sort(
+      (a, b) =>
+        tsMillis(a.timestamp) - tsMillis(b.timestamp) || (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0),
+    );
+    ordered.forEach((run, seq) => {
+      const key = norm(run.car_number) || (norm(run.name) ? `NAME:${norm(run.name)}` : "");
+      if (!key) return;
+      let agg = racers.get(key);
+      if (!agg) {
+        agg = {
+          car: (run.car_number || "").trim(),
+          latest: run,
+          qualPasses: [],
+          lastPos: null,
+          lastPosTs: 0,
+          lastPosSeq: -1,
+        };
+        racers.set(key, agg);
+      }
+      agg.latest = run;
+      if (isQualRound(run.round)) agg.qualPasses.push(run);
+      if (run.qual_pos !== null && run.qual_pos !== undefined && run.qual_pos > 0) {
+        const ts = tsMillis(run.timestamp);
+        if (ts > agg.lastPosTs || (ts === agg.lastPosTs && seq > agg.lastPosSeq)) {
+          agg.lastPos = run.qual_pos;
+          agg.lastPosTs = ts;
+          agg.lastPosSeq = seq;
+        }
+      }
+    });
+
+    // Only racers who made a qualifying pass belong on the qualifying sheet —
+    // an elimination-only car (an alternate, a stale roster row) does not.
+    const qualifiers = [...racers.values()].filter((a) => a.qualPasses.length > 0);
+    const allQualPasses = qualifiers.flatMap((a) => a.qualPasses);
+    const rule = qualRuleFor(allQualPasses);
+
+    let enriched = 0;
+    const rows = qualifiers.map((agg) => {
+      const tc = findTechCard(agg.car || null, agg.latest.name, techIndex);
+      if (tc) enriched++;
+      const best = bestQualPass(agg.qualPasses, rule, quarterMile);
+      const et = best ? passEt(best, quarterMile) : null;
+      const index = best ? passIndex(best) : null;
+      const mph = agg.qualPasses
+        .map((p) => passMph(p, quarterMile))
+        .reduce<number | null>((a, m) => (m !== null && (a === null || m > a) ? m : a), null);
+      const entry: QdatEntry = {
+        car: agg.car,
+        member: csvSafe(agg.latest.member_number || "") || (tc ? csvSafe(tc.member_number || "") : ""),
+        classOrIndex: classDesignation(agg.latest) || (tc ? tc.category || "" : "") || code,
+        body: tc ? bodyString(tc) : "",
+        bodyYear: bodyYearFull(tc),
+        engine: tc ? engineString(tc) : "",
+        hp: tc?.hp || "",
+        factoredHp: tc?.factored_hp || "",
+        name: (tc ? fullName(tc) : "") || csvSafe(agg.latest.name || ""),
+        cityState: tc ? cityState(tc) : "",
+        et,
+        index,
+        mph,
+      };
+      return { entry, pos: agg.lastPos };
+    });
+
+    // The ladder as getresults has it, then anyone it never placed by ET.
+    rows.sort((a, b) => {
+      if (a.pos !== null && b.pos !== null && a.pos !== b.pos) return a.pos - b.pos;
+      if (a.pos !== null && b.pos === null) return -1;
+      if (a.pos === null && b.pos !== null) return 1;
+      const ea = a.entry.et ?? Number.POSITIVE_INFINITY;
+      const eb = b.entry.et ?? Number.POSITIVE_INFINITY;
+      return ea - eb || a.entry.name.localeCompare(b.entry.name);
+    });
+
+    const positioned = rows.filter((r) => r.pos !== null).length;
+    if (positioned === 0) {
+      warnings.push(
+        `${category}: getresults shows no qualifying positions — the qualifying sheet is in best-ET order instead.`,
+      );
+    } else if (positioned < rows.length) {
+      warnings.push(
+        `${category}: ${rows.length - positioned} qualifier${rows.length - positioned === 1 ? "" : "s"} with no position on getresults — written after the ladder in best-ET order.`,
+      );
+    }
+    const posCounts = new Map<number, string[]>();
+    for (const r of rows) {
+      if (r.pos === null) continue;
+      const list = posCounts.get(r.pos);
+      if (list) list.push(r.entry.car || r.entry.name);
+      else posCounts.set(r.pos, [r.entry.car || r.entry.name]);
+    }
+    for (const [pos, cars] of posCounts) {
+      if (cars.length > 1) {
+        warnings.push(`${category}: position ${pos} is shown for ${cars.join(" and ")} — check the ladder on getresults.`);
+      }
+    }
+
+    // Low ET / Top Speed across every qualifying pass, named as the sheet names them.
+    let lowEt: { et: number; car: string; name: string } | null = null;
+    let topSpeed: { mph: number; car: string; name: string } | null = null;
+    for (const agg of qualifiers) {
+      const row = rows.find((r) => r.entry.car === agg.car && r.entry.name)?.entry;
+      const name = row?.name || csvSafe(agg.latest.name || "");
+      for (const p of agg.qualPasses) {
+        const et = passEt(p, quarterMile);
+        const mph = passMph(p, quarterMile);
+        if (et !== null && (!lowEt || et < lowEt.et)) lowEt = { et, car: agg.car, name };
+        if (mph !== null && (!topSpeed || mph > topSpeed.mph)) topSpeed = { mph, car: agg.car, name };
+      }
+    }
+
+    const roundCodes = [...new Set(allQualPasses.map((r) => (r.round || "").trim()))].sort(
+      (a, b) => qualRoundOrder(a) - qualRoundOrder(b),
+    );
+
+    files.push({
+      filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}QDAT.TXT`,
+      category,
+      classCode: code,
+      rounds: roundCodes,
+      entries: rows.length,
+      positioned,
+      enriched,
+      content: buildQdatFile(
+        category,
+        rows.map((r) => r.entry),
+        lowEt,
+        topSpeed,
+      ),
+      qualifiers: rows.map((r) => r.entry),
+      lowEt,
+      topSpeed,
+      hasIndex: rule !== "lowest",
+    });
+  });
+
+  if (files.length === 0) {
+    warnings.push("No qualifying rounds (Q1, Q2, …) on file for this event yet.");
+  }
+
+  return { files, warnings };
+}
+
+// ——— Data Out: EDAT + QDAT together, one class number per class ———
+
+export interface DataOutExportResult {
+  edat: EdataExportFile[];
+  qdat: QdatExportFile[];
+  warnings: string[];
+}
+
+/**
+ * The full Compulink text set for an event from its stored runs: EDAT for
+ * every class with eliminations, QDAT for every class with qualifying, and
+ * the SAME C# number for both files of a class — numbered across the union
+ * of the two, in class order — so C3EDAT.TXT and C3QDAT.TXT are always the
+ * same class even mid-event, when some classes have only qualified.
+ */
+export function buildDataOutExport(
+  runs: RunRow[],
+  techCards: EdataTechCard[] = [],
+): DataOutExportResult {
+  const byCategory = new Map<string, RunRow[]>();
+  for (const run of runs) {
+    if (!isElimRound(run.round) && !isQualRound(run.round)) continue;
+    const cat = (run.category || "").trim();
+    if (!cat) continue;
+    const list = byCategory.get(cat);
+    if (list) list.push(run);
+    else byCategory.set(cat, [run]);
+  }
+  const ordered = [...byCategory.entries()]
+    .map(([category, catRuns]) => ({ category, ...classInfo(category, catRuns) }))
+    .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
+  const classNumbers = new Map(ordered.map((c, i) => [norm(c.category), i + 1]));
+
+  const edat = buildEdataExport(runs, techCards, { classNumbers });
+  const qdat = buildQdatExport(runs, techCards, { classNumbers });
+
+  const warnings: string[] = [];
+  if (edat.files.length === 0 && qdat.files.length === 0) {
+    warnings.push("No qualifying or elimination rounds on file for this event yet.");
+  } else {
+    warnings.push(...edat.warnings, ...qdat.warnings);
+  }
+  return { edat: edat.files, qdat: qdat.files, warnings };
 }

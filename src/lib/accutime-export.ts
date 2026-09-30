@@ -10,6 +10,7 @@ import {
   fmtEt,
   fmtMph,
   bodyString,
+  bodyYearFull,
   cityState,
   engineString,
   fullName,
@@ -405,23 +406,14 @@ export function buildAccuTimeArtifacts(
   };
 }
 
-function bodyYearFull(tc: EdataTechCard | null): string {
-  if (!tc) return "";
-  const digits = (tc.body_year || "").replace(/\D/g, "");
-  if (!digits) return "";
-  if (digits.length === 4) return digits;
-  const two = digits.slice(-2);
-  return `${parseInt(two, 10) < 50 ? "20" : "19"}${two}`;
-}
-
-function prettyDate(iso: string): string {
+export function prettyDate(iso: string): string {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return iso;
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   return `${months[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}, ${m[1]}`;
 }
 
-function shortDate(iso: string): string {
+export function shortDate(iso: string): string {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return iso;
   const mAbbr = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];

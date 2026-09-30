@@ -1215,6 +1215,18 @@ export async function getElimRunsForEvent(eventCode: string, season: string): Pr
   return allRuns.filter((r) => !!r.round && (/^E\d+$/.test(r.round) || r.round === "F"));
 }
 
+/**
+ * Every run for an event (qualifying, eliminations, time trials), all
+ * categories, with AM/PM-tagged timestamps. Feeds the Data Out package
+ * (src/lib/dataout-export.ts), which needs the Q rounds for QDAT and the
+ * qualifying sheet alongside the eliminations.
+ */
+export async function getTaggedRunsForEvent(eventCode: string, season: string): Promise<RunRow[]> {
+  const allRuns = await getEventRuns(eventCode, season);
+  tagRunTimestamps(allRuns);
+  return allRuns;
+}
+
 export interface NoShow {
   name: string;
   car_number: string;

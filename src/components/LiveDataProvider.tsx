@@ -18,7 +18,7 @@ export interface LiveConfig {
   /**
    * Live data source. "scraper" = getresults.nhradata.com (default);
    * "api" = official api.nhra.com; "edata" = CompuLink EData files uploaded on
-   * /edata. EData is a manual import, so on that setting nothing is polled at
+   * /dataout. EData is a manual import, so on that setting nothing is polled at
    * all — the uploaded rounds are the only source, and neither getresults nor
    * the API can overwrite them.
    */

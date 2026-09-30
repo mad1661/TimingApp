@@ -61,9 +61,52 @@ interface ExportFile {
   content: string;
 }
 
-interface ExportResult {
-  files: ExportFile[];
+interface QdatFile {
+  filename: string;
+  category: string;
+  classCode: string;
+  rounds: string[];
+  entries: number;
+  positioned: number;
+  enriched: number;
+  hasIndex: boolean;
+  content: string;
+}
+
+interface DataOutResult {
+  edat: ExportFile[];
+  qdat: QdatFile[];
+  finalsPdfBase64: string | null;
+  qualifyingPdfBase64: string | null;
   warnings: string[];
+}
+
+/** One class row on the export checklist: its EDAT and/or QDAT. */
+interface ExportClass {
+  category: string;
+  classCode: string;
+  /** From the C# filename — the same number on both files. */
+  classNum: number;
+  edat: ExportFile | null;
+  qdat: QdatFile | null;
+}
+
+function classNumOf(filename: string): number {
+  const m = filename.match(/^C(\d+)/i);
+  return m ? parseInt(m[1], 10) : 999;
+}
+
+function mergeExportClasses(edat: ExportFile[], qdat: QdatFile[]): ExportClass[] {
+  const byCat = new Map<string, ExportClass>();
+  for (const f of edat) {
+    byCat.set(f.category, { category: f.category, classCode: f.classCode, classNum: classNumOf(f.filename), edat: f, qdat: null });
+  }
+  for (const f of qdat) {
+    const row = byCat.get(f.category);
+    if (row) row.qdat = f;
+    else byCat.set(f.category, { category: f.category, classCode: f.classCode, classNum: classNumOf(f.filename), edat: null, qdat: f });
+  }
+  return [...byCat.values()].sort((a, b) => a.classNum - b.classNum || a.category.localeCompare(b.category));
 }
 
 interface AccuSession {
@@ -333,7 +376,7 @@ function downloadBytes(filename: string, bytes: Uint8Array, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function EdataPage() {
+export default function DataOutPage() {
   const live = useLiveData();
   const source = live.config?.dataSource ?? "scraper";
 
@@ -354,10 +397,18 @@ export default function EdataPage() {
   const tcFileRef = useRef<HTMLInputElement>(null);
 
   const [exportLoading, setExportLoading] = useState(false);
-  const [exportFiles, setExportFiles] = useState<ExportFile[] | null>(null);
+  const [exportClasses, setExportClasses] = useState<ExportClass[] | null>(null);
   const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [exportError, setExportError] = useState("");
+  // Selected class names (categories) — one tick covers the class's EDAT and QDAT.
   const [selectedClasses, setSelectedClasses] = useState<Set<string>>(new Set());
+  const [includeEdat, setIncludeEdat] = useState(true);
+  const [includeQdat, setIncludeQdat] = useState(true);
+  // The PDFs build server-side for the picked classes on demand (they carry
+  // the header logos), separately from the quick class-list load.
+  const [pdfBuilding, setPdfBuilding] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+  const [pdfNote, setPdfNote] = useState("");
   // Guards against a slow response for a previously typed event landing after
   // a newer one.
   const exportFetchSeq = useRef(0);
@@ -603,26 +654,45 @@ export default function EdataPage() {
     }
   }
 
+  async function postDataOut(
+    ec: string,
+    s: string,
+    extra: { pdfs: boolean; categories?: string[] },
+  ): Promise<DataOutResult> {
+    const res = await fetch("/api/dataout-export", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_code: ec,
+        season: s,
+        event_name: live.config?.eventName || "",
+        series_header: accuSeries.trim(),
+        logos: extra.pdfs ? accuLogos : undefined,
+        categories: extra.categories,
+        pdfs: extra.pdfs,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || "Export failed");
+    return body as DataOutResult;
+  }
+
   async function loadExportClasses(ec: string, s: string) {
     const seq = ++exportFetchSeq.current;
     setExportLoading(true);
     setExportError("");
     try {
-      const res = await fetch(
-        `/api/edata-export?event_code=${encodeURIComponent(ec)}&season=${encodeURIComponent(s)}`,
-        { cache: "no-store" },
-      );
-      const body = await res.json();
+      const result = await postDataOut(ec, s, { pdfs: false });
       if (seq !== exportFetchSeq.current) return;
-      if (!res.ok) throw new Error(body.error || "Export failed");
-      const result = body as ExportResult;
-      setExportFiles(result.files);
+      const classes = mergeExportClasses(result.edat, result.qdat);
+      setExportClasses(classes);
       setExportWarnings(result.warnings);
       // Everything starts checked — the common case is "give me the event".
-      setSelectedClasses(new Set(result.files.map((f) => f.filename)));
+      setSelectedClasses(new Set(classes.map((c) => c.category)));
     } catch (err) {
       if (seq !== exportFetchSeq.current) return;
-      setExportFiles(null);
+      setExportClasses(null);
       setExportWarnings([]);
       setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {
@@ -631,13 +701,15 @@ export default function EdataPage() {
   }
 
   // The class checklist loads itself whenever the event/season fields settle,
-  // so downloading is: tick the classes, hit Download EDAT.
+  // so downloading is: tick the classes, hit Download.
   useEffect(() => {
     const ec = eventCode.trim();
     const s = season.trim();
-    setExportFiles(null);
+    setExportClasses(null);
     setExportWarnings([]);
     setExportError("");
+    setPdfError("");
+    setPdfNote("");
     setSelectedClasses(new Set());
     if (!ec || !s) {
       exportFetchSeq.current++; // cancel anything in flight
@@ -648,13 +720,58 @@ export default function EdataPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventCode, season]);
 
-  function toggleClass(filename: string) {
+  function toggleClass(category: string) {
     setSelectedClasses((prev) => {
       const next = new Set(prev);
-      if (next.has(filename)) next.delete(filename);
-      else next.add(filename);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
       return next;
     });
+  }
+
+  /** The text files the current ticks and toggles select. */
+  function pickedTextFiles(): { filename: string; content: string }[] {
+    const out: { filename: string; content: string }[] = [];
+    for (const c of exportClasses || []) {
+      if (!selectedClasses.has(c.category)) continue;
+      if (includeQdat && c.qdat) out.push(c.qdat);
+      if (includeEdat && c.edat) out.push(c.edat);
+    }
+    return out;
+  }
+
+  // Build the qualifying + Final Round Results PDFs for the picked classes
+  // with the header logos and series line, then save whichever came back.
+  async function handleDownloadPdfs() {
+    const ec = eventCode.trim();
+    const s = season.trim();
+    if (!ec || !s || selectedClasses.size === 0) return;
+    setPdfBuilding(true);
+    setPdfError("");
+    setPdfNote("");
+    try {
+      const result = await postDataOut(ec, s, { pdfs: true, categories: [...selectedClasses] });
+      const got: string[] = [];
+      if (result.qualifyingPdfBase64) {
+        downloadBytes("Qualifying.pdf", base64ToBytes(result.qualifyingPdfBase64), "application/pdf");
+        got.push("Qualifying.pdf");
+      }
+      if (result.finalsPdfBase64) {
+        downloadBytes("FinalRoundResults.pdf", base64ToBytes(result.finalsPdfBase64), "application/pdf");
+        got.push("FinalRoundResults.pdf");
+      }
+      setPdfNote(
+        got.length
+          ? `Downloaded ${got.join(" and ")}.`
+          : "Nothing to print yet — the picked classes have no qualifying or elimination rounds on file.",
+      );
+      const extra = result.warnings.filter((w) => !exportWarnings.includes(w));
+      if (extra.length) setExportWarnings((prev) => [...prev, ...extra]);
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : "PDF build failed");
+    } finally {
+      setPdfBuilding(false);
+    }
   }
 
   // fetch() can't report upload progress, so the AccuTime post goes through
@@ -832,8 +949,8 @@ export default function EdataPage() {
     downloadBytes("RACEDATA.zip", zipSync(entries), "application/zip");
   }
 
-  function handleDownloadEdata() {
-    const picked = (exportFiles || []).filter((f) => selectedClasses.has(f.filename));
+  function handleDownloadText() {
+    const picked = pickedTextFiles();
     if (picked.length === 0) return;
     if (picked.length === 1) {
       downloadBytes(picked[0].filename, edataBytes(picked[0].content), "text/plain");
@@ -849,11 +966,12 @@ export default function EdataPage() {
   return (
     <div className="max-w-4xl mx-auto pb-16">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-white mb-1">EData</h1>
+        <h1 className="text-3xl font-bold text-white mb-1">Data Out</h1>
         <p className="text-gray-400">
-          Load elimination results straight from the timing system&apos;s own CompuLink EData files
-          when getresults is down or lagging — or export the app&apos;s elimination rounds as EDAT
-          files and a RACEDATA.zip.
+          Everything that leaves the app as Compulink files: build EDAT + QDAT text, the qualifying
+          sheet and the Final Round Results PDFs from the getresults data already on file, or from
+          AccuTime session files — and load CompuLink EData back in when getresults is down or
+          lagging.
         </p>
       </div>
 
@@ -1026,20 +1144,97 @@ export default function EdataPage() {
         </div>
       )}
 
-      {/* ——— Export: the reverse direction — stored elim rounds → EDAT files ——— */}
+      {/* ——— Sheet header: logos + series line, shared by every PDF built on
+          this page (getresults export and AccuTime export alike) ——— */}
+      <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
+        <div className="mb-3">
+          <h2 className="text-white font-bold text-lg">Sheet header</h2>
+          <p className="text-xs text-gray-400 mt-1 max-w-2xl">
+            Printed across the top of the qualifying and Final Round Results PDFs from either
+            export below. Leave the logos empty for text-only headers. Saved in this browser.
+          </p>
+        </div>
+        <input
+          ref={accuLogoInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleLogoPick(e.target.files)}
+        />
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {ACCU_LOGO_SLOTS.map((slot) => {
+            const img = accuLogos[slot.key];
+            return (
+              <div key={slot.key} className="relative group">
+                <button
+                  onClick={() => {
+                    accuLogoSlotRef.current = slot.key;
+                    accuLogoInputRef.current?.click();
+                  }}
+                  className={`w-full h-[105px] rounded-xl flex items-center px-2 transition-colors ${
+                    img
+                      ? `${slot.align} border border-nhra-border/60 bg-white/[0.03] hover:border-gray-600`
+                      : "justify-center border-2 border-dashed border-nhra-border hover:border-gray-600"
+                  }`}
+                  title={img ? "Click to replace this logo" : slot.label}
+                >
+                  {img ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={img}
+                      alt={`${slot.key} logo`}
+                      className="max-h-[97px] max-w-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs text-gray-500">{slot.label}</span>
+                  )}
+                </button>
+                {img && (
+                  <button
+                    onClick={() => updateLogo(slot.key, null)}
+                    className="absolute top-1.5 right-1.5 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-black/70 border border-nhra-border text-gray-300 hover:text-white text-xs"
+                    title="Remove this logo"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <label className="text-xs text-gray-400 block">
+          Header / series line (PDF banner)
+          <input
+            value={accuSeries}
+            onChange={(e) => {
+              accuSeriesEdited.current = true;
+              setAccuSeries(e.target.value);
+            }}
+            placeholder="e.g. NHRA Mission Foods Drag Racing Series — AccuTime drops prefill it from Class.ini; blank prints the event name"
+            className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+          />
+        </label>
+      </div>
+
+      {/* ——— Export from getresults: stored runs → EDAT + QDAT text + PDFs ——— */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
         <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
           <div>
-            <h2 className="text-white font-bold text-lg">Export EDAT / RACEDATA</h2>
-            <p className="text-xs text-gray-400 mt-1 max-w-xl">
-              Import the tech cards, tick the classes you want, then Download EDAT — one
-              C#EDAT.TXT for a single class, a RACEDATA.zip when several are picked. The list
-              shows every class with elimination rounds on file for the event code and season
-              above. Full names, member numbers, city, body and engine merge in from the tech
-              cards, matched within each class by car number (or driver name); only rounds
-              already on file are written, nothing is invented. Pairs are left lane then right;
-              rounds imported from EData (no lanes) are written winner-first, CompuLink&apos;s own
-              convention.
+            <h2 className="text-white font-bold text-lg">Export from getresults — EDAT / QDAT / PDFs</h2>
+            <p className="text-xs text-gray-400 mt-1 max-w-2xl">
+              Import the tech cards, tick the classes you want, then download. The list shows every
+              class with qualifying or elimination rounds on file for the event code and season
+              above. <span className="font-mono">C#EDAT.TXT</span> holds the eliminations,{" "}
+              <span className="font-mono">C#QDAT.TXT</span> the qualifying order — the same class
+              number on both — and the PDFs are the StarTrak qualifying sheet and the Final Round
+              Results with each class&apos;s round-by-round page, exactly as the AccuTime export
+              prints them. The qualifying order is each racer&apos;s last <em>Q Pos</em> on
+              getresults (the final ladder position once eliminations are on file); racers it
+              never placed follow in best-ET order. Full names, member numbers, city, body and
+              engine merge in from the tech cards, matched within each class by car number (or
+              driver name); only rounds already on file are written, nothing is invented. EDAT
+              pairs are left lane then right; rounds imported from EData (no lanes) are written
+              winner-first, CompuLink&apos;s own convention.
             </p>
           </div>
         </div>
@@ -1087,37 +1282,41 @@ export default function EdataPage() {
         )}
 
         {exportLoading && (
-          <p className="mt-3 text-sm text-gray-500">Loading classes with elimination data…</p>
+          <p className="mt-3 text-sm text-gray-500">Loading classes with qualifying or elimination data…</p>
         )}
 
-        {!exportLoading && exportFiles && exportFiles.length === 0 && (
+        {!exportLoading && exportClasses && exportClasses.length === 0 && (
           <p className="mt-3 text-sm text-gray-500">
-            No elimination rounds on file for this event yet.
+            No qualifying or elimination rounds on file for this event yet.
           </p>
         )}
 
-        {!exportLoading && exportFiles && exportFiles.length > 0 && (
+        {!exportLoading && exportClasses && exportClasses.length > 0 && (
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
               <p className="text-xs text-gray-400">
                 <span className="text-white font-semibold">2 · Pick classes</span> —{" "}
-                {selectedClasses.size} of {exportFiles.length} selected ·{" "}
-                {exportFiles
-                  .filter((f) => selectedClasses.has(f.filename))
-                  .reduce((n, f) => n + f.pairs, 0)}{" "}
+                {selectedClasses.size} of {exportClasses.length} selected ·{" "}
+                {exportClasses
+                  .filter((c) => selectedClasses.has(c.category))
+                  .reduce((n, c) => n + (c.qdat?.entries || 0), 0)}{" "}
+                qualifiers ·{" "}
+                {exportClasses
+                  .filter((c) => selectedClasses.has(c.category))
+                  .reduce((n, c) => n + (c.edat?.pairs || 0), 0)}{" "}
                 pairings
               </p>
               <button
                 onClick={() =>
                   setSelectedClasses(
-                    selectedClasses.size === exportFiles.length
+                    selectedClasses.size === exportClasses.length
                       ? new Set()
-                      : new Set(exportFiles.map((f) => f.filename)),
+                      : new Set(exportClasses.map((c) => c.category)),
                   )
                 }
                 className="text-xs text-gray-400 hover:text-white font-semibold"
               >
-                {selectedClasses.size === exportFiles.length ? "Select none" : "Select all"}
+                {selectedClasses.size === exportClasses.length ? "Select none" : "Select all"}
               </button>
             </div>
             <div className="overflow-x-auto">
@@ -1126,19 +1325,21 @@ export default function EdataPage() {
                   <tr>
                     <th className="px-4 py-2 w-8"></th>
                     <th className="text-left px-2 py-2 font-medium">Class</th>
-                    <th className="text-left px-3 py-2 font-medium">File</th>
-                    <th className="text-left px-3 py-2 font-medium">Rounds</th>
-                    <th className="text-right px-3 py-2 font-medium">Pairings</th>
+                    <th className="text-left px-3 py-2 font-medium">Files</th>
+                    <th className="text-left px-3 py-2 font-medium">Qualifying</th>
+                    <th className="text-left px-3 py-2 font-medium">Eliminations</th>
                     <th className="text-right px-4 py-2 font-medium">Tech cards</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {exportFiles.map((f) => {
-                    const checked = selectedClasses.has(f.filename);
+                  {exportClasses.map((c) => {
+                    const checked = selectedClasses.has(c.category);
+                    const runs = (c.edat?.runs || 0) + (c.qdat?.entries || 0);
+                    const enriched = (c.edat?.enriched || 0) + (c.qdat?.enriched || 0);
                     return (
                       <tr
-                        key={f.filename}
-                        onClick={() => toggleClass(f.filename)}
+                        key={c.category}
+                        onClick={() => toggleClass(c.category)}
                         className={`border-t border-nhra-border/60 cursor-pointer ${
                           checked ? "bg-nhra-red/5" : "hover:bg-white/[0.02]"
                         }`}
@@ -1147,24 +1348,67 @@ export default function EdataPage() {
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => toggleClass(f.filename)}
+                            onChange={() => toggleClass(c.category)}
                             onClick={(e) => e.stopPropagation()}
                             className="accent-nhra-red cursor-pointer"
                           />
                         </td>
                         <td className={`px-2 py-2 ${checked ? "text-white" : "text-gray-400"}`}>
-                          {f.category} <span className="text-gray-500">({f.classCode})</span>
+                          {c.category} <span className="text-gray-500">({c.classCode})</span>
                         </td>
-                        <td className="px-3 py-2 text-gray-400 font-mono text-xs">{f.filename}</td>
-                        <td className="px-3 py-2 text-gray-400">{f.rounds.join(" · ")}</td>
-                        <td className="px-3 py-2 text-right text-gray-300">{f.pairs}</td>
+                        <td className="px-3 py-2 font-mono text-xs">
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`px-1.5 py-0.5 rounded border ${
+                                c.qdat ? "border-green-500/40 text-green-400" : "border-nhra-border text-gray-600"
+                              }`}
+                              title={c.qdat ? `${c.qdat.filename} — qualifying order` : "No qualifying rounds on file"}
+                            >
+                              {c.qdat ? c.qdat.filename : "QDAT"}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded border ${
+                                c.edat ? "border-green-500/40 text-green-400" : "border-nhra-border text-gray-600"
+                              }`}
+                              title={c.edat ? `${c.edat.filename} — eliminations` : "No elimination rounds on file"}
+                            >
+                              {c.edat ? c.edat.filename : "EDAT"}
+                            </span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-400 text-xs">
+                          {c.qdat ? (
+                            <>
+                              <span className="text-gray-300">{c.qdat.entries}</span> qualifiers ·{" "}
+                              {c.qdat.rounds.join(" · ")}
+                              {c.qdat.positioned < c.qdat.entries && (
+                                <span
+                                  className="text-yellow-500"
+                                  title="Racers with no Q Pos on getresults are written after the ladder, in best-ET order"
+                                >
+                                  {" "}· {c.qdat.entries - c.qdat.positioned} unplaced
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-gray-400 text-xs">
+                          {c.edat ? (
+                            <>
+                              <span className="text-gray-300">{c.edat.pairs}</span> pairings ·{" "}
+                              {c.edat.rounds.join(" · ")}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                         <td
-                          className={`px-4 py-2 text-right ${
-                            f.enriched === 0 ? "text-gray-600" : "text-gray-300"
-                          }`}
-                          title="Runs whose member / city / body / engine came from a tech card"
+                          className={`px-4 py-2 text-right ${enriched === 0 ? "text-gray-600" : "text-gray-300"}`}
+                          title="Rows whose member / city / body / engine came from a tech card (qualifiers + elimination runs)"
                         >
-                          {f.enriched}/{f.runs}
+                          {enriched}/{runs}
                         </td>
                       </tr>
                     );
@@ -1175,41 +1419,88 @@ export default function EdataPage() {
           </div>
         )}
 
-        {!exportLoading && exportFiles && exportFiles.length > 0 && (
+        {!exportLoading && exportClasses && exportClasses.length > 0 && (
           <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
             {(() => {
-              const totalRuns = exportFiles.reduce((n, f) => n + f.runs, 0);
-              const missing = totalRuns - exportFiles.reduce((n, f) => n + f.enriched, 0);
+              const totalRuns = exportClasses.reduce(
+                (n, c) => n + (c.edat?.runs || 0) + (c.qdat?.entries || 0),
+                0,
+              );
+              const missing =
+                totalRuns -
+                exportClasses.reduce((n, c) => n + (c.edat?.enriched || 0) + (c.qdat?.enriched || 0), 0);
               return missing > 0 ? (
                 <p className="text-xs text-yellow-500">
-                  {missing} of {totalRuns} runs missing tech cards — those rows export with only
-                  what the timing system shows. Import tech cards above to fill them.
+                  {missing} of {totalRuns} rows missing tech cards — those export with only what
+                  the timing system shows. Import tech cards above to fill them.
                 </p>
               ) : (
                 <p className="text-xs text-green-400">
-                  Every run has a tech card — full names and entry details included.
+                  Every row has a tech card — full names and entry details included.
                 </p>
               );
             })()}
-            <button
-              onClick={handleDownloadEdata}
-              disabled={selectedClasses.size === 0}
-              className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
-              title={
-                selectedClasses.size > 1
-                  ? "Downloads the selected classes as RACEDATA.zip"
-                  : "Downloads the selected class's EDAT file"
-              }
-            >
-              3 · Download EDAT
-              {selectedClasses.size > 0
-                ? ` (${selectedClasses.size === 1 ? "1 class" : `${selectedClasses.size} classes → zip`})`
-                : ""}
-            </button>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="text-xs text-gray-400 flex items-center gap-3">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeQdat}
+                    onChange={(e) => setIncludeQdat(e.target.checked)}
+                    className="accent-nhra-red cursor-pointer"
+                  />
+                  QDAT
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeEdat}
+                    onChange={(e) => setIncludeEdat(e.target.checked)}
+                    className="accent-nhra-red cursor-pointer"
+                  />
+                  EDAT
+                </label>
+              </div>
+              {(() => {
+                const picked = pickedTextFiles();
+                return (
+                  <button
+                    onClick={handleDownloadText}
+                    disabled={picked.length === 0}
+                    className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600 disabled:opacity-40"
+                    title={
+                      picked.length > 1
+                        ? "Downloads the selected files as RACEDATA.zip"
+                        : "Downloads the selected file"
+                    }
+                  >
+                    3 · Download text
+                    {picked.length > 0
+                      ? ` (${picked.length === 1 ? picked[0].filename : `${picked.length} files → zip`})`
+                      : ""}
+                  </button>
+                );
+              })()}
+              <button
+                onClick={() => void handleDownloadPdfs()}
+                disabled={selectedClasses.size === 0 || pdfBuilding}
+                className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500 disabled:opacity-40"
+                title="Builds the qualifying sheet and the Final Round Results PDF for the selected classes, with the sheet header above"
+              >
+                {pdfBuilding ? "Building PDFs…" : "Download PDFs"}
+              </button>
+            </div>
           </div>
         )}
 
-        {exportFiles && exportFiles.length > 0 && exportWarnings.length > 0 && (
+        {pdfError && (
+          <div className="mt-3 bg-red-500/10 border border-red-500/40 text-red-400 rounded-xl px-4 py-3 text-sm">
+            {pdfError}
+          </div>
+        )}
+        {pdfNote && !pdfError && <p className="mt-3 text-xs text-gray-400">{pdfNote}</p>}
+
+        {exportClasses && exportClasses.length > 0 && exportWarnings.length > 0 && (
           <div className="mt-3 px-4 py-3 border border-yellow-500/30 rounded-xl bg-yellow-500/5">
             <p className="text-xs font-semibold text-yellow-500 mb-1">
               {exportWarnings.length} thing{exportWarnings.length === 1 ? "" : "s"} to check
@@ -1248,77 +1539,13 @@ export default function EdataPage() {
             points / IDX); the PDFs download separately. Drops <em>accumulate</em>: each upload
             merges into the pack saved in this browser — drop Funny Car now and Top Fuel later
             and both stay in, re-dropping a class replaces just that class, and the zip and
-            PDFs always build from everything. Hit Clear data to start a new event.
+            PDFs always build from everything. Hit Clear data to start a new event. The PDFs
+            print the sheet header set at the top of the page; changing it after an upload
+            rebuilds the package automatically.
           </p>
         </div>
 
-        {/* Header logos — the same three-slot row as the Final Round Results
-            Builder, printed across the top of both PDFs. */}
-        <input
-          ref={accuLogoInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => void handleLogoPick(e.target.files)}
-        />
-        <p className="text-xs text-gray-400 mb-1.5">
-          Sheet header logos <span className="text-gray-500">— print across the top of the qualifying and Final Round Results PDFs; leave empty for text-only headers. Changing them after an upload rebuilds the package automatically.</span>
-        </p>
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          {ACCU_LOGO_SLOTS.map((slot) => {
-            const img = accuLogos[slot.key];
-            return (
-              <div key={slot.key} className="relative group">
-                <button
-                  onClick={() => {
-                    accuLogoSlotRef.current = slot.key;
-                    accuLogoInputRef.current?.click();
-                  }}
-                  className={`w-full h-[105px] rounded-xl flex items-center px-2 transition-colors ${
-                    img
-                      ? `${slot.align} border border-nhra-border/60 bg-white/[0.03] hover:border-gray-600`
-                      : "justify-center border-2 border-dashed border-nhra-border hover:border-gray-600"
-                  }`}
-                  title={img ? "Click to replace this logo" : slot.label}
-                >
-                  {img ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={img}
-                      alt={`${slot.key} logo`}
-                      className="max-h-[97px] max-w-full object-contain"
-                    />
-                  ) : (
-                    <span className="text-xs text-gray-500">{slot.label}</span>
-                  )}
-                </button>
-                {img && (
-                  <button
-                    onClick={() => updateLogo(slot.key, null)}
-                    className="absolute top-1.5 right-1.5 hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-black/70 border border-nhra-border text-gray-300 hover:text-white text-xs"
-                    title="Remove this logo"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
         <div className="flex flex-wrap items-end gap-3 mb-4">
-          <label className="text-xs text-gray-400 flex-1 min-w-[16rem]">
-            Header / series line (PDF banner)
-            <input
-              value={accuSeries}
-              onChange={(e) => {
-                accuSeriesEdited.current = true;
-                setAccuSeries(e.target.value);
-              }}
-              placeholder="prefills from Class.ini — e.g. NHRA Mission Foods Drag Racing Series"
-              className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
-            />
-          </label>
           <label className="text-xs text-gray-400 w-64">
             Class when Class.ini has none
             <select
