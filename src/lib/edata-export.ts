@@ -93,6 +93,12 @@ export interface DataOutExportOptions {
    * categories.
    */
   classNumbers?: Map<string, number>;
+  /**
+   * How each class (normalized category name) ranks a qualifying pass — the
+   * event's own qualifying setup. A class not listed reads its rule off the
+   * dial-in column of its passes.
+   */
+  qualRules?: Record<string, QualRule>;
 }
 
 const EOL = "\r\n";
@@ -194,12 +200,27 @@ function bodyWord(w: string): string {
   return w;
 }
 
-/** "'08 Chevy Cobalt" — apostrophe-year plus normalized make/model. */
+/**
+ * "'08 Chevy Cobalt" — apostrophe-year plus normalized make/model. Cards
+ * arrive with the year in every position: its own column, "'63 Nova",
+ * "2025 Chevy Camaro" or "Camaro 2016" — all read as the same thing.
+ */
 export function bodyString(tc: EdataTechCard): string {
-  const body = (tc.body_type || "").trim().split(/\s+/).filter(Boolean).map(bodyWord).join(" ");
+  let words = (tc.body_type || "").trim().split(/\s+/).filter(Boolean);
   // Some entries already carry the year in the body ("'63 Nova").
-  if (/^'\d{2}\b/.test(body)) return csvSafe(body);
-  const digits = (tc.body_year || "").replace(/\D/g, "");
+  if (words.length && /^'\d{2}$/.test(words[0])) {
+    return csvSafe([words[0], ...words.slice(1).map(bodyWord)].join(" "));
+  }
+  let digits = (tc.body_year || "").replace(/\D/g, "");
+  // A four-digit year leading or trailing the body text is the year, not a model.
+  if (words.length > 1 && /^(19|20)\d{2}$/.test(words[0])) {
+    digits = digits || words[0];
+    words = words.slice(1);
+  } else if (words.length > 1 && /^(19|20)\d{2}$/.test(words[words.length - 1])) {
+    digits = digits || words[words.length - 1];
+    words = words.slice(0, -1);
+  }
+  const body = words.map(bodyWord).join(" ");
   const year = digits ? `'${digits.slice(-2).padStart(2, "0")}` : "";
   return csvSafe([year, body].filter(Boolean).join(" "));
 }
@@ -511,6 +532,8 @@ export interface ElimRound {
   round: string;
   /** Compulink heading: ROUND 1, …, FINALS. */
   label: string;
+  /** The final: coded F, or the last round on file with one pairing after a two-pairing round. */
+  isFinal: boolean;
   pairs: ElimPair[];
 }
 
@@ -521,6 +544,12 @@ export interface ElimRound {
  * keeps the row with the most recorded data. Rows within a pair are left
  * lane first when lanes are known, otherwise winner first (CompuLink's own
  * ordering, and what EData-imported rows preserve).
+ *
+ * getresults never codes a final `F` — a 16-car pro field ends at E4, a
+ * 32-car sportsman field at E5 — so the final is recognised by shape: the
+ * last round on file has exactly one pairing and the round before it had
+ * two. A lone pairing with no such semifinal (a round still running) stays
+ * a numbered round rather than being called the final early.
  */
 export function elimRoundsForCategory(
   catRuns: RunRow[],
@@ -532,7 +561,7 @@ export function elimRoundsForCategory(
     (a, b) => roundOrder(a) - roundOrder(b),
   );
 
-  return roundCodes.map((round) => {
+  const rounds = roundCodes.map((round) => {
     const roundRuns = elimRuns.filter((r) => r.round === round);
     const groups = [...groupRunsByTimestamp(roundRuns).entries()].sort(
       (a, b) => tsMillis(a[0]) - tsMillis(b[0]),
@@ -569,8 +598,17 @@ export function elimRoundsForCategory(
       pairs.push({ runs: pairRuns, single: pairRuns.length === 1 });
     }
 
-    return { round, label: roundLabel(round), pairs };
+    return { round, label: roundLabel(round), isFinal: round === "F", pairs };
   });
+
+  const last = rounds[rounds.length - 1];
+  const semi = rounds[rounds.length - 2];
+  if (last && !last.isFinal && last.pairs.length === 1 && semi && semi.pairs.length === 2) {
+    last.isFinal = true;
+    last.label = "FINALS";
+  }
+
+  return rounds;
 }
 
 /**
@@ -759,8 +797,12 @@ export interface QdatExportFile {
   rounds: string[];
   /** Qualifiers written. */
   entries: number;
-  /** Entries placed by a getresults qualifying position; the rest follow in best-ET order. */
+  /** Entries placed by a getresults qualifying position; the rest follow, ranked by the class rule. */
   positioned: number;
+  /** The rule the class ranks by — the event's qualifying setup, else read off the dial-in column. */
+  rule: QualRule;
+  /** True when getresults placed nobody, so the whole order was computed by the rule from the passes. */
+  computedOrder: boolean;
   /** How many of the qualifiers found a tech card to fill the entry fields. */
   enriched: number;
   content: string;
@@ -808,7 +850,43 @@ function passIndex(run: RunRow): number | null {
   return run.dial_in !== null && run.dial_in !== undefined && run.dial_in > 0 ? run.dial_in : null;
 }
 
-type QualRule = "lowest" | "closest_over" | "furthest_under";
+/**
+ * How a class ranks its qualifying passes:
+ *   - lowest: quickest ET (heads-up);
+ *   - closest_over: closest to the index without going under — breakouts
+ *     rank after every clean pass (Super Comp / Gas / Street);
+ *   - closest_any: closest to the index either side (breakout OK);
+ *   - furthest_under: most under the class index (Stock, Super Stock, Comp);
+ *   - best_rt: quickest reaction time.
+ */
+export type QualRule = "lowest" | "closest_over" | "closest_any" | "furthest_under" | "best_rt";
+
+export const QUAL_RULE_LABEL: Record<QualRule, string> = {
+  lowest: "quickest ET",
+  closest_over: "closest to index, no breakout",
+  closest_any: "closest to index, breakout OK",
+  furthest_under: "furthest under index",
+  best_rt: "best reaction time",
+};
+
+/** The app's qualifying-mode ids (qualifying_config.classMode) mapped onto the sheet rules. */
+export function qualRuleFromMode(mode: string | null | undefined): QualRule | null {
+  switch ((mode || "").trim()) {
+    case "quickest_et":
+      return "lowest";
+    case "closest_index_no_breakout":
+      return "closest_over";
+    case "closest_index_breakout_ok":
+      return "closest_any";
+    case "comp_eliminator":
+    case "stock_super_stock":
+      return "furthest_under";
+    case "best_rt":
+      return "best_rt";
+    default:
+      return null;
+  }
+}
 
 /** How the class ranks a qualifying pass — from the field's dial-in column, not its name. */
 function qualRuleFor(qualPasses: RunRow[]): QualRule {
@@ -817,21 +895,43 @@ function qualRuleFor(qualPasses: RunRow[]): QualRule {
   return indexes.size === 1 ? "closest_over" : "furthest_under";
 }
 
+const WORST = Number.POSITIVE_INFINITY;
+
+/**
+ * Sort key for a pass under a rule — lower is better, compared element by
+ * element. A pass the rule can't judge (no index on an index rule, no RT on
+ * best_rt) sorts after every pass it can, then by ET, so it still lands
+ * somewhere sensible instead of vanishing.
+ */
+function qualSortKey(p: RunRow, rule: QualRule, quarterMile: boolean): [number, number] {
+  const et = passEt(p, quarterMile);
+  if (et === null) return [WORST, WORST];
+  if (rule === "lowest") return [et, 0];
+  if (rule === "best_rt") {
+    const rt = p.rt !== null && p.rt !== undefined ? p.rt : null;
+    if (rt === null) return [WORST, et];
+    // A red light ranks after every green light, the least red first.
+    return rt < 0 ? [100 + Math.abs(rt), et] : [rt, et];
+  }
+  const index = passIndex(p);
+  if (index === null) return [WORST, et];
+  const margin = et - index;
+  if (rule === "furthest_under") return [margin, et];
+  if (rule === "closest_any") return [Math.abs(margin), et];
+  // closest_over: every clean pass before every breakout, the nearest first on each side.
+  return margin >= 0 ? [margin, et] : [1000 + Math.abs(margin), et];
+}
+
+function compareKeys(a: [number, number], b: [number, number]): number {
+  return a[0] - b[0] || a[1] - b[1];
+}
+
 function bestQualPass(passes: RunRow[], rule: QualRule, quarterMile: boolean): RunRow | null {
   const timed = passes.filter((p) => passEt(p, quarterMile) !== null);
   if (timed.length === 0) return null;
-  const et = (p: RunRow) => passEt(p, quarterMile) as number;
-  if (rule === "lowest") return timed.reduce((a, b) => (et(b) < et(a) ? b : a));
-
-  const indexed = timed.filter((p) => passIndex(p) !== null);
-  if (indexed.length === 0) return timed.reduce((a, b) => (et(b) < et(a) ? b : a));
-  const margin = (p: RunRow) => et(p) - (passIndex(p) as number);
-
-  if (rule === "furthest_under") return indexed.reduce((a, b) => (margin(b) < margin(a) ? b : a));
-
-  const clean = indexed.filter((p) => margin(p) >= 0);
-  const pool = clean.length > 0 ? clean : indexed;
-  return pool.reduce((a, b) => (Math.abs(margin(b)) < Math.abs(margin(a)) ? b : a));
+  return timed.reduce((a, b) =>
+    compareKeys(qualSortKey(b, rule, quarterMile), qualSortKey(a, rule, quarterMile)) < 0 ? b : a,
+  );
 }
 
 /** A class designation as the timing system prints it ("E/SA", "TF", "SC") — not a dial-in or a blank. */
@@ -919,13 +1019,15 @@ export function buildQdatExport(
     // an elimination-only car (an alternate, a stale roster row) does not.
     const qualifiers = [...racers.values()].filter((a) => a.qualPasses.length > 0);
     const allQualPasses = qualifiers.flatMap((a) => a.qualPasses);
-    const rule = qualRuleFor(allQualPasses);
+    const rule = opts.qualRules?.[norm(category)] || qualRuleFor(allQualPasses);
+    const hasIndex = allQualPasses.some((p) => passIndex(p) !== null);
 
     let enriched = 0;
     const rows = qualifiers.map((agg) => {
       const tc = findTechCard(agg.car || null, agg.latest.name, techIndex);
       if (tc) enriched++;
       const best = bestQualPass(agg.qualPasses, rule, quarterMile);
+      const key: [number, number] = best ? qualSortKey(best, rule, quarterMile) : [WORST, WORST];
       const et = best ? passEt(best, quarterMile) : null;
       const index = best ? passIndex(best) : null;
       const mph = agg.qualPasses
@@ -946,27 +1048,35 @@ export function buildQdatExport(
         index,
         mph,
       };
-      return { entry, pos: agg.lastPos };
+      return { entry, pos: agg.lastPos, key };
     });
 
-    // The ladder as getresults has it, then anyone it never placed by ET.
+    // The ladder as getresults has it, then anyone it never placed — ranked
+    // by the class rule from their own passes. When getresults placed nobody
+    // (the Q Pos column never populated) that rule orders the whole sheet.
+    const byRule = (a: { entry: QdatEntry; key: [number, number] }, b: { entry: QdatEntry; key: [number, number] }) => {
+      const c = compareKeys(a.key, b.key);
+      if (c !== 0) return c;
+      const ma = a.entry.mph ?? 0;
+      const mb = b.entry.mph ?? 0;
+      return mb - ma || a.entry.name.localeCompare(b.entry.name);
+    };
     rows.sort((a, b) => {
       if (a.pos !== null && b.pos !== null && a.pos !== b.pos) return a.pos - b.pos;
       if (a.pos !== null && b.pos === null) return -1;
       if (a.pos === null && b.pos !== null) return 1;
-      const ea = a.entry.et ?? Number.POSITIVE_INFINITY;
-      const eb = b.entry.et ?? Number.POSITIVE_INFINITY;
-      return ea - eb || a.entry.name.localeCompare(b.entry.name);
+      return byRule(a, b);
     });
 
     const positioned = rows.filter((r) => r.pos !== null).length;
-    if (positioned === 0) {
+    const computedOrder = positioned === 0 && rows.length > 0;
+    if (computedOrder) {
       warnings.push(
-        `${category}: getresults shows no qualifying positions — the qualifying sheet is in best-ET order instead.`,
+        `${category}: getresults shows no qualifying positions — the order is computed from the passes (${QUAL_RULE_LABEL[rule]}).`,
       );
     } else if (positioned < rows.length) {
       warnings.push(
-        `${category}: ${rows.length - positioned} qualifier${rows.length - positioned === 1 ? "" : "s"} with no position on getresults — written after the ladder in best-ET order.`,
+        `${category}: ${rows.length - positioned} qualifier${rows.length - positioned === 1 ? "" : "s"} with no position on getresults — written after the ladder, ranked by ${QUAL_RULE_LABEL[rule]}.`,
       );
     }
     const posCounts = new Map<number, string[]>();
@@ -1007,6 +1117,8 @@ export function buildQdatExport(
       rounds: roundCodes,
       entries: rows.length,
       positioned,
+      rule,
+      computedOrder,
       enriched,
       content: buildQdatFile(
         category,
@@ -1017,7 +1129,7 @@ export function buildQdatExport(
       qualifiers: rows.map((r) => r.entry),
       lowEt,
       topSpeed,
-      hasIndex: rule !== "lowest",
+      hasIndex,
     });
   });
 
@@ -1046,6 +1158,7 @@ export interface DataOutExportResult {
 export function buildDataOutExport(
   runs: RunRow[],
   techCards: EdataTechCard[] = [],
+  opts: Pick<DataOutExportOptions, "qualRules"> = {},
 ): DataOutExportResult {
   const byCategory = new Map<string, RunRow[]>();
   for (const run of runs) {
@@ -1062,7 +1175,7 @@ export function buildDataOutExport(
   const classNumbers = new Map(ordered.map((c, i) => [norm(c.category), i + 1]));
 
   const edat = buildEdataExport(runs, techCards, { classNumbers });
-  const qdat = buildQdatExport(runs, techCards, { classNumbers });
+  const qdat = buildQdatExport(runs, techCards, { classNumbers, qualRules: opts.qualRules });
 
   const warnings: string[] = [];
   if (edat.files.length === 0 && qdat.files.length === 0) {

@@ -68,10 +68,22 @@ interface QdatFile {
   rounds: string[];
   entries: number;
   positioned: number;
+  /** Rule the class is ranked by — the event's qualifying setup, else read off its dial-in column. */
+  rule: string;
+  /** getresults placed nobody, so the sheet order was computed from the passes. */
+  computedOrder: boolean;
   enriched: number;
   hasIndex: boolean;
   content: string;
 }
+
+const QUAL_RULE_LABELS: Record<string, string> = {
+  lowest: "quickest ET",
+  closest_over: "closest to index, no breakout",
+  closest_any: "closest to index, breakout OK",
+  furthest_under: "furthest under index",
+  best_rt: "best reaction time",
+};
 
 interface DataOutResult {
   edat: ExportFile[];
@@ -1381,14 +1393,21 @@ export default function DataOutPage() {
                             <>
                               <span className="text-gray-300">{c.qdat.entries}</span> qualifiers ·{" "}
                               {c.qdat.rounds.join(" · ")}
-                              {c.qdat.positioned < c.qdat.entries && (
+                              {c.qdat.computedOrder ? (
                                 <span
                                   className="text-yellow-500"
-                                  title="Racers with no Q Pos on getresults are written after the ladder, in best-ET order"
+                                  title={`getresults shows no Q Pos for this class — the sheet is ordered from the passes (${QUAL_RULE_LABELS[c.qdat.rule] || c.qdat.rule}). Set the class's mode on the Qualifying page if this isn't how it qualifies.`}
+                                >
+                                  {" "}· order computed ({QUAL_RULE_LABELS[c.qdat.rule] || c.qdat.rule})
+                                </span>
+                              ) : c.qdat.positioned < c.qdat.entries ? (
+                                <span
+                                  className="text-yellow-500"
+                                  title={`Racers with no Q Pos on getresults are written after the ladder, ranked by ${QUAL_RULE_LABELS[c.qdat.rule] || c.qdat.rule}`}
                                 >
                                   {" "}· {c.qdat.entries - c.qdat.positioned} unplaced
                                 </span>
-                              )}
+                              ) : null}
                             </>
                           ) : (
                             "—"

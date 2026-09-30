@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllTechCards, getTaggedRunsForEvent } from "@/lib/db";
-import type { EdataTechCard } from "@/lib/edata-export";
+import { getAllTechCards, getQualifyingConfig, getTaggedRunsForEvent } from "@/lib/db";
+import { qualRuleFromMode, type EdataTechCard, type QualRule } from "@/lib/edata-export";
 import { buildDataOutArtifacts } from "@/lib/dataout-export";
 
 export const dynamic = "force-dynamic";
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       ? body.categories.filter((c): c is string => typeof c === "string" && c.trim() !== "")
       : undefined;
 
-    const [runs, techCards] = await Promise.all([
+    const [runs, techCards, qualConfig] = await Promise.all([
       getTaggedRunsForEvent(eventCode, season),
       // Tech cards only enrich; an export with blank entry fields still beats
       // no export if the collection can't be read.
@@ -91,7 +91,16 @@ export async function POST(request: NextRequest) {
         console.error("Data Out export: tech cards unavailable:", err);
         return [];
       }),
+      // The event's own qualifying setup (per-class mode from /qualifying)
+      // ranks the sheet when getresults never filled in a Q Pos.
+      getQualifyingConfig(eventCode, season),
     ]);
+
+    const qualRules: Record<string, QualRule> = {};
+    for (const [category, mode] of Object.entries(qualConfig.classMode || {})) {
+      const rule = qualRuleFromMode(mode);
+      if (rule) qualRules[category.trim().toUpperCase().replace(/\s+/g, " ")] = rule;
+    }
 
     const artifacts = buildDataOutArtifacts(runs, techCards as unknown as EdataTechCard[], {
       eventName: body.event_name || "",
@@ -100,6 +109,7 @@ export async function POST(request: NextRequest) {
       categories,
       pdfs: body.pdfs !== false,
       brand: typeof body.brand === "string" ? body.brand : undefined,
+      qualRules,
     });
 
     const toB64 = (bytes: Uint8Array | null) => (bytes ? Buffer.from(bytes).toString("base64") : null);
@@ -114,6 +124,8 @@ export async function POST(request: NextRequest) {
           rounds: f.rounds,
           entries: f.entries,
           positioned: f.positioned,
+          rule: f.rule,
+          computedOrder: f.computedOrder,
           enriched: f.enriched,
           hasIndex: f.hasIndex,
           content: f.content,

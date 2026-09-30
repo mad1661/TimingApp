@@ -17,6 +17,7 @@ import {
   type EdataTechCard,
   type EdataExportFile,
   type QdatExportFile,
+  type QualRule,
 } from "./edata-export";
 import {
   buildRacedataPdf,
@@ -65,6 +66,13 @@ export interface DataOutBuildOptions {
   pdfs?: boolean;
   /** Timing-system brand printed on the sheets. Defaults to Compulink — getresults is Compulink's own data. */
   brand?: string;
+  /** Per-class qualifying rule (normalized category → rule), from the event's qualifying setup. */
+  qualRules?: Record<string, QualRule>;
+}
+
+/** getresults suffixes the event name with its date ("… Nationals 09/18/2026"); the sheets carry the date separately. */
+export function stripEventDate(name: string): string {
+  return name.replace(/\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, "").trim();
 }
 
 function trimNum(s: string): string {
@@ -87,7 +95,7 @@ export function buildDataOutArtifacts(
   opts: DataOutBuildOptions = {},
 ): DataOutArtifacts {
   const brand = (opts.brand || "").trim() || "Compulink";
-  const text = buildDataOutExport(runs, techCards);
+  const text = buildDataOutExport(runs, techCards, { qualRules: opts.qualRules });
   const warnings = [...text.warnings];
 
   const wanted = opts.categories && opts.categories.length > 0
@@ -163,6 +171,17 @@ export function buildDataOutArtifacts(
       const hasDI = rounds.some((r) => r.pairs.some((p) => p.runs.some((run) => (run.dial_in ?? 0) > 0)));
       const winnerFirst = (pairRuns: RunRow[]) =>
         [...pairRuns].sort((a, b) => (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0));
+      // QFY: the position on the run row when getresults filled it in, else
+      // the racer's line on the qualifying sheet (which is the same ladder
+      // when getresults placed them, and the computed order when it didn't).
+      const sheetPos = new Map<string, string>();
+      q?.qualifiers.forEach((entry, qi) => {
+        if (entry.car) sheetPos.set(norm(entry.car), String(qi + 1));
+      });
+      const qfy = (run: RunRow) =>
+        run.qual_pos != null && run.qual_pos > 0
+          ? String(run.qual_pos)
+          : sheetPos.get(norm(run.car_number)) || "";
       const et = (run: RunRow) =>
         trimNum(fmtEt(quarterMile ? run.ft1320 ?? run.ft660 : run.ft660 ?? run.ft1320));
       const mph = (run: RunRow) =>
@@ -186,7 +205,7 @@ export function buildDataOutArtifacts(
             return {
               num: run.car_number || "",
               cls: (run.class_index || "").trim() || (tc && tc.category) || "",
-              qfy: run.qual_pos != null && run.qual_pos > 0 ? String(run.qual_pos) : "",
+              qfy: qfy(run),
               driver: (tc ? fullName(tc) : "") || run.name || "",
               home: tc ? cityState(tc) : "",
               car: tc ? bodyString(tc) : "",
@@ -201,17 +220,17 @@ export function buildDataOutArtifacts(
       }));
 
       const rows: PdfSummaryRow[] = [];
-      const finals = rounds.find((r) => r.round === "F") || rounds[rounds.length - 1];
+      const finals = rounds.find((r) => r.isFinal) || rounds[rounds.length - 1];
       const fp = finals?.pairs.length === 1 ? winnerFirst(finals.pairs[0].runs) : null;
       if (fp && fp[0]) {
         const tc = cardFor(fp[0].car_number, fp[0].name);
         rows.push({
-          label: finals.round === "F" ? "Champion" : `${finals.label} winner`,
+          label: finals.isFinal ? "Champion" : `${finals.label} winner`,
           num: fp[0].car_number || "",
           driver: (tc ? fullName(tc) : "") || fp[0].name || "",
           hometown: tc ? cityState(tc) : "",
           car: tc ? bodyString(tc) : "",
-          qfy: fp[0].qual_pos != null && fp[0].qual_pos > 0 ? String(fp[0].qual_pos) : "",
+          qfy: qfy(fp[0]),
           reaction: trimNum(fmtRt(fp[0].rt)),
           et: et(fp[0]),
           mph: mph(fp[0]),
@@ -225,7 +244,7 @@ export function buildDataOutArtifacts(
           driver: (tc ? fullName(tc) : "") || fp[1].name || "",
           hometown: tc ? cityState(tc) : "",
           car: tc ? bodyString(tc) : "",
-          qfy: fp[1].qual_pos != null && fp[1].qual_pos > 0 ? String(fp[1].qual_pos) : "",
+          qfy: qfy(fp[1]),
           reaction: trimNum(fmtRt(fp[1].rt)),
           et: et(fp[1]),
           mph: mph(fp[1]),
@@ -278,7 +297,9 @@ export function buildDataOutArtifacts(
   // Event dates: the stored start date for the banner, the eliminations day
   // (off the runs' own timestamps) for the round sheets.
   const startDate = (runs.find((r) => r.start_date)?.start_date || "").slice(0, 10);
-  const eventName = (opts.eventName || "").trim() || (runs.find((r) => r.event_name)?.event_name || "").trim();
+  const eventName = stripEventDate(
+    (opts.eventName || "").trim() || (runs.find((r) => r.event_name)?.event_name || "").trim(),
+  );
   const pdfEvent: PdfEvent = {
     series: (opts.seriesHeader || "").trim() || undefined,
     track: eventName || undefined,

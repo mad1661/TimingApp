@@ -406,16 +406,22 @@ export function buildAccuTimeArtifacts(
   };
 }
 
+/** Y-M-D parts from `YYYY-MM-DD` or getresults' bare `YYYYMMDD`; null for anything else. */
+function ymd(s: string): [string, string, string] | null {
+  const m = s.trim().match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+  return m ? [m[1], m[2], m[3]] : null;
+}
+
 export function prettyDate(iso: string): string {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m = ymd(iso);
   if (!m) return iso;
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  return `${months[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}, ${m[1]}`;
+  return `${months[parseInt(m[1], 10) - 1]} ${parseInt(m[2], 10)}, ${m[0]}`;
 }
 
 export function shortDate(iso: string): string {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m = ymd(iso);
   if (!m) return iso;
   const mAbbr = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-  return `${m[3]}/${mAbbr[parseInt(m[2], 10) - 1]}/${m[1]}`;
+  return `${m[2]}/${mAbbr[parseInt(m[1], 10) - 1]}/${m[0]}`;
 }
