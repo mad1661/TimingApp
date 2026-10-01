@@ -14,11 +14,20 @@
  * saved sessions by class (add new / replace same, never wipe the rest), the
  * JSON round-trip through browser storage, and the class pick reaching stored
  * sessions on a rebuild.
+ * v1.47.0 adds AccuTime's unlocked text export (…dat.txt / …qly.txt /
+ * Driversdbf.txt, no Class.ini): a synthetic two-event zip with OS clutter,
+ * classes from folder names, race dates from the stamp, the time-segment
+ * qualifying/elimination split, PM = 5 / FSS = 16, one PDF pair per event, the
+ * event pick and the race-mismatch guard — plus, when Mike's real zip is on
+ * disk (MIKE_TEXT_ZIP), structure checks against the 2026 GL / Rockingham data.
  */
 import * as fs from "fs";
 import * as path from "path";
 import { deflateSync, inflateSync } from "zlib";
+import { zipSync } from "fflate";
 import {
+  accuEventGroups,
+  accuPackConflict,
   applyAccuClassPick,
   mergeAccuTimeSessions,
   parseAccuTimePack,
@@ -36,6 +45,7 @@ import {
 } from "../src/lib/racedata-pdf";
 import {
   buildPointsFileContent,
+  compulinkClassNumber,
   countdownSeedPoints,
   scoreAccuTimeSession,
   type ProEventScale,
@@ -691,6 +701,341 @@ const TF_QLY = qly([
     arts.qdat.length === 2,
     arts.qdat.map((q) => `${q.filename}:${q.category}`).join("|"),
   );
+}
+
+const names = (files: { filename: string }[]) => files.map((f) => f.filename).sort().join(" ");
+
+// Strings drawn on a jsPDF page, in order (uncompressed or Flate streams).
+function pdfStrings(pdf: Uint8Array | null): string[] {
+  if (!pdf) return [];
+  const raw = Buffer.from(pdf).toString("latin1");
+  const out: string[] = [];
+  const streams = raw.matchAll(/<<([^>]*?)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g);
+  for (const [, dict, body] of streams) {
+    let content = body;
+    if (/FlateDecode/.test(dict)) {
+      try {
+        content = inflateSync(Buffer.from(body, "latin1")).toString("latin1");
+      } catch {
+        continue;
+      }
+    }
+    for (const m of content.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)) out.push(m[1].replace(/\\(.)/g, "$1"));
+  }
+  return out;
+}
+
+// ——— 11. AccuTime's unlocked text export (v1.47.0) ———
+// CSV dumps of the Logging / Drivers tables plus the .qly, one folder per
+// class, no Class.ini, often two race weekends in one zip with macOS clutter.
+{
+  const LOG_HEADER =
+    '"GeneralID","RunNumber","RoundNumber","RaceType","TreeType","TreeMode","DeepStage","EndOfTrack","AutoStart","asMinimum","asStart","asTotal","WorstRedLight","NoBreakOut","IndexRacing","IndexClass","Index","WinnerFlag","Lane","CarNumber","LastName","DialIn","ReactionTime","ft60","ft330","mph18","et18","mph1000","et1000","mph14","et14","Margin","OffDial","TimeStamp"';
+  // [car, name, raw RT, ET, MPH, won] per lane; times truncated to 2 decimals like the real export.
+  type Lane = [string, string, string, string, string, boolean];
+  let gid = 0;
+  const pass = (round: number, run: number, ts: string, left: Lane, right?: Lane): string[] =>
+    [left, right ?? (["BYE", "", "0.00", "0.00", "0.00", false] as Lane)].map(
+      ([car, name, rt, et, mph, won], i) =>
+        `${++gid},${run},${round},0,0,1,1,7,1,5,5,70,0,1,0,"","",${won ? 1 : 0},"${i ? "R" : "L"}","${car}","${name}",0.00,${rt},1.03,2.80,190.10,3.40,240.50,4.30,${mph},${et},0.00,0.00,${ts}`,
+    );
+  const logCsv = (rows: string[][]) => latin1([LOG_HEADER, ...rows.flat()].join("\r\n") + "\r\n");
+  const L = (car: string, et: string, won: boolean): Lane => [car, `Driver ${car}`, "0.45", et, "270.00", won];
+
+  // Top Alcohol Dragster, 8 cars. Q1 and E1 both on 9/18 under RoundNumber 1,
+  // E2 stopped by curfew after one pair and finished on 9/19, final 9/21.
+  const TAD_LOG = logCsv([
+    pass(1, 32, "9/18/2026 11:04:26", L("8", "5.40", false), L("3", "5.25", true)),
+    pass(1, 33, "9/18/2026 11:08:05", L("5", "5.30", true), L("4", "5.31", false)),
+    pass(1, 34, "9/18/2026 11:11:14", L("6", "5.35", false), L("2", "5.22", true)),
+    pass(1, 35, "9/18/2026 11:14:28", L("7", "5.50", false), L("1", "5.20", true)),
+    pass(1, 139, "9/18/2026 18:43:20", L("8", "5.60", false), L("1", "5.21", true)),
+    pass(1, 140, "9/18/2026 18:46:25", L("7", "5.45", false), L("2", "5.23", true)),
+    pass(1, 141, "9/18/2026 18:49:30", L("6", "5.36", false), L("3", "5.26", true)),
+    pass(1, 142, "9/18/2026 18:52:33", L("5", "5.33", false), L("4", "5.29", true)),
+    pass(2, 163, "9/18/2026 20:39:51", L("1", "5.22", true), L("4", "5.30", false)),
+    pass(2, 33, "9/19/2026 16:50:53", L("2", "5.24", true), L("3", "5.27", false)),
+    pass(3, 50, "9/21/2026 14:19:55", L("1", "5.21", true), L("2", "5.25", false)),
+  ]);
+  const qlyFor = (cars: string[], ets: string[]) =>
+    qly(cars.map((c, i) => [`Driver ${c}`, c, "0.4500", ets[i], "270.00"] as [string, string, string, string, string]));
+  const TAD_QLY = qlyFor(["1", "2", "3", "4", "5", "6", "7", "8"], ["5.2026", "5.2241", "5.2513", "5.2983", "5.3040", "5.3511", "5.4520", "5.4011"]);
+
+  const DRIVERS_HEADER =
+    '"GeneralID","CarNumber","Membership","FirstName","LastName","City","State","MakeOfCar","ModelOfCar","EngineMake","CuIn","General","IndexClass","RaceEvent"';
+  const drivers = (cls: string, cars: string[]) =>
+    latin1(
+      [
+        DRIVERS_HEADER,
+        ...cars.map(
+          (c, i) =>
+            // General holds free text with a line break — a plain line split would shear the row.
+            `${i + 1},"${c}","${900000 + i}","First${c}","Driver ${c}","Town${c}","IN","24","Dragster","HEMI","433","Crew ${c}\r\nSponsor ${c}","${cls}","20260918084551"`,
+        ),
+      ].join("\r\n") + "\r\n",
+    );
+
+  // Pro Mod, 4 cars: qualifying 9/18, eliminations 9/20 — the classic date
+  // split. Car 9 skips Q2, then runs the final as a single (12 broke).
+  const PM_LOG = logCsv([
+    pass(1, 10, "9/18/2026 13:00:00", L("9", "5.80", true), L("10", "5.85", false)),
+    pass(1, 11, "9/18/2026 13:03:00", L("11", "5.90", false), L("12", "5.75", true)),
+    pass(2, 20, "9/19/2026 13:00:00", L("10", "5.82", true), L("11", "5.88", false)),
+    pass(2, 21, "9/19/2026 13:03:00", L("12", "5.74", true)),
+    pass(1, 40, "9/20/2026 12:00:00", L("9", "5.79", true), L("10", "5.81", false)),
+    pass(1, 41, "9/20/2026 12:03:00", L("12", "5.73", true), L("11", "5.95", false)),
+    pass(2, 60, "9/20/2026 15:00:00", L("9", "5.78", true)),
+  ]);
+  const PM_QLY = qlyFor(["12", "9", "10", "11"], ["5.7391", "5.7922", "5.8123", "5.8840"]);
+
+  // Funny Car at the second weekend (its own stamp).
+  const FC_LOG = logCsv([
+    pass(1, 5, "9/25/2026 14:00:00", L("1", "3.90", true), L("2", "3.95", false)),
+    pass(1, 70, "9/27/2026 11:00:00", L("1", "3.89", true), L("2", "3.96", false)),
+  ]);
+
+  const zipped = zipSync({
+    "Mike Text Files/2026-09-18 thru 09-21 - Event A/Top Alcohol Dragster/20260918084551dat.txt": TAD_LOG,
+    "Mike Text Files/2026-09-18 thru 09-21 - Event A/Top Alcohol Dragster/20260918084551qly.txt": TAD_QLY,
+    "Mike Text Files/2026-09-18 thru 09-21 - Event A/Top Alcohol Dragster/Driversdbf.txt": drivers("TAD", ["1", "2", "3", "4", "5", "6", "7", "8"]),
+    "Mike Text Files/2026-09-18 thru 09-21 - Event A/Pro Mod/20260918084551dat.txt": PM_LOG,
+    "Mike Text Files/2026-09-18 thru 09-21 - Event A/Pro Mod/20260918084551qly.txt": PM_QLY,
+    "Mike Text Files/2026-09-18 thru 09-21 - Event A/Factory Stock Showdown/20260918084551qly.txt": qlyFor(["B346", "3397"], ["7.5586", "7.5877"]),
+    "Mike Text Files/2026-09-25 thru 09-27 - Event B/Funny Car/20260925082555dat.txt": FC_LOG,
+    "Mike Text Files/.DS_Store": latin1("\x00\x00\x00\x01Bud1"),
+    "__MACOSX/Mike Text Files/2026-09-18 thru 09-21 - Event A/Top Alcohol Dragster/._20260918084551qly.txt": latin1("\x00\x05\x16\x07junk"),
+  });
+
+  const { sessions, warnings } = parseAccuTimePack([{ name: "Mike Text Files.zip", data: zipped }]);
+  const byCode = new Map(sessions.map((s) => [s.classCode, s]));
+  check(
+    "text export: four classes from the zip, clutter ignored",
+    sessions.length === 4 && ["TAD", "PM", "FSS", "FC"].every((c) => byCode.has(c)),
+    sessions.map((s) => `${s.classCode}:${s.className}`).join("|") + " " + JSON.stringify(warnings),
+  );
+  check(
+    "text export: no warning about __MACOSX / ._ / .DS_Store files",
+    !warnings.some((w) => /__MACOSX|\._|DS_Store/.test(w)),
+    JSON.stringify(warnings),
+  );
+  check(
+    "text export: one note that classes came from folder names",
+    warnings.filter((w) => w.startsWith("No Class.ini")).length === 1 &&
+      warnings.some((w) => w.includes("Top Alcohol Dragster → TAD") && w.includes("Pro Mod → PM")),
+    JSON.stringify(warnings),
+  );
+
+  const tad = byCode.get("TAD")!;
+  check("text export: race date from the file stamp", tad?.raceDate === "2026-09-18", String(tad?.raceDate));
+  check("text export: race stamp kept as raceId", tad?.raceId === "20260918084551", String(tad?.raceId));
+  check("text export: className from the folder's code", tad?.className === "TOP ALCOHOL DRAGSTER", tad?.className);
+  check(
+    "text export: Drivers CSV with a line break inside a quoted field reads all 8 cards",
+    tad?.drivers.length === 8 && tad.drivers[0].member_number === "900000" && tad.drivers[0].city === "Town1",
+    JSON.stringify(tad?.drivers.slice(0, 1)),
+  );
+  check("text export: qualifying order from …qly.txt", tad?.qualifying.length === 8 && tad.qualifying[0].car_number === "1");
+
+  // Same-day Q1 + E1, curfew-split E2.
+  check(
+    "split: Q1 and E1 on the same day under one RoundNumber come apart",
+    tad?.qualSessions === 1 && tad.elimRounds[0]?.round === "E1" && tad.elimRounds[0].pairs.length === 4,
+    `qual ${tad?.qualSessions}, rounds ${tad?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ")}`,
+  );
+  check(
+    "split: E2 stopped by curfew and finished next day is one round of 2 pairs",
+    tad?.elimRounds[1]?.round === "E2" && tad.elimRounds[1].pairs.length === 2,
+    tad?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" "),
+  );
+  check(
+    "split: the final is the last round",
+    tad?.elimRounds.length === 3 && tad.elimRounds[2].round === "F" && tad.elimRounds[2].pairs[0].runs[0].car_number === "1",
+  );
+  check(
+    "split: E1 pairs follow the ladder (seeds sum to 9)",
+    tad?.elimRounds[0].pairs.every((p) => p.runs.reduce((n, r) => n + (r.qual_pos || 0), 0) === 9),
+    JSON.stringify(tad?.elimRounds[0].pairs.map((p) => p.runs.map((r) => r.qual_pos))),
+  );
+  check(
+    "Low ET from qualifying passes, at the .qly's full precision (5.20 → 5.2026)",
+    tad?.lowEt?.car === "1" && tad.lowEt.et === 5.2026,
+    JSON.stringify(tad?.lowEt),
+  );
+
+  const pm = byCode.get("PM")!;
+  check(
+    "split: date-split pro class — Q1/Q2 qualifying, E1 + final",
+    pm?.qualSessions === 2 && pm.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ") === "E1(2) F(1)",
+    `qual ${pm?.qualSessions}, rounds ${pm?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ")}`,
+  );
+  check(
+    "split: a final run as a single by a car that skipped Q2 stays the final",
+    pm?.elimRounds[1]?.pairs.length === 1 && pm.elimRounds[1].pairs[0].single && pm.elimRounds[1].pairs[0].runs[0].car_number === "9",
+  );
+  check("qualifying-only class (no Logging) exports no rounds", byCode.get("FSS")?.elimRounds.length === 0);
+
+  // Two weekends in one zip → two events; a pick narrows the drop to one.
+  const events = accuEventGroups(sessions);
+  check(
+    "events: two race stamps → two events, labelled by folder",
+    events.length === 2 &&
+      events[0].key === "race:20260918084551" &&
+      events[0].label === "2026-09-18 thru 09-21 - Event A" &&
+      events[1].label === "2026-09-25 thru 09-27 - Event B",
+    JSON.stringify(events.map(({ key, label, classes }) => ({ key, label, classes }))),
+  );
+  const eventA = events[0].sessions;
+  check("events: event A holds TAD, PM and FSS", eventA.map((s) => s.classCode).sort().join() === "FSS,PM,TAD");
+  check("events: one event in a drop asks nothing", accuEventGroups(eventA).length === 1);
+  check(
+    "events: a different race than the pack is flagged",
+    accuPackConflict(eventA, events[1].sessions)?.drop.label === "2026-09-25 thru 09-27 - Event B",
+  );
+  check("events: the same race merges quietly", accuPackConflict(eventA, [tad]) === null);
+  check(
+    "events: no race stamps → nothing to compare",
+    accuPackConflict(parseAccuTimePack([{ name: "race.qly", data: FC_QLY }]).sessions, eventA) === null,
+  );
+  check(
+    "events: raceId survives the browser round-trip",
+    sanitizeAccuSessions(JSON.parse(JSON.stringify(eventA)))[0].raceId === eventA[0].raceId,
+  );
+
+  // The event package: national numbers, one qualifying PDF + one finals PDF.
+  const arts = buildAccuTimeArtifacts(eventA, [], {
+    pointsRaceCode: "15",
+    seriesHeader: "NHRA Mission Foods Drag Racing Series",
+  });
+  check("package: QDAT C5 / C6 / C16 (Pro Mod 5, Factory Stock Showdown 16)", names(arts.qdat) === "C16QDAT.TXT C5QDAT.TXT C6QDAT.TXT", names(arts.qdat));
+  check("package: EDAT for the two classes with rounds", names(arts.edat) === "C5EDAT.TXT C6EDAT.TXT", names(arts.edat));
+  check("package: points named C#A15DP", arts.points.map((p) => p.filename).sort().join(" ") === "C5A15DP.TXT C6A15DP.TXT");
+  // The PM final was a single: no runner-up pass on file, so none is named.
+  check(
+    "package: IDX14 lists every class with the champion once the final ran",
+    /^5,PM,0,0,0,Driver 9,,$/m.test(arts.idx?.content || "") &&
+      /^6,TAD,0,0,900000,First1 Driver 1,First2 Driver 2,$/m.test(arts.idx?.content || "") &&
+      /^16,FSS,0,0,0,,,$/m.test(arts.idx?.content || ""),
+    arts.idx?.content,
+  );
+  check(
+    "package: the TAD EDAT has three rounds — 4 + 2 pairs and the final",
+    (arts.edat.find((f) => f.filename === "C6EDAT.TXT")?.content.match(/^(ROUND \d|FINALS)$/gm) || []).join() === "ROUND 1,ROUND 2,FINALS" &&
+      arts.edat.find((f) => f.filename === "C6EDAT.TXT")?.pairs === 7,
+  );
+  check("package: QDAT Low ET line at full precision", /^Low ET 5\.203 1 /m.test(arts.qdat.find((f) => f.filename === "C6QDAT.TXT")?.content || ""));
+
+  const qualText = pdfStrings(arts.qualifyingPdf);
+  const finalsText = pdfStrings(arts.finalsPdf);
+  check(
+    "package: ONE qualifying PDF with every class, in class order",
+    qualText.filter((s) => s === "TOP ALCOHOL DRAGSTER" || s === "PRO MOD" || s === "FACTORY STOCK SHOWDOWN").join("|") ===
+      "TOP ALCOHOL DRAGSTER|PRO MOD|FACTORY STOCK SHOWDOWN",
+    qualText.filter((s) => /^[A-Z ]{6,}$/.test(s)).join("|"),
+  );
+  check(
+    "package: ONE finals PDF — summary for both classes, then each class's rounds",
+    finalsText.filter((s) => s.includes("FINAL ROUND RESULTS")).length === 1 &&
+      finalsText.filter((s) => s === "Elimination Results").length === 2 &&
+      finalsText.includes("NHRA Mission Foods Drag Racing Series"),
+    finalsText.slice(0, 12).join("|"),
+  );
+
+  // Nested zips open too; a locked archive says what to drop instead.
+  const nested = parseAccuTimePack([{ name: "outer.zip", data: zipSync({ "inner/Mike Text Files.zip": zipped }) }]);
+  check("archives: a zip inside a zip is opened", nested.sessions.length === 4, String(nested.sessions.length));
+  const locked = new Uint8Array(zipSync({ "race.dat": latin1("x") }));
+  locked[6] |= 1; // general-purpose flag bit 0: encrypted
+  const lockedParse = parseAccuTimePack([{ name: "race.acc", data: locked }]);
+  check(
+    "archives: a password-locked .acc points at the unlocked text export",
+    lockedParse.sessions.length === 0 && lockedParse.warnings.some((w) => /password-locked/.test(w) && /unlocked text export/.test(w)),
+    JSON.stringify(lockedParse.warnings),
+  );
+
+  // Folder names → class codes, including the short forms.
+  const folderCode = (folder: string) =>
+    parseAccuTimePack([{ name: `${folder}/20260925082555qly.txt`, data: qlyFor(["1"], ["8.9000"]) }]).sessions[0]?.classCode;
+  check(
+    "folders: Stock / Super Stock / Comp Eliminator / Nostalgia Pro Stock / Top Dragster",
+    folderCode("Stock") === "STK" &&
+      folderCode("Super Stock") === "SS" &&
+      folderCode("Comp Eliminator") === "COMP" &&
+      folderCode("Nostalgia Pro Stock") === "NPS" &&
+      folderCode("Top Dragster") === "TD",
+  );
+  check("folders: a bare code or a bracketed one", folderCode("TAFC") === "TAFC" && folderCode("Funny Car (FC)") === "FC");
+  const unnamed = parseAccuTimePack([{ name: "Misc/20260925082555qly.txt", data: qlyFor(["1"], ["8.9000"]) }]);
+  check(
+    "folders: a folder that names no class is reported, not guessed",
+    unnamed.sessions[0]?.classCode === "" && unnamed.sessions[0].warnings.some((w) => w.includes('"Misc"')),
+    JSON.stringify(unnamed.sessions[0]?.warnings),
+  );
+
+  check(
+    "class numbers: PM 5, FSS 16, Stock Eliminator 13; Nostalgia Pro Stock has none",
+    compulinkClassNumber("PRO MOD", "PM") === 5 &&
+      compulinkClassNumber("FACTORY STOCK SHOWDOWN", "") === 16 &&
+      compulinkClassNumber("STOCK ELIMINATOR", "") === 13 &&
+      compulinkClassNumber("STOCK", "") === 13 &&
+      compulinkClassNumber("NOSTALGIA PRO STOCK", "NPS") === null,
+  );
+}
+
+// ——— 12. Mike's real text-export zip (optional) ———
+// The 2026-09-18 → 09-27 email: US 131 (GL) and Rockingham in one zip.
+// Runs when MIKE_TEXT_ZIP points at it (or it sits at /tmp/mike-text.zip).
+{
+  const zipPath = process.env.MIKE_TEXT_ZIP || "/tmp/mike-text.zip";
+  if (fs.existsSync(zipPath)) {
+    const { sessions, warnings } = parseAccuTimePack([
+      { name: path.basename(zipPath), data: new Uint8Array(fs.readFileSync(zipPath)) },
+    ]);
+    const events = accuEventGroups(sessions);
+    check("mike: 20 classes across 2 events", sessions.length === 20 && events.length === 2, `${sessions.length} / ${events.length}`);
+    const [gl, rk] = events;
+    check("mike: US 131 first, then Rockingham", /US 131/.test(gl?.label || "") && /Rockingham/.test(rk?.label || ""), `${gl?.label} | ${rk?.label}`);
+
+    const rounds = (s: AccuTimeSession | undefined) => s?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ");
+    const glBy = new Map(gl.sessions.map((s) => [s.classCode, s]));
+    check(
+      "mike GL: TAD is a real ladder (Q1 and E1 shared 9/18; E2 split across days)",
+      rounds(glBy.get("TAD")) === "E1(8) E2(4) E3(2) F(1)",
+      rounds(glBy.get("TAD")),
+    );
+    check("mike GL: TAFC through round 3, no final in the dump", rounds(glBy.get("TAFC")) === "E1(5) E2(3) E3(2)", rounds(glBy.get("TAFC")));
+    check("mike GL: TS round 3 keeps its 9/18 pairs", rounds(glBy.get("TS")) === "E1(12) E2(6) E3(3) E4(2) F(1)", rounds(glBy.get("TS")));
+    check("mike GL: FSS E1/E2 from Friday night", rounds(glBy.get("FSS")) === "E1(8) E2(4)", rounds(glBy.get("FSS")));
+    check("mike GL: FC unchanged", rounds(glBy.get("FC")) === "E1(8) E2(4) E3(2) F(1)" && glBy.get("FC")?.qualSessions === 4);
+
+    const glArts = buildAccuTimeArtifacts(gl.sessions, [], { pointsRaceCode: "15" });
+    check(
+      "mike GL: C1-C4, C6, C7, C14, C16 QDAT",
+      names(glArts.qdat) === "C14QDAT.TXT C16QDAT.TXT C1QDAT.TXT C2QDAT.TXT C3QDAT.TXT C4QDAT.TXT C6QDAT.TXT C7QDAT.TXT",
+      names(glArts.qdat),
+    );
+    const champs = (glArts.idx?.content || "").split("\r\n").filter((l) => /^\d/.test(l)).map((l) => l.split(",").slice(0, 2).concat(l.split(",")[5]).join(":"));
+    check(
+      "mike GL: IDX champions",
+      champs.join("|") ===
+        "1:TF:Shawn Langdon|2:FC:Jordan Vandergriff|3:PS:Troy Coughlin Jr|4:PSM:John Hall|6:TAD:Greg Hunter|7:TAFC:|14:TS:Curtis Fredrich|16:FSS:",
+      champs.join("|"),
+    );
+    check("mike GL: one qualifying + one finals PDF", !!glArts.qualifyingPdf && !!glArts.finalsPdf);
+
+    const rkArts = buildAccuTimeArtifacts(rk.sessions, [], { pointsRaceCode: "16" });
+    check(
+      "mike RK: Pro Mod on C5, the sportsman classes on their national numbers",
+      names(rkArts.edat) === "C11EDAT.TXT C12EDAT.TXT C13EDAT.TXT C15EDAT.TXT C1EDAT.TXT C2EDAT.TXT C3EDAT.TXT C4EDAT.TXT C5EDAT.TXT C8EDAT.TXT C9EDAT.TXT",
+      names(rkArts.edat),
+    );
+    check(
+      "mike RK: Nostalgia Pro Stock's placeholder passes make no rounds",
+      rk.sessions.find((s) => s.classCode === "NPS")?.elimRounds.length === 0,
+    );
+    check("mike: no unexpected top-level warnings", warnings.length === 1 && warnings[0].startsWith("No Class.ini"), JSON.stringify(warnings));
+  } else {
+    console.log("  --  Mike's text-export zip not found (MIKE_TEXT_ZIP) — real-data checks skipped");
+  }
 }
 
 if (failures > 0) {
