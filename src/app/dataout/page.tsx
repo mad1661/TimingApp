@@ -154,6 +154,20 @@ interface AccuMergeInfo {
   replaced: string[];
 }
 
+/** One event in a drop or in the pack, as the server describes it. */
+interface AccuEventInfo {
+  key: string;
+  label: string;
+  raceDate: string | null;
+  classes: string[];
+}
+
+// The server's questions instead of a package: which event of a multi-event
+// drop to build, and whether a drop from a different race replaces the pack.
+type AccuChoice =
+  | { kind: "event"; events: AccuEventInfo[] }
+  | { kind: "pack"; pack: AccuEventInfo; drop: AccuEventInfo };
+
 interface AccuResult {
   sessions: AccuSession[];
   edat: (AccuTextFile & { content: string })[];
@@ -166,7 +180,16 @@ interface AccuResult {
   idx: (AccuTextFile & { content: string }) | null;
   sessionsFull?: AccuStoredSession[];
   merge?: AccuMergeInfo;
+  packEvents?: AccuEventInfo[];
   warnings: string[];
+}
+
+/** "2026-09-18" → "Sep 18, 2026". */
+function fmtRaceDate(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso;
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[parseInt(m[2], 10) - 1] || m[2]} ${parseInt(m[3], 10)}, ${m[1]}`;
 }
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -206,6 +229,16 @@ function logosKey(l: Record<AccuLogoSlot, string | null>): string {
   return `${l.left || ""}|${l.center || ""}|${l.right || ""}`;
 }
 
+/** Everything the server prints into the PDF header: logos plus the series line. */
+function headerKey(l: Record<AccuLogoSlot, string | null>, series: string): string {
+  return `${logosKey(l)}|${series.trim()}`;
+}
+
+// Zip clutter from macOS / Windows: never session data, not worth uploading.
+function isJunkEntry(path: string): boolean {
+  return /(^|\/)__MACOSX\//i.test(path) || /(^|\/)(\._[^/]*|\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(path);
+}
+
 // ——— Local class pack: the accumulated AccuTime working set. Mark drops one
 // class at a time (FC now, TF later), so the parsed sessions plus the built
 // package are saved in the browser and survive a refresh; each new drop posts
@@ -224,6 +257,11 @@ interface AccuPackStored {
   result: AccuResult;
   series: string;
   builtLogosKey: string | null;
+  /** headerKey() of the build; packs saved before v1.47.0 only have builtLogosKey. */
+  builtHeaderKey?: string | null;
+  /** The points settings the package was built with, so a rebuild after a refresh keeps them. */
+  raceCode?: string;
+  proScale?: ProEventScale;
 }
 
 function openAccuPackDb(): Promise<IDBDatabase> {
@@ -450,11 +488,17 @@ export default function DataOutPage() {
   });
   const accuLogoInputRef = useRef<HTMLInputElement>(null);
   const accuLogoSlotRef = useRef<AccuLogoSlot>("left");
-  // The logos baked into the current package's PDFs. The server renders the
-  // PDFs at upload time, so when the on-page logos drift from these the
-  // package must be rebuilt or the download buttons keep serving PDFs without
-  // the logos (the v1.43.1 "images don't go on the finals PDF" bug).
-  const accuBuiltLogosKey = useRef<string | null>(null);
+  // The header (logos + series line) baked into the current package's PDFs.
+  // The server renders the PDFs at upload time, so when the on-page header
+  // drifts from this the package must be rebuilt or the download buttons keep
+  // serving stale PDFs (the v1.43.1 "images don't go on the finals PDF" bug).
+  // The text export carries no series title, so the line is typed after the
+  // drop — and has to reach the PDFs the same way.
+  const accuBuiltHeaderKey = useRef<string | null>(null);
+  // A drop the server answered with a question (which event / replace the
+  // pack?): its files stay here so the answer can re-post them.
+  const [accuChoice, setAccuChoice] = useState<AccuChoice | null>(null);
+  const accuPending = useRef<{ entries: AccuEntry[]; eventPick: string }>({ entries: [], eventPick: "" });
 
   // Points (Alcohol & below) + deductions. Deductions live in page state for
   // the session and are applied client-side, so adding one needs no rebuild.
@@ -545,26 +589,29 @@ export default function DataOutPage() {
       if (cancelled || !pack) return;
       setAccuSessions(pack.sessions);
       setAccuResult(pack.result);
-      accuBuiltLogosKey.current = pack.builtLogosKey;
+      accuBuiltHeaderKey.current =
+        pack.builtHeaderKey ?? (pack.builtLogosKey === null ? null : `${pack.builtLogosKey}|${(pack.series || "").trim()}`);
       if (pack.series && !accuSeriesEdited.current) setAccuSeries(pack.series);
+      if (pack.raceCode) setAccuRaceCode(pack.raceCode);
+      if (pack.proScale && PRO_EVENT_SCALES.some((s) => s.value === pack.proScale)) setAccuProScale(pack.proScale);
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Adding, replacing or clearing a logo after the package was built rebuilds
+  // Changing a logo or the series line after the package was built rebuilds
   // it automatically (debounced), so the downloaded finals / qualifying PDFs
-  // always carry the logos shown on the page. Rebuilds run from the saved
+  // always carry the header shown on the page. Rebuilds run from the saved
   // sessions — no files needed, so this works after a refresh too.
   useEffect(() => {
     if (!accuResult || accuUploading || accuSessions.length === 0) return;
-    if (accuBuiltLogosKey.current === null) return;
-    if (logosKey(accuLogos) === accuBuiltLogosKey.current) return;
-    const t = setTimeout(() => void postAccuBuild([]), 600);
+    if (accuBuiltHeaderKey.current === null) return;
+    if (headerKey(accuLogos, accuSeries) === accuBuiltHeaderKey.current) return;
+    const t = setTimeout(() => void postAccuBuild([]), 900);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accuLogos, accuResult, accuUploading, accuSessions]);
+  }, [accuLogos, accuSeries, accuResult, accuUploading, accuSessions]);
 
   function updateLogo(slot: AccuLogoSlot, dataUrl: string | null) {
     const next = { ...accuLogos, [slot]: dataUrl };
@@ -815,18 +862,19 @@ export default function DataOutPage() {
   async function handleAccuUpload(entries: AccuEntry[]) {
     // .acc is AccuTime's password-locked archive — it can't be opened here, so
     // it's dropped from the upload with a note rather than failing everything.
-    const accFiles = entries.filter((e) => /\.acc$/i.test(e.path));
-    const valid = entries.filter((e) => /\.(dat|qly|ini|dbf|zip|txt)$/i.test(e.path));
+    const kept = entries.filter((e) => !isJunkEntry(e.path));
+    const accFiles = kept.filter((e) => /\.acc$/i.test(e.path));
+    const valid = kept.filter((e) => /\.(dat|qly|ini|dbf|zip|txt|csv)$/i.test(e.path));
     setAccuNote(
       accFiles.length > 0
-        ? `${accFiles.map((e) => e.file.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use the loose .qly / .dat / Class.ini / Drivers.dbf files from the same folder instead.`
+        ? `${accFiles.map((e) => e.file.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt) or the loose .qly / .dat / Class.ini / Drivers.dbf files instead.`
         : "",
     );
     if (valid.length === 0) {
       setAccuError(
         accFiles.length > 0
           ? ""
-          : "Upload AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf), Compulink C#QDAT/C#EDAT .TXT, or a zip of them.",
+          : "Upload AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class — a zip of the whole event is fine), the session files (.dat / .qly / Class.ini / Drivers.dbf), or Compulink C#QDAT/C#EDAT .TXT.",
       );
       if (accuFileRef.current) accuFileRef.current.value = "";
       return;
@@ -837,8 +885,12 @@ export default function DataOutPage() {
   // One request, two shapes: new files merge into the saved pack; no files is
   // a pure rebuild of the pack (class pick, series header, logo changes). The
   // previous result stays on screen until the new one lands, so a failed
-  // request never blanks a working package.
-  async function postAccuBuild(valid: AccuEntry[]) {
+  // request never blanks a working package. `answer` re-posts a drop the
+  // server asked about (which event, replace the pack).
+  async function postAccuBuild(
+    valid: AccuEntry[],
+    answer: { eventPick?: string; packMode?: "replace" | "merge" } = {},
+  ) {
     // A drop landing while another is in flight would post a stale pack and
     // silently lose the in-flight class — make it wait instead.
     if (accuUploading) return;
@@ -846,18 +898,24 @@ export default function DataOutPage() {
     setAccuUploading(true);
     setAccuError("");
     setAccuMerge(null);
+    setAccuChoice(null);
     setAccuProgress({
       stage: isUpload ? "Uploading session files…" : "Rebuilding from saved class data…",
       pct: isUpload ? 0 : null,
     });
+    const builtBefore = accuBuiltHeaderKey.current;
     try {
       const form = new FormData();
       // The relative path rides along as the filename — which folder a file
       // came from tells the server which class session it belongs to.
       for (const e of valid) form.append("files", e.file, e.path);
       // The saved pack goes with every request, so the server merges the new
-      // drop into it (same class → replaced, new class → added).
-      if (accuSessions.length > 0) form.append("prior_sessions", JSON.stringify(accuSessions));
+      // drop into it (same class → replaced, new class → added) — unless this
+      // drop starts a new pack.
+      const prior = answer.packMode === "replace" ? [] : accuSessions;
+      if (prior.length > 0) form.append("prior_sessions", JSON.stringify(prior));
+      if (answer.eventPick) form.append("event_pick", answer.eventPick);
+      if (answer.packMode) form.append("pack_mode", answer.packMode);
       if (live.config?.eventName) form.append("event_name", live.config.eventName);
       if (eventCode.trim()) form.append("event_code", eventCode.trim());
       if (season.trim()) form.append("season", season.trim());
@@ -868,7 +926,7 @@ export default function DataOutPage() {
       if (accuLogos.right) form.append("logo_right", accuLogos.right);
       // Recorded at attempt time (not on success) so a failed rebuild shows
       // its error once instead of retry-looping from the auto-rebuild effect.
-      accuBuiltLogosKey.current = logosKey(accuLogos);
+      accuBuiltHeaderKey.current = headerKey(accuLogos, accuSeries);
       form.append("calc_points", accuCalcPoints ? "1" : "0");
       form.append("incomplete_race", accuIncomplete ? "1" : "0");
       form.append("pro_scale", accuProScale);
@@ -885,19 +943,36 @@ export default function DataOutPage() {
         }
       });
       if (!ok) throw new Error((body.error as string) || "AccuTime export failed");
+      if (body.choice) {
+        // Nothing was built: keep the files for the answer and the current
+        // package exactly as it was.
+        accuBuiltHeaderKey.current = builtBefore;
+        accuPending.current = { entries: valid, eventPick: answer.eventPick || "" };
+        setAccuChoice(body.choice as AccuChoice);
+        return;
+      }
+      accuPending.current = { entries: [], eventPick: "" };
       const parsed = body as unknown as AccuResult;
       const sessionsFull = Array.isArray(parsed.sessionsFull) ? parsed.sessionsFull : [];
+      if (answer.packMode === "replace") {
+        // A new event: the old pack's deductions don't apply to it.
+        setAccuDeductions([]);
+        setDedCat("");
+        setDedCar("");
+      }
       setAccuResult(parsed);
       setAccuSessions(sessionsFull);
       setAccuMerge(isUpload && parsed.merge ? parsed.merge : null);
       // Prefill the header field with the session's own series title (Class.ini
-      // [Reports]) unless the user already typed one.
+      // [Reports]) unless the user already typed one. The PDFs just printed
+      // that title from the sessions, so the prefilled header counts as built.
       let series = accuSeries;
       if (!accuSeriesEdited.current) {
         const s = parsed.sessions.find((x) => x.seriesName)?.seriesName;
         if (s) {
           series = s;
           setAccuSeries(s);
+          accuBuiltHeaderKey.current = headerKey(accuLogos, s);
         }
       }
       // Persist the whole working set — the pack survives a refresh until
@@ -909,7 +984,10 @@ export default function DataOutPage() {
         sessions: sessionsFull,
         result: resultLean as AccuResult,
         series,
-        builtLogosKey: accuBuiltLogosKey.current,
+        builtLogosKey: logosKey(accuLogos),
+        builtHeaderKey: accuBuiltHeaderKey.current,
+        raceCode: accuRaceCode.trim(),
+        proScale: accuProScale,
       });
     } catch (err) {
       setAccuError(err instanceof Error ? err.message : "AccuTime export failed");
@@ -937,9 +1015,26 @@ export default function DataOutPage() {
     setDedCar("");
     setAccuClassPick("");
     setAccuSeries("");
+    setAccuChoice(null);
+    accuPending.current = { entries: [], eventPick: "" };
     accuSeriesEdited.current = false;
-    accuBuiltLogosKey.current = null;
+    accuBuiltHeaderKey.current = null;
     void clearAccuPack();
+  }
+
+  // The answers to the server's questions re-post the same drop.
+  function answerAccuEvent(key: string) {
+    void postAccuBuild(accuPending.current.entries, { eventPick: key });
+  }
+
+  function answerAccuPack(packMode: "replace" | "merge") {
+    const { entries, eventPick } = accuPending.current;
+    void postAccuBuild(entries, { eventPick: eventPick || undefined, packMode });
+  }
+
+  function dismissAccuChoice() {
+    setAccuChoice(null);
+    accuPending.current = { entries: [], eventPick: "" };
   }
 
   // RACEDATA.zip is Compulink text only — per class C#QDAT / C#EDAT /
@@ -1222,7 +1317,7 @@ export default function DataOutPage() {
               accuSeriesEdited.current = true;
               setAccuSeries(e.target.value);
             }}
-            placeholder="e.g. NHRA Mission Foods Drag Racing Series — AccuTime drops prefill it from Class.ini; blank prints the event name"
+            placeholder="e.g. NHRA Mission Foods Drag Racing Series — prefilled from Class.ini when an AccuTime drop has one"
             className="mt-1 w-full px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
           />
         </label>
@@ -1539,34 +1634,46 @@ export default function DataOutPage() {
         <div className="mb-2">
           <h2 className="text-white font-bold text-lg">AccuTime export</h2>
           <p className="text-xs text-gray-400 mt-1 max-w-2xl">
-            Drop AccuTime sessions and get the full package: Compulink-compatible qualifying{" "}
-            <span className="font-mono">*QDAT.TXT</span>, eliminations{" "}
-            <span className="font-mono">*EDAT.TXT</span> and EVENT points{" "}
-            <span className="font-mono">*A16DP.TXT</span>, plus an AccuTime-branded qualifying PDF
-            and Final Round Results PDF (with each class&apos;s round-by-round elimination page).
-            Upload the <span className="font-mono">.dat</span> /{" "}
-            <span className="font-mono">.qly</span> / <span className="font-mono">Class.ini</span>{" "}
-            / <span className="font-mono">Drivers.dbf</span> files from the session folder (a zip
-            works too) — or, for tracks that already have Compulink text, drop{" "}
+            Drop AccuTime sessions and get the full event package: Compulink-compatible qualifying{" "}
+            <span className="font-mono">C#QDAT.TXT</span>, eliminations{" "}
+            <span className="font-mono">C#EDAT.TXT</span>, EVENT points{" "}
+            <span className="font-mono">C#A&#123;race&#125;DP.TXT</span> and{" "}
+            <span className="font-mono">IDX14.TXT</span> in RACEDATA.zip, plus one AccuTime-branded
+            qualifying PDF and one Final Round Results PDF covering every class (champion / R-U /
+            #1 qualifier / low ET / top speed per class, then each class&apos;s round-by-round
+            page).
+          </p>
+          <p className="text-xs text-gray-400 mt-1.5 max-w-2xl">
+            <span className="text-gray-200">AccuTime&apos;s unlocked text export</span> drops
+            straight in — the zip Mike sends (<span className="font-mono">…dat.txt</span> /{" "}
+            <span className="font-mono">…qly.txt</span> /{" "}
+            <span className="font-mono">Driversdbf.txt</span>, one folder per class) or any event
+            or class folder from it. It has no <span className="font-mono">Class.ini</span>: each
+            class is read from its folder&apos;s name and the race date from the file stamp, and
+            the series line comes from the sheet header above. A zip holding two race weekends
+            asks which one to build. The Jet session files (
+            <span className="font-mono">.dat</span> / <span className="font-mono">.qly</span> /{" "}
+            <span className="font-mono">Class.ini</span> /{" "}
+            <span className="font-mono">Drivers.dbf</span>) and Compulink{" "}
             <span className="font-mono">C#QDAT.TXT</span> +{" "}
-            <span className="font-mono">C#EDAT.TXT</span> directly for the same package. The{" "}
-            <span className="font-mono">.acc</span> archive is password-locked and isn&apos;t
-            needed — the loose files carry the same data. Several classes can go in one drop:
-            one folder or zip per class, or matching names (FC.dat + FC.qly + FC-Class.ini).
+            <span className="font-mono">C#EDAT.TXT</span> still work. The{" "}
+            <span className="font-mono">.acc</span> archive is password-locked and can&apos;t be
+            read — the unlocked export carries the same data.
+          </p>
+          <p className="text-xs text-gray-400 mt-1.5 max-w-2xl">
             Member #, city, body and engine merge from the session&apos;s own driver database and
-            the shared tech cards. RACEDATA.zip holds the Compulink text only (QDAT / EDAT /
-            points / IDX); the PDFs download separately. Drops <em>accumulate</em>: each upload
-            merges into the pack saved in this browser — drop Funny Car now and Top Fuel later
-            and both stay in, re-dropping a class replaces just that class, and the zip and
-            PDFs always build from everything. Hit Clear data to start a new event. The PDFs
-            print the sheet header set at the top of the page; changing it after an upload
-            rebuilds the package automatically.
+            the shared tech cards. Drops <em>accumulate</em>: each upload merges into the pack
+            saved in this browser — drop Funny Car now and Top Fuel later and both stay in,
+            re-dropping a class replaces just that class, and the zip and PDFs always build from
+            everything. A drop from a different race asks before it replaces the pack; Clear data
+            starts over. Changing the sheet header (logos or series line) after an upload rebuilds
+            the package automatically.
           </p>
         </div>
 
         <div className="flex flex-wrap items-end gap-3 mb-4">
           <label className="text-xs text-gray-400 w-64">
-            Class when Class.ini has none
+            Class when Class.ini and the folder name have none
             <select
               value={accuClassPick}
               onChange={(e) => setAccuClassPick(e.target.value)}
@@ -1662,7 +1769,7 @@ export default function DataOutPage() {
             ref={accuFileRef}
             type="file"
             multiple
-            accept=".dat,.qly,.ini,.dbf,.zip,.txt,.DAT,.QLY,.INI,.DBF,.ZIP,.TXT"
+            accept=".dat,.qly,.ini,.dbf,.zip,.txt,.csv,.DAT,.QLY,.INI,.DBF,.ZIP,.TXT,.CSV"
             className="hidden"
             onChange={(e) =>
               handleAccuUpload(
@@ -1674,11 +1781,12 @@ export default function DataOutPage() {
             }
           />
           <p className="text-white font-medium mb-1">
-            {accuUploading ? "Working…" : "Drop AccuTime session files here"}
+            {accuUploading ? "Working…" : "Drop the AccuTime text zip or session files here"}
           </p>
           <p className="text-xs text-gray-500">
-            race.dat + race.qly + Class.ini + Drivers.dbf, or Compulink C#QDAT/C#EDAT .TXT —
-            folders and zips welcome; no .acc needed, it&apos;s locked
+            Unlocked text export (…dat.txt + …qly.txt + Driversdbf.txt per class folder — the
+            whole-event zip is fine), race.dat + race.qly + Class.ini + Drivers.dbf, or Compulink
+            C#QDAT/C#EDAT .TXT — folders and zips welcome; the .acc is locked and not needed
           </p>
         </div>
 
@@ -1705,6 +1813,69 @@ export default function DataOutPage() {
           </div>
         )}
 
+        {accuChoice && !accuUploading && (
+          <div className="mt-3 border border-nhra-red/50 bg-nhra-red/5 rounded-xl px-4 py-3">
+            {accuChoice.kind === "event" ? (
+              <>
+                <p className="text-sm text-white font-semibold">
+                  This drop holds {accuChoice.events.length} events — build which one?
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  A package covers one event. Drop the same file again afterwards and pick the
+                  other one to build it.
+                </p>
+                <div className="mt-2.5 flex flex-col gap-2">
+                  {accuChoice.events.map((ev) => (
+                    <button
+                      key={ev.key}
+                      onClick={() => answerAccuEvent(ev.key)}
+                      className="text-left px-3 py-2 rounded-lg border border-nhra-border bg-nhra-darker hover:border-gray-500"
+                    >
+                      <span className="block text-sm text-white font-medium">{ev.label}</span>
+                      <span className="block text-xs text-gray-500 mt-0.5">
+                        {ev.raceDate ? `${fmtRaceDate(ev.raceDate)} · ` : ""}
+                        {ev.classes.length} class{ev.classes.length === 1 ? "" : "es"}: {ev.classes.join(", ")}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={dismissAccuChoice} className="mt-2 text-xs text-gray-400 hover:text-white">
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-white font-semibold">This drop is from a different race than the pack</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  The pack holds <span className="text-gray-200">{accuChoice.pack.label}</span>
+                  {accuChoice.pack.raceDate ? ` (${fmtRaceDate(accuChoice.pack.raceDate)})` : ""}; this drop is{" "}
+                  <span className="text-gray-200">{accuChoice.drop.label}</span>
+                  {accuChoice.drop.raceDate ? ` (${fmtRaceDate(accuChoice.drop.raceDate)})` : ""}. Adding it
+                  would mix two events&apos; classes in one package, with a class in both replaced
+                  by this drop&apos;s.
+                </p>
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => answerAccuPack("replace")}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-nhra-red text-white hover:bg-red-600"
+                  >
+                    Start a new pack with this race
+                  </button>
+                  <button
+                    onClick={() => answerAccuPack("merge")}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500"
+                  >
+                    Add to the current pack anyway
+                  </button>
+                  <button onClick={dismissAccuChoice} className="px-2 py-1.5 text-xs text-gray-400 hover:text-white">
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {accuNote && (
           <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
             {accuNote}
@@ -1716,6 +1887,17 @@ export default function DataOutPage() {
             {accuError}
           </div>
         )}
+
+        {accuResult &&
+          accuResult.sessions.length > 0 &&
+          !accuSeries.trim() &&
+          !accuResult.sessions.some((s) => s.seriesName) && (
+            <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
+              No series title in these files — Class.ini carries one and AccuTime&apos;s text export
+              doesn&apos;t — so the PDFs print without a series line. Type it in the Sheet header
+              above (e.g. NHRA Mission Foods Drag Racing Series) and the package rebuilds.
+            </div>
+          )}
 
         {accuMerge && (accuMerge.added.length > 0 || accuMerge.replaced.length > 0) && (
           <div className="mt-3 bg-green-500/10 border border-green-500/40 text-green-400 rounded-xl px-4 py-3 text-xs">
@@ -1736,7 +1918,7 @@ export default function DataOutPage() {
             {accuResult.sessions.filter((s) => !s.classCode).length === accuResult.sessions.length
               ? "No class code was found in the session files"
               : "A session came through without a class code"}{" "}
-            — Class.ini normally carries it. Pick the class above and hit Rebuild package;
+            — Class.ini or the class folder&apos;s name normally carries it. Pick the class above and hit Rebuild package;
             until then those files export with the class marked UNKNOWN.
           </div>
         )}
@@ -1745,6 +1927,13 @@ export default function DataOutPage() {
           <div className="mt-4 border border-nhra-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-nhra-darker border-b border-nhra-border flex items-center justify-between gap-4 flex-wrap">
               <div>
+                {accuResult.packEvents && accuResult.packEvents.length > 0 && (
+                  <p className="text-xs text-gray-400 mb-0.5">
+                    {accuResult.packEvents
+                      .map((ev) => (ev.raceDate ? `${ev.label} · ${fmtRaceDate(ev.raceDate)}` : ev.label))
+                      .join("  +  ")}
+                  </p>
+                )}
                 <p className="text-sm text-white font-semibold">
                   {accuResult.sessions.length} class
                   {accuResult.sessions.length === 1 ? "" : "es"} in the pack ·{" "}
@@ -1769,10 +1958,36 @@ export default function DataOutPage() {
                 <button
                   onClick={handleDownloadAccuZip}
                   className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-red text-white hover:bg-red-600"
-                  title="Compulink text only: C#QDAT / C#EDAT / C#A16DP + IDX14.TXT — PDFs download separately below"
+                  title="Compulink text only: C#QDAT / C#EDAT / C#A{race}DP + IDX14.TXT — the two PDFs download on their own"
                 >
                   Download RACEDATA.zip
                 </button>
+                {accuResult.qualifyingPdfBase64 && (
+                  <button
+                    onClick={() =>
+                      downloadBytes("Qualifying.pdf", base64ToBytes(accuResult.qualifyingPdfBase64!), "application/pdf")
+                    }
+                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500"
+                    title="One qualifying sheet for every class in the pack"
+                  >
+                    Qualifying PDF
+                  </button>
+                )}
+                {accuResult.finalsPdfBase64 && (
+                  <button
+                    onClick={() =>
+                      downloadBytes(
+                        "FinalRoundResults.pdf",
+                        base64ToBytes(accuResult.finalsPdfBase64!),
+                        "application/pdf",
+                      )
+                    }
+                    className="px-4 py-2 rounded-lg text-sm font-semibold bg-nhra-darker border border-nhra-border text-gray-200 hover:text-white hover:border-gray-500"
+                    title="Final Round Results for every class, then each class's round-by-round page"
+                  >
+                    Final Round Results PDF
+                  </button>
+                )}
               </div>
             </div>
             <div className="divide-y divide-nhra-border/60">
@@ -1810,6 +2025,12 @@ export default function DataOutPage() {
                         {cov ? ` · tech cards ${cov.enriched}/${cov.runs}` : ""}
                       </span>
                     </div>
+                    {/* The tree-base line is on every session; the rest is worth reading. */}
+                    {s.warnings.filter((w) => !/tree base/i.test(w)).map((w, wi) => (
+                      <p key={wi} className="text-[11px] text-yellow-500/90 mt-1">
+                        {w}
+                      </p>
+                    ))}
                   </div>
                 );
               })}
@@ -1834,34 +2055,6 @@ export default function DataOutPage() {
                   {f.filename}
                 </button>
               ))}
-              {accuResult.finalsPdfBase64 && (
-                <button
-                  onClick={() =>
-                    downloadBytes(
-                      "FinalRoundResults.pdf",
-                      base64ToBytes(accuResult.finalsPdfBase64!),
-                      "application/pdf",
-                    )
-                  }
-                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500"
-                >
-                  Final Round Results PDF
-                </button>
-              )}
-              {accuResult.qualifyingPdfBase64 && (
-                <button
-                  onClick={() =>
-                    downloadBytes(
-                      "Qualifying.pdf",
-                      base64ToBytes(accuResult.qualifyingPdfBase64!),
-                      "application/pdf",
-                    )
-                  }
-                  className="text-xs px-2.5 py-1 rounded border border-nhra-border text-gray-300 hover:text-white hover:border-gray-500"
-                >
-                  Qualifying PDF
-                </button>
-              )}
             </div>
           </div>
         )}
