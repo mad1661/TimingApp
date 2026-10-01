@@ -99,6 +99,11 @@ export interface DataOutExportOptions {
    * dial-in column of its passes.
    */
   qualRules?: Record<string, QualRule>;
+  /**
+   * The second half of the "no reaction time" warning — where the missing RT
+   * has to be fixed depends on where the runs came from.
+   */
+  missingRtFix?: string;
 }
 
 const EOL = "\r\n";
@@ -689,9 +694,9 @@ export function buildEdataExport(
     lines.push("End of File");
 
     if (noRt.length) {
-      warnings.push(
-        `${category}: no reaction time on file for ${noRt.join(", ")} — the pass has an ET, so the RT is missing from the stored row. Check it on getresults and fix the row before printing.`,
-      );
+      const fix =
+        opts.missingRtFix || "the RT is missing from the stored row. Check it on getresults and fix the row before printing.";
+      warnings.push(`${category}: no reaction time on file for ${noRt.join(", ")} — the pass has an ET, so ${fix}`);
     }
 
     files.push({

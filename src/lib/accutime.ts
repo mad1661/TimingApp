@@ -317,6 +317,12 @@ for (const c of RACE_CLASSES) {
   const code = c.code.trim().toUpperCase();
   if (code && !CLASS_NAME_BY_CODE.has(code)) CLASS_NAME_BY_CODE.set(code, c.name.toUpperCase());
 }
+const CLASS_CODES_IN_ORDER = [...CLASS_NAME_BY_CODE.keys()];
+
+function classOrder(code: string): number {
+  const i = CLASS_CODES_IN_ORDER.indexOf((code || "").toUpperCase());
+  return i < 0 ? CLASS_CODES_IN_ORDER.length : i;
+}
 
 // ——— Class.ini ———
 
@@ -1744,9 +1750,13 @@ export function parseAccuTimePack(
 
   if (fromFolders.length > 0) {
     topWarnings.push(
-      `No Class.ini in the drop — classes named from their folders (${[...new Set(fromFolders)].join(", ")}); race dates from AccuTime's file stamps.`,
+      "No Class.ini in the drop — each class was named from its folder and dated from AccuTime's file stamp.",
     );
   }
+
+  // Class order, pros first — the order the exports use; a whole-event drop
+  // otherwise lists its classes in zip order.
+  sessions.sort((a, b) => classOrder(a.classCode) - classOrder(b.classCode));
 
   if (sessions.length === 0) {
     topWarnings.push(

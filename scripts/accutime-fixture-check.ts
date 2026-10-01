@@ -820,9 +820,13 @@ function pdfStrings(pdf: Uint8Array | null): string[] {
   );
   check(
     "text export: one note that classes came from folder names",
-    warnings.filter((w) => w.startsWith("No Class.ini")).length === 1 &&
-      warnings.some((w) => w.includes("Top Alcohol Dragster → TAD") && w.includes("Pro Mod → PM")),
+    warnings.filter((w) => w.startsWith("No Class.ini")).length === 1,
     JSON.stringify(warnings),
+  );
+  check(
+    "text export: a whole-event drop comes back in class order",
+    sessions.map((s) => s.classCode).join() === "FC,TAD,PM,FSS",
+    sessions.map((s) => s.classCode).join(),
   );
 
   const tad = byCode.get("TAD")!;
@@ -938,6 +942,22 @@ function pdfStrings(pdf: Uint8Array | null): string[] {
       finalsText.filter((s) => s === "Elimination Results").length === 2 &&
       finalsText.includes("NHRA Mission Foods Drag Racing Series"),
     finalsText.slice(0, 12).join("|"),
+  );
+  check(
+    "package: a champion per class whose final ran",
+    finalsText.filter((s) => s.startsWith("Champion")).length === 2,
+    finalsText.filter((s) => /^(Champion|R\/U)/.test(s)).join("|"),
+  );
+
+  // A class whose dump stops before the final names no champion anywhere.
+  const unfinished = buildAccuTimeArtifacts(
+    [{ ...tad, elimRounds: tad.elimRounds.slice(0, 2), runs: tad.runs.filter((r) => r.round !== "F") }],
+    [],
+  );
+  check(
+    "package: no final on file → no Champion / R-U on the sheet, none in IDX",
+    !pdfStrings(unfinished.finalsPdf).some((s) => /^(Champion|R\/U)/.test(s)) && /^6,TAD,0,0,0,,,$/m.test(unfinished.idx?.content || ""),
+    pdfStrings(unfinished.finalsPdf).filter((s) => /^(Champion|R\/U)/.test(s)).join("|"),
   );
 
   // Nested zips open too; a locked archive says what to drop instead.

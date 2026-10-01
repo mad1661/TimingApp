@@ -134,7 +134,9 @@ export function buildAccuTimeArtifacts(
   const allRuns: RunRow[] = ordered.flatMap((s) => s.runs as RunRow[]);
   const allDriverCards = ordered.flatMap((s) => s.drivers.map(toEdataCard));
   const mergedCards = [...allDriverCards, ...storedTechCards];
-  const edatResult = buildEdataExport(allRuns, mergedCards);
+  const edatResult = buildEdataExport(allRuns, mergedCards, {
+    missingRtFix: "the AccuTime file logged no reaction time for it. Check the pass on the timing computer before printing.",
+  });
   warnings.push(...edatResult.warnings);
   const edatFiles = edatResult.files.map((f) => {
     const n = numByCategory.get(f.category.toUpperCase());
@@ -299,9 +301,13 @@ export function buildAccuTimeArtifacts(
       }));
 
       // Summary rows: Champion/R-U from the finals pairing, then the
-      // qualifying honours.
+      // qualifying honours. A lone round of one pairing settled the class
+      // too; a last round with several pairings means the final isn't in the
+      // data, so nobody is named champion.
       const rows: PdfCategory["rows"] = [];
-      const finals = session.elimRounds.find((r) => r.round === "F") || session.elimRounds[session.elimRounds.length - 1];
+      const lastRound = session.elimRounds[session.elimRounds.length - 1];
+      const finals =
+        session.elimRounds.find((r) => r.round === "F") || (lastRound?.pairs.length === 1 ? lastRound : undefined);
       const fp = finals?.pairs[0]?.runs;
       if (fp && fp[0]) {
         const tc = cardFor(fp[0].car_number, fp[0].name);
