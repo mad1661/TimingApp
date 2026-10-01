@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllTechCards } from "@/lib/db";
 import type { EdataTechCard } from "@/lib/edata-export";
 import {
+  accuEventGroups,
+  accuPackConflict,
   applyAccuClassPick,
   mergeAccuTimeSessions,
   parseAccuTimePack,
@@ -25,12 +27,12 @@ const NO_STORE_HEADERS = {
 /**
  * POST /api/accutime-export  (multipart: files[], prior_sessions?, event_name?)
  *
- * Parses AccuTime session files (.dat / .qly / Class.ini / Drivers.dbf, or a
- * zip of them — the .acc archive itself is password-locked and gets skipped
- * with a warning), merges the shared tech_cards store, and returns the
- * Compulink export package
- * as JSON: QDAT + EDAT text files plus base64 finals / qualifying PDFs. The
- * client saves them individually or as a RACEDATA.zip.
+ * Parses AccuTime session files — the unlocked text export (…dat.txt /
+ * …qly.txt / Driversdbf.txt, one folder per class) or the Jet .dat / .qly /
+ * Class.ini / Drivers.dbf, loose or zipped; the password-locked .acc is
+ * skipped with a warning — merges the shared tech_cards store, and returns the
+ * Compulink export package as JSON: QDAT + EDAT text files plus base64 finals
+ * / qualifying PDFs. The client saves them individually or as a RACEDATA.zip.
  *
  * `prior_sessions` is the client's saved class pack (the `sessionsFull` from
  * an earlier response, kept in the browser): the fresh parse MERGES into it by
@@ -38,6 +40,12 @@ const NO_STORE_HEADERS = {
  * whole package rebuilds from the full set, so dropping Top Fuel later never
  * wipes the Funny Car already built. With prior sessions and no files this is
  * a pure rebuild (class pick / series header / logo changes after a refresh).
+ *
+ * Two questions come back instead of a package (`choice`), answered by
+ * re-posting the same files: a drop holding more than one event
+ * (`event_pick` = the chosen event's key), and a drop from a different race
+ * than the pack's classes (`pack_mode` = "replace" starts a new pack,
+ * "merge" adds to the current one anyway).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -110,6 +118,38 @@ export async function POST(request: NextRequest) {
         season,
         classCode,
       }));
+
+      // One event per pack: a drop with several asks which one to build.
+      const events = accuEventGroups(newSessions);
+      if (events.length > 1) {
+        const pick = events.find((e) => e.key === form.get("event_pick"));
+        if (!pick) {
+          return NextResponse.json(
+            {
+              choice: {
+                kind: "event",
+                events: events.map(({ key, label, raceDate, classes }) => ({ key, label, raceDate, classes })),
+              },
+              warnings: parseWarnings,
+            },
+            { headers: NO_STORE_HEADERS },
+          );
+        }
+        newSessions = pick.sessions;
+      }
+
+      const packMode = form.get("pack_mode");
+      if (packMode === "replace") {
+        priorSessions = [];
+      } else if (packMode !== "merge") {
+        const conflict = accuPackConflict(priorSessions, newSessions);
+        if (conflict) {
+          return NextResponse.json(
+            { choice: { kind: "pack", ...conflict }, warnings: parseWarnings },
+            { headers: NO_STORE_HEADERS },
+          );
+        }
+      }
     }
 
     const { sessions, merge } = mergeAccuTimeSessions(priorSessions, newSessions);
@@ -166,9 +206,15 @@ export async function POST(request: NextRequest) {
         pointsSkipped: artifacts.pointsSkipped,
         idx: artifacts.idx,
         // The full merged pack, for the browser to save and post back with the
-        // next drop — plus what this drop did to it.
+        // next drop — plus what this drop did to it and which event it holds.
         sessionsFull: sessions,
         merge,
+        packEvents: accuEventGroups(sessions).map(({ key, label, raceDate, classes }) => ({
+          key,
+          label,
+          raceDate,
+          classes,
+        })),
         warnings: [...priorWarnings, ...parseWarnings, ...artifacts.warnings, ...logoWarnings],
       },
       { headers: NO_STORE_HEADERS },

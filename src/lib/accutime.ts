@@ -1,5 +1,6 @@
 import { unzipSync } from "fflate";
 import MDBReader from "mdb-reader";
+import Papa from "papaparse";
 import type { RunRow } from "./db";
 import type { EdataTechCard } from "./edata-export";
 import { parseEdataFile } from "./edata-parse";
@@ -47,6 +48,29 @@ import { RACE_CLASSES } from "./schedule-classes";
  * - Drivers.dbf's MakeOfCar holds the two-digit BODY YEAR ("24"), and
  *   ModelOfCar the model ("Mustang") — the year lands in body_year and the
  *   model in body_type.
+ *
+ * AccuTime's unlocked text export (Mike Rice's 2026 national-event dumps)
+ * carries the same tables as CSV, one folder per class:
+ *
+ *   20260918084551dat.txt — the Logging table, header row, same column names
+ *                           (times truncated to 2 decimals)
+ *   20260918084551qly.txt — the .qly, unchanged
+ *   Driversdbf.txt        — the Drivers table, header row; quoted fields can
+ *                           hold line breaks, so it needs a real CSV parser
+ *
+ * The 14-digit stem is AccuTime's race stamp — the same value Class.ini keeps
+ * under [Race Date] — and there is no Class.ini, so a session without one
+ * takes its class from the folder name ("Funny Car" → FC) and its race date
+ * from the stamp. Every class of one event shares the stamp, which is also
+ * how two events in one drop are told apart.
+ *
+ * Splitting qualifying from eliminations can't rely on the calendar day
+ * alone: alcohol and sportsman classes often run Q1 and E1 on the same day
+ * under the same RoundNumber, and a round stopped by curfew finishes the next
+ * day. Each round's passes are therefore cut into time segments, the last
+ * segment is the elimination round when the ladder holds (its cars are the
+ * previous round's winners), parts of a split round are pulled back in, and
+ * whatever is left is qualifying.
  */
 
 export interface AccuTimeQualifier {
@@ -107,6 +131,13 @@ export interface AccuTimeSession {
   /** Entry records from Drivers.dbf, in the tech-card shape. */
   drivers: EdataTechCard[];
   warnings: string[];
+  /**
+   * AccuTime's race stamp (YYYYMMDDHHMMSS) from Class.ini [Race Date] or the
+   * text export's file names — shared by every class of one event.
+   */
+  raceId?: string | null;
+  /** The folder holding the class folders in a nested drop (the event), "" when the drop had none. */
+  eventFolder?: string;
 }
 
 export interface AccuTimeParseOptions {
@@ -130,6 +161,31 @@ function toBuffer(data: Uint8Array): Buffer {
 
 function latin1(data: Uint8Array): string {
   return toBuffer(data).toString("latin1");
+}
+
+function baseName(name: string): string {
+  return name.split(/[\\/]/).pop() || name;
+}
+
+function dirName(name: string): string {
+  const norm = name.replace(/\\/g, "/");
+  return norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
+}
+
+/** Folder or archive name without the archive extension: "FC.zip" → "FC". */
+function folderLabel(path: string): string {
+  return baseName(path).replace(/\.(zip|acc)$/i, "").trim();
+}
+
+/** macOS / Windows clutter that rides along in zips and folder drops. */
+function isJunkPath(name: string): boolean {
+  const norm = name.replace(/\\/g, "/");
+  const base = baseName(norm);
+  return (
+    /(^|\/)__MACOSX\//i.test(norm) ||
+    base.startsWith("._") ||
+    /^(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(base)
+  );
 }
 
 function num(v: unknown): number | null {
@@ -157,9 +213,98 @@ function isEncryptedZip(data: Uint8Array): boolean {
   return (flags & 0x1) === 1;
 }
 
-/** Minimal CSV splitter for the .qly rows (quoted fields, no embedded commas seen). */
-function splitCsv(line: string): string[] {
-  return line.split(",").map((f) => f.trim().replace(/^"(.*)"$/, "$1"));
+function lockedArchiveWarning(name: string): string {
+  const what = /\.acc$/i.test(name)
+    ? "this .acc archive is password-locked by AccuTime"
+    : "this archive is password-protected";
+  return `${name}: ${what} and can't be opened. Upload AccuTime's unlocked text export instead (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class — a zip of the whole event is fine), or the loose .dat / .qly / Class.ini / Drivers.dbf files.`;
+}
+
+// ——— AccuTime's unlocked text export: the Logging / Drivers tables as CSV ———
+
+/** Lower-cased column names from a CSV header row. */
+function csvHeaderNames(data: Uint8Array): Set<string> {
+  const head = latin1(data.subarray(0, 4096)).replace(/^\uFEFF/, "");
+  const first = head.split(/\r?\n/, 1)[0] || "";
+  return new Set(first.split(",").map((f) => f.trim().replace(/^"(.*)"$/, "$1").toLowerCase()));
+}
+
+function isLoggingCsv(data: Uint8Array): boolean {
+  if (isJetDb(data)) return false;
+  const h = csvHeaderNames(data);
+  return h.has("runnumber") && h.has("roundnumber") && h.has("carnumber") && h.has("reactiontime");
+}
+
+function isDriversCsv(data: Uint8Array): boolean {
+  if (isJetDb(data)) return false;
+  const h = csvHeaderNames(data);
+  return h.has("carnumber") && h.has("firstname") && h.has("lastname") && !h.has("runnumber");
+}
+
+/** Header-row CSV → records keyed by lower-cased column name. */
+function readCsvRecords(data: Uint8Array): Record<string, string>[] {
+  const text = latin1(data).replace(/^\uFEFF/, "").replace(/\x1a+\s*$/, "");
+  const parsed = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (h) => h.trim().toLowerCase(),
+  });
+  return parsed.data.filter((row) => row && Object.values(row).some((v) => str(v)));
+}
+
+/** mdb-reader rows with the same lower-cased keys the CSV path uses. */
+function readJetTable(data: Uint8Array, wanted: string): Record<string, unknown>[] {
+  const reader = new MDBReader(toBuffer(data));
+  const names = reader.getTableNames();
+  const tableName = names.find((n) => n.toLowerCase() === wanted) || names[0];
+  if (!tableName) return [];
+  return reader.getTable(tableName).getData().map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) out[k.toLowerCase()] = v;
+    return out;
+  });
+}
+
+/**
+ * The CSV export's wall-clock stamps ("9/18/2026 13:07:55", 24-hour; an
+ * AM/PM suffix is honoured if one appears) as a UTC Date — the same
+ * convention mdb-reader uses for Jet's local times, so fmtTimestamp and the
+ * date keys read both sources alike.
+ */
+function parseAccuTimeStamp(v: unknown): Date | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  const s = str(v);
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+  if (!m) return null;
+  let hour = parseInt(m[4], 10);
+  const ap = (m[7] || "").toUpperCase();
+  if (ap === "PM" && hour < 12) hour += 12;
+  if (ap === "AM" && hour === 12) hour = 0;
+  const d = new Date(Date.UTC(+m[3], +m[1] - 1, +m[2], hour, +m[5], +(m[6] || 0)));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** AccuTime's race stamp (YYYYMMDDHHMMSS) at the start of a name or value, when it is a real date. */
+function raceStampOf(s: string): string | null {
+  const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{6})/);
+  if (!m) return null;
+  const y = +m[1];
+  const mo = +m[2];
+  const d = +m[3];
+  if (y < 2000 || y > 2099 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return m[0];
+}
+
+function stampDate(stamp: string): string {
+  return `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}`;
+}
+
+/** The .qly's rows (no header): f[4] best session, f[11] name, f[12] car, f[15..17] RT / ET / MPH. */
+function readQlyRows(data: Uint8Array): string[][] {
+  const text = latin1(data).replace(/^\uFEFF/, "").replace(/\x1a+\s*$/, "");
+  return Papa.parse<string[]>(text, { skipEmptyLines: true })
+    .data.map((row) => row.map((f) => str(f)))
+    .filter((f) => f.length >= 18 && !!(f[12] || f[11]));
 }
 
 // Code → name lookup for the class picker and Class.ini resolution. Racing
@@ -180,6 +325,8 @@ interface ClassIniInfo {
   raceDate: string | null;
   seriesName: string | null;
   roundNumber: number | null;
+  /** The full [Race Date] stamp (YYYYMMDDHHMMSS) — AccuTime's id for the race. */
+  raceId: string | null;
 }
 
 export function parseClassIni(text: string): ClassIniInfo {
@@ -228,10 +375,12 @@ export function parseClassIni(text: string): ClassIniInfo {
 
   // [Race Date] 0=20260918084551
   let raceDate: string | null = null;
+  let raceId: string | null = null;
   for (const v of values("race date")) {
     const m = v.match(/^(\d{4})(\d{2})(\d{2})/);
     if (m) {
       raceDate = `${m[1]}-${m[2]}-${m[3]}`;
+      raceId = raceStampOf(v);
       break;
     }
   }
@@ -241,7 +390,61 @@ export function parseClassIni(text: string): ClassIniInfo {
 
   const roundNumber = num(values("round number")[0] ?? null);
 
-  return { classCode, raceDate, seriesName, roundNumber };
+  return { classCode, raceDate, seriesName, roundNumber, raceId };
+}
+
+// ——— Class from a folder name (no Class.ini in the text export) ———
+
+// Names as they appear on folders: every racing class's own name, sponsor
+// prefixes dropped, plus the short forms people actually type.
+const CLASS_CODE_BY_FOLDER = new Map<string, string>();
+const normClassWords = (s: string): string =>
+  s
+    .toUpperCase()
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(NHRA|JEGS)\s+/, "");
+for (const c of RACE_CLASSES) {
+  if (!c.isRacing || !c.code) continue;
+  const key = normClassWords(c.name);
+  if (key && !CLASS_CODE_BY_FOLDER.has(key)) CLASS_CODE_BY_FOLDER.set(key, c.code.trim().toUpperCase());
+}
+for (const [alias, code] of [
+  ["STOCK", "STK"],
+  ["COMP", "COMP"],
+  ["COMP ELIMINATOR", "COMP"],
+  ["COMPETITION", "COMP"],
+  ["PRO STOCK BIKE", "PSM"],
+  ["PRO STOCK MOTORCYCLES", "PSM"],
+  ["TOP ALCOHOL FC", "TAFC"],
+  ["TA FC", "TAFC"],
+  ["TA/FC", "TAFC"],
+  ["TA D", "TAD"],
+  ["TA/D", "TAD"],
+  ["FACTORY STOCK", "FSS"],
+  ["PRO MODIFIED", "PM"],
+  ["JR DRAGSTERS", "JR"],
+  ["JUNIOR DRAGSTER", "JR"],
+] as const) {
+  CLASS_CODE_BY_FOLDER.set(alias, code);
+}
+
+/**
+ * Class code named by a folder (or file stem): "Funny Car" → FC, "Stock" →
+ * STK, "Comp Eliminator" → COMP, a bare code ("TAFC"), or a code in brackets
+ * ("Funny Car (FC)"). "" when the name isn't a class.
+ */
+function classCodeFromName(name: string): string {
+  const words = normClassWords(folderLabel(name));
+  if (!words) return "";
+  const byName = CLASS_CODE_BY_FOLDER.get(words);
+  if (byName) return byName;
+  const bare = words.replace(/\s+/g, "");
+  if (CLASS_NAME_BY_CODE.has(bare)) return bare;
+  const bracketed = words.match(/[([]\s*([A-Z/]{1,6})\s*[)\]]/);
+  if (bracketed && CLASS_NAME_BY_CODE.has(bracketed[1])) return bracketed[1];
+  return "";
 }
 
 // ——— Logging table ———
@@ -267,72 +470,71 @@ interface LogRow {
   ts: Date | null;
 }
 
+/** Logging rows from the Jet race.dat or the text export's …dat.txt CSV. */
 function readLogging(data: Uint8Array): LogRow[] {
-  const reader = new MDBReader(toBuffer(data));
-  const names = reader.getTableNames();
-  const tableName = names.find((n) => n.toLowerCase() === "logging") || names[0];
-  if (!tableName) return [];
-  const rows = reader.getTable(tableName).getData();
-  return rows.map((r) => ({
-    runNumber: num(r["RunNumber"]) ?? 0,
-    roundNumber: num(r["RoundNumber"]) ?? 0,
-    winner: r["WinnerFlag"] === true || r["WinnerFlag"] === 1,
-    lane: str(r["Lane"]).toUpperCase(),
-    car: str(r["CarNumber"]),
-    // Despite the column name, AccuTime puts the whole driver name here.
-    name: str(r["LastName"]),
-    dial: posOrNull(num(r["DialIn"])),
-    rtRaw: posOrNull(num(r["ReactionTime"])),
-    ft60: posOrNull(num(r["ft60"])),
-    ft330: posOrNull(num(r["ft330"])),
-    et660: posOrNull(num(r["et18"])),
-    mph660: posOrNull(num(r["mph18"])),
-    et1000: posOrNull(num(r["et1000"])),
-    mph1000: posOrNull(num(r["mph1000"])),
-    et1320: posOrNull(num(r["et14"])),
-    mph1320: posOrNull(num(r["mph14"])),
-    margin: posOrNull(num(r["Margin"])),
-    ts: r["TimeStamp"] instanceof Date ? (r["TimeStamp"] as Date) : null,
-  }));
+  const records: Record<string, unknown>[] = isLoggingCsv(data) ? readCsvRecords(data) : readJetTable(data, "logging");
+  return records.map((r) => {
+    const flag = r["winnerflag"];
+    return {
+      runNumber: num(r["runnumber"]) ?? 0,
+      roundNumber: num(r["roundnumber"]) ?? 0,
+      winner: flag === true || flag === 1 || /^(1|-1|true|yes)$/i.test(str(flag)),
+      lane: str(r["lane"]).toUpperCase(),
+      car: str(r["carnumber"]),
+      // Despite the column name, AccuTime puts the whole driver name here.
+      name: str(r["lastname"]),
+      dial: posOrNull(num(r["dialin"])),
+      rtRaw: posOrNull(num(r["reactiontime"])),
+      ft60: posOrNull(num(r["ft60"])),
+      ft330: posOrNull(num(r["ft330"])),
+      et660: posOrNull(num(r["et18"])),
+      mph660: posOrNull(num(r["mph18"])),
+      et1000: posOrNull(num(r["et1000"])),
+      mph1000: posOrNull(num(r["mph1000"])),
+      et1320: posOrNull(num(r["et14"])),
+      mph1320: posOrNull(num(r["mph14"])),
+      margin: posOrNull(num(r["margin"])),
+      ts: parseAccuTimeStamp(r["timestamp"]),
+    };
+  });
 }
 
 function posOrNull(n: number | null): number | null {
   return n !== null && n > 0 ? n : null;
 }
 
+// LEFT / RIGHT are AccuTime's placeholder car numbers for a lane with no
+// entry assigned (test and single passes).
 function isByeRow(r: LogRow): boolean {
-  return /^BYE$/i.test(r.car) || (!r.car && !r.name);
+  return /^BYE$/i.test(r.car) || (/^(LEFT|RIGHT)$/i.test(r.car) && !r.name) || (!r.car && !r.name);
 }
 
 // ——— Drivers table ———
 
+/** Entry records from the Jet Drivers.dbf or the text export's Driversdbf.txt CSV. */
 function readDrivers(data: Uint8Array, classCode: string, className: string): EdataTechCard[] {
-  const reader = new MDBReader(toBuffer(data));
-  const names = reader.getTableNames();
-  const tableName = names.find((n) => n.toLowerCase() === "drivers") || names[0];
-  if (!tableName) return [];
-  const rows = reader.getTable(tableName).getData();
-  return rows
+  const records: Record<string, unknown>[] = isDriversCsv(data) ? readCsvRecords(data) : readJetTable(data, "drivers");
+  return records
     .map((d) => {
-      const make = str(d["MakeOfCar"]);
+      const make = str(d["makeofcar"]);
       // MakeOfCar carries the two-digit body year; a non-numeric value is a
       // real make and belongs in front of the model.
       const yearish = /^\d{2,4}$/.test(make);
       return {
-        car_number: str(d["CarNumber"]),
-        first_name: str(d["FirstName"]),
-        last_name: str(d["LastName"]),
-        city: str(d["City"]),
-        state: str(d["State"]),
-        category: str(d["IndexClass"]) || classCode,
+        car_number: str(d["carnumber"]),
+        first_name: str(d["firstname"]),
+        last_name: str(d["lastname"]),
+        city: str(d["city"]),
+        state: str(d["state"]),
+        category: str(d["indexclass"]) || classCode,
         class_name: className,
-        engine_make: str(d["EngineMake"]),
-        body_type: [yearish ? "" : make, str(d["ModelOfCar"])].filter(Boolean).join(" "),
+        engine_make: str(d["enginemake"]),
+        body_type: [yearish ? "" : make, str(d["modelofcar"])].filter(Boolean).join(" "),
         body_year: yearish ? make : "",
-        cu_cc: str(d["CuIn"]),
-        member_number: str(d["Membership"]),
-        hp: str(d["AdvertisedHP"]),
-        factored_hp: str(d["FactoredHP"]),
+        cu_cc: str(d["cuin"]),
+        member_number: str(d["membership"]),
+        hp: str(d["advertisedhp"]),
+        factored_hp: str(d["factoredhp"]),
         event_name: "", // session-local: always trusted
       } as EdataTechCard;
     })
@@ -404,11 +606,128 @@ function buildPasses(rows: LogRow[]): Map<number, Pass[]> {
   return out;
 }
 
+// A class's session runs pair after pair a few minutes apart; an hour's
+// silence means it stopped (end of session, weather, curfew).
+const SEGMENT_GAP_MS = 60 * 60 * 1000;
+// The whole pair coming back after a break is the field's next go, not a re-run.
+const RERUN_GAP_MS = 15 * 60 * 1000;
+// Share of a round's cars that must be the previous round's winners for the
+// ladder to hold — under 1 so an alternate filling a broken winner's spot
+// doesn't break it.
+const LADDER_SHARE = 0.8;
+
+/** A stretch of one round's passes the class ran without stopping. */
+interface Segment {
+  passes: Pass[];
+  cars: Set<string>;
+  /** Pair winners, plus the lone car of a single (a bye run advances). */
+  winners: Set<string>;
+  start: number;
+  end: number;
+}
+
+function carKey(r: LogRow): string {
+  return r.car.trim().toUpperCase();
+}
+
+function emptySegment(): Segment {
+  return { passes: [], cars: new Set(), winners: new Set(), start: NaN, end: NaN };
+}
+
+function addToSegment(seg: Segment, p: Pass): void {
+  seg.passes.push(p);
+  const real = p.rows.filter((r) => !isByeRow(r));
+  for (const r of real) {
+    seg.cars.add(carKey(r));
+    if (r.winner || real.length === 1) seg.winners.add(carKey(r));
+  }
+  const t = p.ts ? p.ts.getTime() : NaN;
+  if (Number.isFinite(t)) {
+    if (!(seg.start <= t)) seg.start = t;
+    if (!(seg.end >= t)) seg.end = t;
+  }
+}
+
+function joinSegments(a: Segment, b: Segment): Segment {
+  const out = emptySegment();
+  for (const p of [...a.passes, ...b.passes]) addToSegment(out, p);
+  return out;
+}
+
+function unionSegments(segs: Segment[]): Segment {
+  return segs.reduce((acc, s) => joinSegments(acc, s), emptySegment());
+}
+
+/** Fraction of `cars` found in `pool` (0 for an empty set). */
+function shareIn(cars: Set<string>, pool: Set<string>): number {
+  if (cars.size === 0) return 0;
+  let n = 0;
+  for (const c of cars) if (pool.has(c)) n++;
+  return n / cars.size;
+}
+
+function disjoint(a: Set<string>, b: Set<string>): boolean {
+  for (const c of a) if (b.has(c)) return false;
+  return true;
+}
+
+/**
+ * One round's passes (time-sorted) cut wherever the class stopped: a new day,
+ * a gap over an hour, or a pair whose cars both already ran in this stretch
+ * coming back after a break. Passes with no real car (both lanes BYE or
+ * placeholders) are dropped — there is nothing in them to place.
+ */
+function segmentRound(passes: Pass[]): Segment[] {
+  const segs: Segment[] = [];
+  let cur: Segment | null = null;
+  for (const p of passes) {
+    const cars = p.rows.filter((r) => !isByeRow(r)).map(carKey);
+    if (cars.length === 0) continue;
+    const t = p.ts ? p.ts.getTime() : NaN;
+    let split = false;
+    if (cur && Number.isFinite(t) && Number.isFinite(cur.end)) {
+      const gap = t - cur.end;
+      const seg: Segment = cur;
+      split =
+        dateKey(p.ts) !== dateKey(new Date(cur.end)) ||
+        gap > SEGMENT_GAP_MS ||
+        (gap > RERUN_GAP_MS && cars.every((c) => seg.cars.has(c)));
+    }
+    if (!cur || split) {
+      cur = emptySegment();
+      segs.push(cur);
+    }
+    addToSegment(cur, p);
+  }
+  return segs;
+}
+
+/** Qualifying stretches of one round: consecutive ones with no car in common are one session that was interrupted. */
+function qualSessionsOf(segs: Segment[]): Pass[][] {
+  const out: Segment[] = [];
+  for (const s of segs) {
+    const last = out[out.length - 1];
+    if (last && disjoint(last.cars, s.cars)) out[out.length - 1] = joinSegments(last, s);
+    else out.push(s);
+  }
+  return out.map((s) => s.passes);
+}
+
 /**
  * Split each round's passes into qualifying sessions and the elimination
- * round. Multiple date clusters per round: the last is the elim round. A
- * single cluster everywhere: the ladder test decides whether the file holds
- * eliminations or only qualifying.
+ * round. AccuTime numbers qualifying sessions and elimination rounds on one
+ * counter (Q1 and E1 are both RoundNumber 1), so per round:
+ *
+ * - the passes are cut into segments (segmentRound) — this is what separates
+ *   Q1 from E1 when both ran the same day;
+ * - the LAST segment is the elimination round when the ladder holds: for
+ *   round 1 it re-fields cars that already ran (qualifying came first) or its
+ *   winners make up round 2; after that its cars must be the previous elim
+ *   round's winners and it must come later;
+ * - earlier segments that share no car with it and fit the same ladder are
+ *   the rest of a round stopped and finished later (curfew, rain), so they
+ *   join it;
+ * - everything else is qualifying.
  */
 function splitQualElim(
   passesByRound: Map<number, Pass[]>,
@@ -417,71 +736,77 @@ function splitQualElim(
   const qual = new Map<number, Pass[][]>();
   const elim = new Map<number, Pass[]>();
 
-  const roundNumbers = [...passesByRound.keys()].sort((a, b) => a - b);
-  if (roundNumbers.length === 0) return { qual, elim };
-  const anyMultiCluster = roundNumbers.some((rn) => {
-    const dates = new Set(passesByRound.get(rn)!.map((p) => dateKey(p.ts)));
-    return dates.size > 1;
+  const segsByRound = new Map<number, Segment[]>();
+  for (const rn of [...passesByRound.keys()].sort((a, b) => a - b)) {
+    const segs = segmentRound(passesByRound.get(rn)!);
+    if (segs.length) segsByRound.set(rn, segs);
+  }
+  const rounds = [...segsByRound.keys()];
+  if (rounds.length === 0) return { qual, elim };
+
+  let prev: Segment | null = null;
+  let prevRn = NaN;
+  rounds.forEach((rn, i) => {
+    const segs = segsByRound.get(rn)!;
+    const cand = segs[segs.length - 1];
+    // The next round's passes after this candidate — where its winners turn up.
+    const nextRound = segsByRound.get(rn + 1) || [];
+    const nextCars = unionSegments(nextRound.filter((s) => s.start > cand.start)).cars;
+
+    let isElim = false;
+    if (!prev) {
+      if (i === 0) {
+        const earlier = segs.slice(0, -1);
+        const refields = earlier.some((s) => !disjoint(s.cars, cand.cars));
+        const laddersOn = nextCars.size > 0 && shareIn(nextCars, cand.winners) >= LADDER_SHARE;
+        if (earlier.length > 0 || rounds.length > 1) {
+          isElim = refields || laddersOn;
+        } else {
+          // One lone stretch: a field with byes reads as eliminations underway;
+          // there is nothing to test it against, so say what was assumed.
+          warnings.push(
+            "Only one round in the session and no qualifying before it — treated as an elimination round in progress.",
+          );
+          isElim = true;
+        }
+      }
+    } else {
+      // The ladder runs round after round: no skipped numbers.
+      const follows = rn === prevRn + 1 && cand.start > prev.start;
+      isElim = follows && shareIn(cand.cars, prev.winners) >= LADDER_SHARE;
+      if (!isElim && follows && cand.start > prev.end) {
+        warnings.push(
+          `Round ${rn}: the last passes don't follow the elimination ladder (cars that lost or never ran the previous round are in them) — left out of the eliminations. Check the output.`,
+        );
+      }
+    }
+
+    if (!isElim) {
+      qual.set(rn, qualSessionsOf(segs));
+      return;
+    }
+
+    let round = cand;
+    let j = segs.length - 2;
+    for (; j >= 0; j--) {
+      const s = segs[j];
+      if (!disjoint(s.cars, round.cars)) break;
+      const fits = prev
+        ? s.start > prev.start && shareIn(s.cars, prev.winners) >= LADDER_SHARE
+        : s.winners.size > 0 && shareIn(s.winners, nextCars) >= LADDER_SHARE;
+      if (!fits) break;
+      round = joinSegments(s, round);
+    }
+    elim.set(rn, round.passes);
+    if (j >= 0) qual.set(rn, qualSessionsOf(segs.slice(0, j + 1)));
+    prev = round;
+    prevRn = rn;
   });
 
-  if (anyMultiCluster) {
-    for (const rn of roundNumbers) {
-      const passes = passesByRound.get(rn)!;
-      const clusters = new Map<string, Pass[]>();
-      for (const p of passes) {
-        const k = dateKey(p.ts);
-        const list = clusters.get(k);
-        if (list) list.push(p);
-        else clusters.set(k, [p]);
-      }
-      const dates = [...clusters.keys()].sort();
-      if (dates.length === 1) {
-        // Every other round split by date but this one didn't — say so
-        // rather than silently guessing which side it belongs to.
-        warnings.push(
-          `Round ${rn}: qualifying and eliminations could not be separated by date — treated as the elimination round. Check the output.`,
-        );
-        elim.set(rn, clusters.get(dates[0])!);
-        continue;
-      }
-      elim.set(rn, clusters.get(dates[dates.length - 1])!);
-      qual.set(
-        rn,
-        dates.slice(0, -1).map((d) => clusters.get(d)!),
-      );
-    }
-    return { qual, elim };
-  }
-
-  // Single cluster per round: eliminations look like a ladder (round N+1's
-  // cars are round N's winners); qualifying doesn't (everyone runs again).
-  let ladderLike = roundNumbers.length > 1;
-  for (let i = 1; i < roundNumbers.length && ladderLike; i++) {
-    const prev = passesByRound.get(roundNumbers[i - 1])!;
-    const next = passesByRound.get(roundNumbers[i])!;
-    const winners = new Set(
-      prev.flatMap((p) => p.rows.filter((r) => r.winner && !isByeRow(r)).map((r) => r.car)),
-    );
-    const cars = next.flatMap((p) => p.rows.filter((r) => !isByeRow(r)).map((r) => r.car));
-    const fromWinners = cars.filter((c) => winners.has(c)).length;
-    if (cars.length > 0 && fromWinners / cars.length < 0.8) ladderLike = false;
-  }
-  if (roundNumbers.length === 1) {
-    // One lone round: a full field with byes reads as eliminations underway;
-    // there is no second round to test against, so say what was assumed.
-    warnings.push(
-      "Only one round in the session and no date split — treated as an elimination round in progress.",
-    );
-    ladderLike = true;
-  }
-
-  if (ladderLike) {
-    for (const rn of roundNumbers) elim.set(rn, passesByRound.get(rn)!);
-  } else {
+  if (elim.size === 0 && rounds.length > 1) {
     warnings.push(
       "The session's rounds re-run the same cars (no elimination ladder) — treated as qualifying sessions only; no EDAT rounds.",
     );
-    for (const rn of roundNumbers) qual.set(rn, [passesByRound.get(rn)!]);
   }
   return { qual, elim };
 }
@@ -495,8 +820,11 @@ function splitQualElim(
  * reduce to generic stems that identify nothing.
  */
 function stemOf(name: string): string {
-  const base = name.split(/[\\/]/).pop() || name;
-  let stem = base.replace(/\.[^.]+$/, "").toLowerCase();
+  let stem = baseName(name).toLowerCase();
+  // The text export glues the table kind onto the race stamp:
+  // 20260918084551dat.txt / 20260918084551qly.txt / Driversdbf.txt.
+  const glued = stem.match(/^(.*?)\.?(dat|qly|dbf|ini)\.(txt|csv)$/);
+  stem = glued ? glued[1] : stem.replace(/\.[^.]+$/, "");
   stem = stem.replace(/(^|[-_ .])class(?=[-_ .]|$)/g, "$1");
   return stem.replace(/^[-_ .]+|[-_ .]+$/g, "");
 }
@@ -507,29 +835,59 @@ function isIdentifying(stem: string): boolean {
   return !GENERIC_STEMS.has(stem);
 }
 
+type AccuFileKind = "dat" | "qly" | "ini" | "dbf" | "other";
+
+const kindCache = new WeakMap<PackFile, AccuFileKind>();
+
+/**
+ * What an AccuTime file is, by content where the name can't be trusted:
+ * the Jet databases and the text export's CSV tables carry their own
+ * signatures; the .qly and Class.ini go by name (Classini.txt being the text
+ * export's spelling).
+ */
+function accuKind(f: PackFile): AccuFileKind {
+  const cached = kindCache.get(f);
+  if (cached) return cached;
+  const base = baseName(f.name);
+  let kind: AccuFileKind = "other";
+  if (isJetDb(f.data)) {
+    if (/\.dat$/i.test(base)) kind = "dat";
+    else if (/\.dbf$/i.test(base) || /drivers/i.test(base)) kind = "dbf";
+  } else if (isLoggingCsv(f.data)) {
+    kind = "dat";
+  } else if (isDriversCsv(f.data)) {
+    kind = "dbf";
+  } else if (/\.qly$/i.test(base) || /qly\.(txt|csv)$/i.test(base)) {
+    kind = "qly";
+  } else if (/\.ini$/i.test(base) || /^class\.?ini\.txt$/i.test(base)) {
+    kind = "ini";
+  } else if (/\.dbf$/i.test(base)) {
+    kind = "dbf";
+  }
+  kindCache.set(f, kind);
+  return kind;
+}
+
 function isDatFile(f: PackFile): boolean {
-  return /\.dat$/i.test(f.name) && isJetDb(f.data);
+  return accuKind(f) === "dat";
 }
 function isQlyFile(f: PackFile): boolean {
-  return /\.qly$/i.test(f.name);
+  return accuKind(f) === "qly";
 }
 function isIniFile(f: PackFile): boolean {
-  return /\.ini$/i.test(f.name);
+  return accuKind(f) === "ini";
 }
 function isDbfFile(f: PackFile): boolean {
-  return /\.dbf$/i.test(f.name) || /drivers/i.test(f.name.split(/[\\/]/).pop() || "");
+  return accuKind(f) === "dbf";
 }
 
 /** The class codes a Drivers db mentions (IndexClass) — a pairing signal. */
 function dbfClassCodes(data: Uint8Array): Set<string> {
   const out = new Set<string>();
   try {
-    const reader = new MDBReader(toBuffer(data));
-    const names = reader.getTableNames();
-    const tableName = names.find((n) => n.toLowerCase() === "drivers") || names[0];
-    if (!tableName) return out;
-    for (const row of reader.getTable(tableName).getData()) {
-      const c = String(row["IndexClass"] ?? "").trim().toUpperCase();
+    const records: Record<string, unknown>[] = isDriversCsv(data) ? readCsvRecords(data) : readJetTable(data, "drivers");
+    for (const row of records) {
+      const c = str(row["indexclass"]).toUpperCase();
       if (c) out.add(c);
     }
   } catch {
@@ -541,6 +899,12 @@ function dbfClassCodes(data: Uint8Array): Set<string> {
 interface SessionGroup {
   label: string;
   files: PackFile[];
+  /** Folder the files sat in ("" for loose files). */
+  dir: string;
+  /** What the folder or file stem calls the class, for a session with no Class.ini. */
+  classHint: string;
+  /** The folder holding this class's folder — the event, in a nested drop. */
+  eventDir: string;
 }
 
 /**
@@ -559,8 +923,7 @@ function splitLooseSessions(
 ): SessionGroup[] {
   const byDir = new Map<string, PackFile[]>();
   for (const f of files) {
-    const norm = f.name.replace(/\\/g, "/");
-    const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
+    const dir = dirName(f.name);
     const list = byDir.get(dir);
     if (list) list.push(f);
     else byDir.set(dir, [f]);
@@ -568,20 +931,20 @@ function splitLooseSessions(
   const groups: SessionGroup[] = [];
   for (const [dir, bucket] of byDir) {
     const label = dir ? `${baseLabel} · ${dir}` : baseLabel;
-    groups.push(...splitBucket(bucket, label, topWarnings));
+    groups.push(...splitBucket(bucket, label, dir, topWarnings));
   }
   return groups;
 }
 
-function splitBucket(bucket: PackFile[], label: string, topWarnings: string[]): SessionGroup[] {
+function splitBucket(bucket: PackFile[], label: string, dir: string, topWarnings: string[]): SessionGroup[] {
   const dats = bucket.filter(isDatFile);
-  const qlys = bucket.filter((f) => isQlyFile(f) && !isDatFile(f));
-  const inis = bucket.filter((f) => isIniFile(f) && !isDatFile(f) && !isQlyFile(f));
-  const dbfs = bucket.filter((f) => isDbfFile(f) && !isDatFile(f) && !isQlyFile(f) && !isIniFile(f));
+  const qlys = bucket.filter(isQlyFile);
+  const inis = bucket.filter(isIniFile);
+  const dbfs = bucket.filter(isDbfFile);
 
   // One class at most — the whole bucket is one session, exactly as before.
   if (dats.length <= 1 && qlys.length <= 1 && inis.length <= 1 && dbfs.length <= 1) {
-    return [{ label, files: bucket }];
+    return [{ label, files: bucket, dir, classHint: folderLabel(dir), eventDir: dirName(dir) }];
   }
 
   interface Sess {
@@ -700,6 +1063,10 @@ function splitBucket(bucket: PackFile[], label: string, topWarnings: string[]): 
   return sessions.map((s) => ({
     label: isIdentifying(s.stem) ? `${label} · ${s.stem.toUpperCase()}` : label,
     files: s.files,
+    dir,
+    classHint: isIdentifying(s.stem) ? s.stem : folderLabel(dir),
+    // Several classes in one folder: that folder is their event.
+    eventDir: dir,
   }));
 }
 
@@ -711,6 +1078,7 @@ function splitBucket(bucket: PackFile[], label: string, topWarnings: string[]): 
 
 function compulinkKind(f: PackFile): "qdat" | "edat" | null {
   if (!/\.txt$/i.test(f.name)) return null;
+  if (accuKind(f) !== "other") return null;
   const head = latin1(f.data.slice(0, 300));
   if (/^Compulink\s+StarTrak\s+.+\s+Qualifying\s+for\s+\d+/im.test(head)) return "qdat";
   if (/^Compulink\s+StarTrak\s+.+\s+Elimination\s+Results/im.test(head)) return "edat";
@@ -997,7 +1365,7 @@ function buildCompulinkSessions(
       }
     }
     for (const dbf of sharedDbfs) {
-      if (!isJetDb(dbf.data)) continue;
+      if (!isJetDb(dbf.data) && !isDriversCsv(dbf.data)) continue;
       try {
         for (const card of readDrivers(dbf.data, classCode, className)) addCard(card);
       } catch {
@@ -1047,37 +1415,49 @@ function buildCompulinkSessions(
   return sessions;
 }
 
+/**
+ * Unpack .zip / .acc archives (and zips inside them) into loose files whose
+ * names keep the archive and folder path, so the folder-based grouping sees
+ * each archive as a folder. OS clutter (__MACOSX, ._ files, .DS_Store) is
+ * dropped on the way in.
+ */
+function expandArchives(files: PackFile[], topWarnings: string[], depth = 0): PackFile[] {
+  const out: PackFile[] = [];
+  for (const f of files) {
+    if (isJunkPath(f.name)) continue;
+    if (!isZip(f.data)) {
+      out.push(f);
+      continue;
+    }
+    if (isEncryptedZip(f.data)) {
+      // AccuTime's .acc uses a password only its own software knows, so it
+      // can't be opened here — the loose files carry the same data.
+      topWarnings.push(lockedArchiveWarning(f.name));
+      continue;
+    }
+    if (depth >= 4) {
+      topWarnings.push(`${f.name}: archives nested this deep aren't opened — unzip it first.`);
+      continue;
+    }
+    let members: Record<string, Uint8Array>;
+    try {
+      members = unzipSync(f.data, { filter: (m) => !m.name.endsWith("/") && !isJunkPath(m.name) });
+    } catch {
+      topWarnings.push(`${f.name}: could not be read as a zip archive — skipped.`);
+      continue;
+    }
+    const inner = Object.entries(members).map(([name, data]) => ({ name: `${f.name}/${name}`, data }));
+    out.push(...expandArchives(inner, topWarnings, depth + 1));
+  }
+  return out;
+}
+
 export function parseAccuTimePack(
   inputFiles: PackFile[],
   opts: AccuTimeParseOptions = {},
 ): { sessions: AccuTimeSession[]; warnings: string[] } {
   const topWarnings: string[] = [];
-
-  // Expand .acc / .zip archives; members keep the archive name as a path
-  // prefix so the folder-based session grouping sees each zip as a folder.
-  const all: PackFile[] = [];
-  for (const f of inputFiles) {
-    if (isZip(f.data)) {
-      if (isEncryptedZip(f.data)) {
-        // AccuTime's .acc uses a password only its own software knows, so it
-        // can't be opened here — the loose files carry the same data.
-        topWarnings.push(
-          `${f.name}: this .acc archive is password-protected and can't be opened. Export/unzip it in AccuTime and upload the .dat, .qly, Class.ini and Drivers.dbf files instead.`,
-        );
-        continue;
-      }
-      try {
-        const members = unzipSync(f.data);
-        for (const [name, data] of Object.entries(members)) {
-          if (!name.endsWith("/")) all.push({ name: `${f.name}/${name}`, data });
-        }
-      } catch {
-        topWarnings.push(`${f.name}: could not be read as a zip archive — skipped.`);
-      }
-    } else {
-      all.push(f);
-    }
-  }
+  const all = expandArchives(inputFiles, topWarnings);
 
   // Path B: Compulink QDAT/EDAT text builds sessions directly. A lone
   // Class.ini / Drivers.dbf dropped alongside belongs to those sessions
@@ -1093,10 +1473,12 @@ export function parseAccuTimePack(
     if (!hasAccuTiming) {
       const ini = accuFiles.find(isIniFile);
       if (ini) iniMeta = parseClassIni(latin1(ini.data));
-      sharedDbfs = accuFiles.filter((f) => isDbfFile(f) && !isIniFile(f));
+      sharedDbfs = accuFiles.filter(isDbfFile);
       accuFiles = [];
     }
-    compulinkSessions.push(...buildCompulinkSessions(compulinkFiles, iniMeta, sharedDbfs, opts, topWarnings));
+    const built = buildCompulinkSessions(compulinkFiles, iniMeta, sharedDbfs, opts, topWarnings);
+    for (const s of built) s.raceId = iniMeta?.raceId || null;
+    compulinkSessions.push(...built);
   }
 
   const groups: SessionGroup[] = accuFiles.length
@@ -1104,44 +1486,63 @@ export function parseAccuTimePack(
     : [];
 
   const sessions: AccuTimeSession[] = [...compulinkSessions];
+  // Class folders named for their class (no Class.ini), reported once below.
+  const fromFolders: string[] = [];
 
   for (const group of groups) {
     const warnings: string[] = [];
-    const find = (re: RegExp) => group.files.find((f) => re.test(f.name));
     const datFile = group.files.find(isDatFile);
-    const qlyFile = find(/\.qly$/i);
-    const iniFile = find(/class\.ini$/i) || find(/\.ini$/i);
-    const dbfFile = group.files.find(
-      (f) => isDbfFile(f) && !isDatFile(f) && !isQlyFile(f) && !isIniFile(f),
-    );
+    const qlyFile = group.files.find(isQlyFile);
+    const iniFiles = group.files.filter(isIniFile);
+    const iniFile = iniFiles.find((f) => /class/i.test(baseName(f.name))) || iniFiles[0];
+    const dbfFile = group.files.find(isDbfFile);
 
     if (!datFile && !qlyFile) {
       topWarnings.push(
-        `${group.label}: no AccuTime .dat or .qly found — nothing to read.`,
+        `${group.label}: no AccuTime timing file found (race .dat / …dat.txt or .qly / …qly.txt) — nothing to read.`,
       );
       continue;
     }
 
-    const ini = iniFile
-      ? parseClassIni(latin1(iniFile.data))
-      : { classCode: "", raceDate: null, seriesName: null, roundNumber: null };
-    if (!iniFile) warnings.push("No Class.ini — the race date is unknown.");
+    // AccuTime's race stamp names the text export's files; Class.ini keeps it
+    // under [Race Date].
+    const fileStamp = [datFile, qlyFile].map((f) => (f ? raceStampOf(baseName(f.name)) : null)).find(Boolean) || null;
+    let ini: ClassIniInfo;
+    if (iniFile) {
+      ini = parseClassIni(latin1(iniFile.data));
+      if (!ini.raceId && fileStamp) ini.raceId = fileStamp;
+      if (!ini.raceDate && fileStamp) ini.raceDate = stampDate(fileStamp);
+    } else {
+      // No Class.ini (the text export never has one): the class comes from
+      // the folder name, the race date from the stamp. The series title has
+      // no source here — the page's sheet header supplies it.
+      const folderCode = classCodeFromName(group.classHint);
+      ini = {
+        classCode: folderCode,
+        raceDate: fileStamp ? stampDate(fileStamp) : null,
+        seriesName: null,
+        roundNumber: null,
+        raceId: fileStamp,
+      };
+      if (folderCode) fromFolders.push(`${group.classHint} → ${folderCode}`);
+      if (!fileStamp) warnings.push("No Class.ini and no race stamp in the file names — the race date is unknown.");
+    }
 
-    // Class.ini's own code wins; the user's pick fills in only when the ini
-    // gave nothing. Never "X" — that's the schedule's Secure placeholder, and
-    // falling back to it printed X/SECURE on every export of a classless
-    // session.
+    // Class.ini's own code wins, then the class folder's name; the user's
+    // pick fills in only when neither gave one. Never "X" — that's the
+    // schedule's Secure placeholder, and falling back to it printed X/SECURE
+    // on every export of a classless session.
     const classCode = ini.classCode || (opts.classCode || "").trim().toUpperCase();
     const className = classCode ? CLASS_NAME_BY_CODE.get(classCode) || classCode : "UNKNOWN";
     if (!classCode) {
       warnings.push(
-        `${group.label}: no class code found — Class.ini normally carries it in the [Menu] section (FC, TF, PS, …). Pick the class on the page and rebuild, or add Class.ini to the upload.`,
+        `${group.label}: no class code found — Class.ini normally carries it in the [Menu] section (FC, TF, PS, …), and the folder name "${group.classHint}" isn't a class name. Pick the class on the page and rebuild, name the folder after the class, or add Class.ini to the upload.`,
       );
     }
 
     // Drivers.dbf: the session's own entry records.
     let drivers: EdataTechCard[] = [];
-    if (dbfFile && isJetDb(dbfFile.data)) {
+    if (dbfFile) {
       try {
         drivers = readDrivers(dbfFile.data, classCode, className);
       } catch (err) {
@@ -1164,13 +1565,7 @@ export function parseAccuTimePack(
     }
 
     // Tree base from every RT in the session (Logging + .qly).
-    const qlyLines = qlyFile
-      ? latin1(qlyFile.data)
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean)
-      : [];
-    const qlyRows = qlyLines.map(splitCsv).filter((f) => f.length >= 18 && (f[12] || f[11]));
+    const qlyRows = qlyFile ? readQlyRows(qlyFile.data) : [];
     const allRts = [
       ...logRows.map((r) => r.rtRaw).filter((r): r is number => r !== null),
       ...qlyRows.map((f) => num(f[15])).filter((r): r is number => r !== null && r > 0),
@@ -1204,7 +1599,6 @@ export function parseAccuTimePack(
 
     // Split the log into qualifying sessions and elimination rounds.
     const { qual, elim } = splitQualElim(buildPasses(logRows), warnings);
-    const qualSessions = Math.max(0, ...[...qual.values()].map((clusters) => clusters.length));
 
     // Low ET / Top Speed across all qualifying passes (fall back to the .qly).
     let lowEt: AccuTimeSession["lowEt"] = null;
@@ -1215,6 +1609,14 @@ export function parseAccuTimePack(
       const mph = finishMph(r);
       if (et !== null && (!lowEt || et < lowEt.et)) lowEt = { et, car: r.car, name: r.name };
       if (mph !== null && (!topSpeed || mph > topSpeed.mph)) topSpeed = { mph, car: r.car, name: r.name };
+    }
+    // The text export truncates Logging times to two decimals while the .qly
+    // keeps them whole: when the low-ET car's .qly best is that same pass,
+    // print the full figure (3.8599 → 3.860, not the truncated 3.850).
+    if (lowEt) {
+      const low = lowEt;
+      const q = qualifying.find((x) => x.car_number.toUpperCase() === low.car.toUpperCase());
+      if (q && q.et !== null && q.et >= low.et - 1e-9 && q.et - low.et < 0.01) lowEt = { ...low, et: q.et };
     }
     if (!lowEt && qualifying.length && qualifying[0].et !== null) {
       const q = qualifying[0];
@@ -1229,16 +1631,16 @@ export function parseAccuTimePack(
     }
 
     // Per-session qualifying passes for the pro low-ET bonus: rounds in
-    // ascending order, each date cluster within a round is one session, best
+    // ascending order, each qualifying session within a round in turn, best
     // finish-line ET per car.
     const qualSessionPasses: AccuTimeQualSessionData[] = [];
     {
       let sessionNo = 0;
       for (const rn of [...qual.keys()].sort((a, b) => a - b)) {
-        for (const cluster of qual.get(rn)!) {
+        for (const session of qual.get(rn)!) {
           sessionNo++;
           const bestByCar = new Map<string, { car_number: string; name: string; et: number | null }>();
-          for (const pass of cluster) {
+          for (const pass of session) {
             for (const row of pass.rows) {
               if (isByeRow(row)) continue;
               const et = finishEt(row);
@@ -1327,7 +1729,7 @@ export function parseAccuTimePack(
       seriesName: ini.seriesName,
       treeBase,
       qualifying,
-      qualSessions,
+      qualSessions: qualSessionPasses.length,
       qualSessionPasses,
       runs,
       elimRounds,
@@ -1335,12 +1737,20 @@ export function parseAccuTimePack(
       topSpeed,
       drivers,
       warnings,
+      raceId: ini.raceId,
+      eventFolder: group.eventDir,
     });
+  }
+
+  if (fromFolders.length > 0) {
+    topWarnings.push(
+      `No Class.ini in the drop — classes named from their folders (${[...new Set(fromFolders)].join(", ")}); race dates from AccuTime's file stamps.`,
+    );
   }
 
   if (sessions.length === 0) {
     topWarnings.push(
-      "No AccuTime sessions found — upload the .dat / .qly / Class.ini / Drivers.dbf files from the session folder (the .acc archive is password-locked and can't be read).",
+      "No AccuTime sessions found — upload AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class) or the .dat / .qly / Class.ini / Drivers.dbf files from the session folder; a zip of either works. The .acc archive is password-locked and can't be read.",
     );
   }
 
@@ -1356,6 +1766,94 @@ export function parseAccuTimePack(
 /** Merge key for the class pack: the class code when known, else the name. */
 export function accuSessionKey(s: Pick<AccuTimeSession, "classCode" | "className">): string {
   return (s.classCode || s.className || "UNKNOWN").trim().toUpperCase();
+}
+
+// ——— Events in one drop (v1.47.0) ———
+// Mike's text exports come as one zip per email, often two race weekends in
+// it. Merging both into the class pack would let one event's Top Fuel replace
+// the other's, so the drop is split by event and the page asks which to build.
+
+export interface AccuEventSummary {
+  /** Stable id for the pick: "race:<stamp>" or "folder:<path>". */
+  key: string;
+  /** The event folder's name, else the race date. */
+  label: string;
+  raceDate: string | null;
+  classes: string[];
+}
+
+export interface AccuEventGroup extends AccuEventSummary {
+  sessions: AccuTimeSession[];
+}
+
+function mostCommon(values: string[]): string {
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || "";
+}
+
+function summarizeEvent(sessions: AccuTimeSession[]): AccuEventSummary {
+  const stamps = [...new Set(sessions.map((s) => s.raceId).filter((x): x is string => !!x))].sort();
+  const folder = mostCommon(sessions.map((s) => s.eventFolder || "").filter(Boolean));
+  const raceDate = sessions.map((s) => s.raceDate).filter((x): x is string => !!x).sort()[0] || null;
+  return {
+    key: stamps[0] ? `race:${stamps[0]}` : folder ? `folder:${folder}` : "all",
+    label: folderLabel(folder) || (raceDate ? `Race of ${raceDate}` : "This drop"),
+    raceDate,
+    classes: sessions.map((s) => s.className),
+  };
+}
+
+/**
+ * Freshly parsed sessions split by event: two sessions are one event when
+ * they share AccuTime's race stamp or sit in the same event folder. Sessions
+ * with neither (Compulink text, files with no stamp) go with every event.
+ * A single group means there is nothing to choose.
+ */
+export function accuEventGroups(sessions: AccuTimeSession[]): AccuEventGroup[] {
+  const parent = sessions.map((_, i) => i);
+  const root = (i: number): number => (parent[i] === i ? i : (parent[i] = root(parent[i])));
+  const firstBy = new Map<string, number>();
+  sessions.forEach((s, i) => {
+    for (const k of [s.raceId ? `race:${s.raceId}` : "", s.eventFolder ? `folder:${s.eventFolder}` : ""]) {
+      if (!k) continue;
+      const j = firstBy.get(k);
+      if (j === undefined) firstBy.set(k, i);
+      else parent[root(i)] = root(j);
+    }
+  });
+  const anchored = new Map<number, AccuTimeSession[]>();
+  const floating: AccuTimeSession[] = [];
+  sessions.forEach((s, i) => {
+    if (!s.raceId && !s.eventFolder) {
+      floating.push(s);
+      return;
+    }
+    const r = root(i);
+    const list = anchored.get(r);
+    if (list) list.push(s);
+    else anchored.set(r, [s]);
+  });
+  if (anchored.size <= 1) return [{ ...summarizeEvent(sessions), sessions }];
+  return [...anchored.values()]
+    .map((list) => ({ ...summarizeEvent(list), sessions: [...list, ...floating] }))
+    .sort((a, b) => (a.raceDate || "").localeCompare(b.raceDate || "") || a.label.localeCompare(b.label));
+}
+
+/**
+ * A drop from a different race than the classes already in the pack (both
+ * carry AccuTime race stamps and none match) — merging would mix two events'
+ * classes, so the caller asks first. Null when they agree or can't be told.
+ */
+export function accuPackConflict(
+  prior: AccuTimeSession[],
+  fresh: AccuTimeSession[],
+): { pack: AccuEventSummary; drop: AccuEventSummary } | null {
+  const priorIds = new Set(prior.map((s) => s.raceId).filter((x): x is string => !!x));
+  const freshIds = fresh.map((s) => s.raceId).filter((x): x is string => !!x);
+  if (priorIds.size === 0 || freshIds.length === 0) return null;
+  if (freshIds.some((id) => priorIds.has(id))) return null;
+  return { pack: summarizeEvent(prior), drop: summarizeEvent(fresh) };
 }
 
 export interface AccuMergeInfo {
@@ -1419,6 +1917,8 @@ export function sanitizeAccuSessions(raw: unknown): AccuTimeSession[] {
       topSpeed: s.topSpeed && typeof s.topSpeed === "object" ? s.topSpeed : null,
       drivers: Array.isArray(s.drivers) ? s.drivers : [],
       warnings: Array.isArray(s.warnings) ? s.warnings.filter((w): w is string => typeof w === "string") : [],
+      raceId: typeof s.raceId === "string" && s.raceId ? s.raceId : null,
+      eventFolder: typeof s.eventFolder === "string" ? s.eventFolder : "",
     });
   }
   return out;
