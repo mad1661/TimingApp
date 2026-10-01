@@ -2020,7 +2020,8 @@ export default function DataOutPage() {
                         </span>
                       </span>
                       <span className="text-xs text-gray-400">
-                        {s.qualifiers} qualifiers · {s.qualSessions} sessions ·{" "}
+                        {s.qualifiers} qualifier{s.qualifiers === 1 ? "" : "s"} · {s.qualSessions} session
+                        {s.qualSessions === 1 ? "" : "s"} ·{" "}
                         {s.elimRounds.length ? s.elimRounds.join(" ") : "no elim rounds"}
                         {cov ? ` · tech cards ${cov.enriched}/${cov.runs}` : ""}
                       </span>
