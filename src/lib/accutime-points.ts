@@ -520,15 +520,20 @@ export function deductionsFor(
 //
 // From the golden RACEDATA sample's IDX table and points-calc's
 // getCategoryNumber: each class has a fixed number that names its files
-// (C10QDAT/C10EDAT/C10A16DP are all Super Street).
+// (C10QDAT/C10EDAT/C10A16DP are all Super Street). National events number
+// Pro Mod 5 and Factory Stock Showdown 16 — the slots Jr Dragster and
+// Sportsman Motorcycle hold at divisional races; both never share an event,
+// and if they did the second one takes the lowest free number.
 const CLASS_NUMBER_BY_CODE: Record<string, number> = {
   TF: 1, FC: 2, PS: 3, PSM: 4,
-  JR: 5, TAD: 6, TAFC: 7,
+  JR: 5, PM: 5, TAD: 6, TAFC: 7,
   SC: 8, SG: 9, SST: 10, COMP: 11, SS: 12, STK: 13, TS: 14, TD: 15,
-  SMC: 16, SPRO: 17, PROET: 21, SPTM: 25, ETM: 29,
+  SMC: 16, FSS: 16, SPRO: 17, PROET: 21, SPTM: 25, ETM: 29,
 };
 
 const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
+  [/PRO\s*MOD/, 5],
+  [/FACTORY\s*STOCK/, 16],
   [/SUPER\s*COMP/, 8],
   [/SUPER\s*GAS/, 9],
   [/SUPER\s*STREET/, 10],
@@ -536,7 +541,8 @@ const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
   [/TOP\s*SPORTSMAN/, 14],
   [/TOP\s*DRAGSTER/, 15],
   [/COMP(ETITION)?/, 11],
-  [/STOCK/, 13],
+  // Stock Eliminator only — not Pro Stock, Nostalgia Pro Stock, Factory Stock.
+  [/^(JEGS\s+)?STOCK(\s+ELIM(INATOR)?)?$/, 13],
 ];
 
 /** Fixed Compulink class number for a class, or null when it has none. */
