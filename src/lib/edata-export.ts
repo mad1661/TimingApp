@@ -33,11 +33,10 @@ import { assignCompulinkClassNumbers } from "./accutime-points";
  * doesn't contradict it, so a reused car number from another event can't put
  * the wrong person on a row. A run with no card exports those fields blank.
  *
- * Pair ordering: left lane first, then right, matching how the getresults →
- * EDAT conversions have been produced (a red-lighting left-lane car stays on
- * the first line even though it lost). Rows without lane data (EData-imported
- * rounds) fall back to winner-first, which is CompuLink's own convention. A
- * bye is the lone racer's line followed by a `SINGLE,...` marker.
+ * Pair ordering: winner first, the way the Compulink tower files list every
+ * pair (the MI1 2026 C16EDAT puts a right-lane winner above the left-lane car
+ * that red-lit). The lane only orders a pair with no winner marked. A bye is
+ * the lone racer's line followed by a `SINGLE,...` marker.
  *
  * Only rounds the data actually has are written: `E<n>` becomes `ROUND n` and
  * `F` becomes `FINALS`. No rounds or pairings are invented.
@@ -94,6 +93,12 @@ export interface DataOutExportOptions {
    * Stock 13, …) over the file's own categories.
    */
   classNumbers?: Map<string, number>;
+  /**
+   * EDAT only: pairings the source already settled, per normalized category
+   * (AccuTime's own passes, winner-first) — written as given instead of
+   * re-paired from the timestamps, so the text matches the PDF pair for pair.
+   */
+  rounds?: Map<string, ElimRound[]>;
   /**
    * How each class (normalized category name) ranks a qualifying pass — the
    * event's own qualifying setup. A class not listed reads its rule off the
@@ -535,7 +540,7 @@ function isQuarterMileClass(catRuns: RunRow[]): boolean {
 }
 
 export interface ElimPair {
-  /** Left lane first when lanes are known, else winner first. */
+  /** Winner first; lane order when no winner is marked. */
   runs: RunRow[];
   /** A bye — one racer, written with a SINGLE marker. */
   single: boolean;
@@ -555,9 +560,9 @@ export interface ElimRound {
  * One category's elimination rounds as pairings, in run order — the shared
  * shape behind the EDAT text and the Final Round Results PDF. Pairs come from
  * the timestamp grouping; a timing-system reset (same car twice in one pair)
- * keeps the row with the most recorded data. Rows within a pair are left
- * lane first when lanes are known, otherwise winner first (CompuLink's own
- * ordering, and what EData-imported rows preserve).
+ * keeps the row with the most recorded data. Rows within a pair are winner
+ * first, CompuLink's own ordering; the lane only orders a pair with no
+ * winner marked.
  *
  * getresults never codes a final `F` — a 16-car pro field ends at E4, a
  * 32-car sportsman field at E5 — so the final is recognised by shape: the
@@ -597,10 +602,11 @@ export function elimRoundsForCategory(
       const pairRuns = [...byCar.values(), ...anonymous];
 
       pairRuns.sort((a, b) => {
+        const won = (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0);
+        if (won !== 0) return won;
         const la = laneOrder(a.lane);
         const lb = laneOrder(b.lane);
-        if (la !== null && lb !== null && la !== lb) return la - lb;
-        return (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0);
+        return la !== null && lb !== null ? la - lb : 0;
       });
 
       if (pairRuns.length > 2) {
@@ -670,7 +676,8 @@ export function buildEdataExport(
     const code = techIndex.code || fallbackCode;
 
     const quarterMile = isQuarterMileClass(catRuns);
-    const rounds = elimRoundsForCategory(catRuns, category, warnings);
+    const supplied = opts.rounds?.get(norm(category));
+    const rounds = supplied?.length ? supplied : elimRoundsForCategory(catRuns, category, warnings);
 
     const lines: string[] = [`Compulink StarTrak ${category.toUpperCase()} Elimination Results`];
     let pairs = 0;

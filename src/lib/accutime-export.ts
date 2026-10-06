@@ -16,6 +16,7 @@ import {
   fullName,
   type EdataTechCard,
   type EdataExportFile,
+  type ElimRound,
   type QdatEntry,
 } from "./edata-export";
 import {
@@ -122,11 +123,29 @@ export function buildAccuTimeArtifacts(
   const numByCategory = new Map(ordered.map((s, i) => [categoryKey(s), classNums[i]]));
 
   // ---------- EDAT (all sessions' elim runs together) ----------
+  // Written from the session's own pairs — the passes AccuTime logged
+  // together, winner first — so the text lists every pair exactly as the
+  // finals PDF does.
+  const sessionRounds = new Map<string, ElimRound[]>();
+  for (const s of ordered) {
+    // Two sessions under one class name share a file; theirs re-pair from the runs.
+    if (ordered.filter((o) => categoryKey(o) === categoryKey(s)).length > 1) continue;
+    sessionRounds.set(
+      categoryKey(s),
+      s.elimRounds.map((rd) => ({
+        round: rd.round,
+        label: rd.label,
+        isFinal: rd.round === "F",
+        pairs: rd.pairs.map((p) => ({ runs: p.runs as RunRow[], single: p.single })),
+      })),
+    );
+  }
   const allRuns: RunRow[] = ordered.flatMap((s) => s.runs as RunRow[]);
   const allDriverCards = ordered.flatMap((s) => s.drivers.map(toEdataCard));
   const mergedCards = [...allDriverCards, ...storedTechCards];
   const edatResult = buildEdataExport(allRuns, mergedCards, {
     classNumbers: numByCategory,
+    rounds: sessionRounds,
     missingRtFix: "the AccuTime file logged no reaction time for it. Check the pass on the timing computer before printing.",
   });
   warnings.push(...edatResult.warnings);

@@ -5,7 +5,6 @@ import {
   classCodeForCategory,
   elimRoundsForCategory,
   findTechCard,
-  isRunWinner,
   localCardTest,
   fmtRt,
   fmtEt,
@@ -41,9 +40,8 @@ import { parseTsToDate } from "./timestamp-utils";
  *
  * Entry fields (member number, full name, hometown, body, engine) merge from
  * the shared tech-card store exactly as the text files do, so the PDFs and
- * the text agree line for line. Pairs on the PDF are winner-first (the
- * Champion row is the first line of the finals pairing); the EDAT text keeps
- * its own left-lane-first order.
+ * the text agree line for line. Pairs are winner-first on both, as the tower
+ * files list them (the Champion row is the first line of the finals pairing).
  */
 
 export interface DataOutArtifacts {
@@ -169,8 +167,6 @@ export function buildDataOutArtifacts(
     // ----- Finals + round-by-round page -----
     if (rounds.length) {
       const hasDI = rounds.some((r) => r.pairs.some((p) => p.runs.some((run) => (run.dial_in ?? 0) > 0)));
-      const winnerFirst = (pairRuns: RunRow[]) =>
-        [...pairRuns].sort((a, b) => (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0));
       // QFY: the position on the run row when getresults filled it in, else
       // the racer's line on the qualifying sheet (which is the same ladder
       // when getresults placed them, and the computed order when it didn't).
@@ -200,7 +196,7 @@ export function buildDataOutArtifacts(
         name: rd.label,
         pairs: rd.pairs.map((p) => ({
           single: p.single,
-          rows: winnerFirst(p.runs).map((run): PdfRoundRow => {
+          rows: p.runs.map((run): PdfRoundRow => {
             const tc = cardFor(run.car_number, run.name);
             return {
               num: run.car_number || "",
@@ -221,7 +217,7 @@ export function buildDataOutArtifacts(
 
       const rows: PdfSummaryRow[] = [];
       const finals = rounds.find((r) => r.isFinal) || rounds[rounds.length - 1];
-      const fp = finals?.pairs.length === 1 ? winnerFirst(finals.pairs[0].runs) : null;
+      const fp = finals?.pairs.length === 1 ? finals.pairs[0].runs : null;
       if (fp && fp[0]) {
         const tc = cardFor(fp[0].car_number, fp[0].name);
         rows.push({
