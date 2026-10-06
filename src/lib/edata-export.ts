@@ -2,6 +2,7 @@ import type { RunRow } from "./db";
 import { RACE_CLASSES } from "./schedule-classes";
 import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
 import { finishEt, finishMph } from "./run-finish";
+import { assignCompulinkClassNumbers } from "./accutime-points";
 
 /**
  * Builder for CompuLink StarTrak "EData" elimination files (C##EDAT.TXT) — the
@@ -32,11 +33,10 @@ import { finishEt, finishMph } from "./run-finish";
  * doesn't contradict it, so a reused car number from another event can't put
  * the wrong person on a row. A run with no card exports those fields blank.
  *
- * Pair ordering: left lane first, then right, matching how the getresults →
- * EDAT conversions have been produced (a red-lighting left-lane car stays on
- * the first line even though it lost). Rows without lane data (EData-imported
- * rounds) fall back to winner-first, which is CompuLink's own convention. A
- * bye is the lone racer's line followed by a `SINGLE,...` marker.
+ * Pair ordering: winner first, the way the Compulink tower files list every
+ * pair (the MI1 2026 C16EDAT puts a right-lane winner above the left-lane car
+ * that red-lit). The lane only orders a pair with no winner marked. A bye is
+ * the lone racer's line followed by a `SINGLE,...` marker.
  *
  * Only rounds the data actually has are written: `E<n>` becomes `ROUND n` and
  * `F` becomes `FINALS`. No rounds or pairings are invented.
@@ -89,10 +89,16 @@ export interface DataOutExportOptions {
   /**
    * Class number per normalized category for the C#… filenames, so a class's
    * EDAT and QDAT share one number even when only one of the two has data.
-   * Defaults to sequential numbering in class order over the file's own
-   * categories.
+   * Defaults to each class's Compulink number (Factory Stock Showdown 16,
+   * Stock 13, …) over the file's own categories.
    */
   classNumbers?: Map<string, number>;
+  /**
+   * EDAT only: pairings the source already settled, per normalized category
+   * (AccuTime's own passes, winner-first) — written as given instead of
+   * re-paired from the timestamps, so the text matches the PDF pair for pair.
+   */
+  rounds?: Map<string, ElimRound[]>;
   /**
    * How each class (normalized category name) ranks a qualifying pass — the
    * event's own qualifying setup. A class not listed reads its rule off the
@@ -331,6 +337,14 @@ export function classCodeForCategory(category: string): { code: string; order: n
   return classInfo(category, []);
 }
 
+/** Compulink C# per normalized category, for categories already in class order. */
+function compulinkNumbers(categories: { category: string; code: string }[]): Map<string, number> {
+  const nums = assignCompulinkClassNumbers(
+    categories.map((c) => ({ className: c.category, classCode: c.code })),
+  );
+  return new Map(categories.map((c, i) => [norm(c.category), nums[i]]));
+}
+
 /**
  * Category-scoped tech-card index for callers that match things other than
  * RunRows (the QDAT builder, the AccuTime PDFs). Same matching the EDAT
@@ -498,6 +512,154 @@ function tsMillis(ts: string | null | undefined): number {
   return d ? d.getTime() : 0;
 }
 
+// ——— Passes getresults moved to another round ———
+
+// A car can't make two passes this close together (db.ts's same-pass window).
+const RELABEL_WINDOW_MS = 10_000;
+
+function sameReading(a: number | null | undefined, b: number | null | undefined, tol: number): boolean | null {
+  const ha = a !== null && a !== undefined && a !== 0;
+  const hb = b !== null && b !== undefined && b !== 0;
+  if (!ha && !hb) return null;
+  if (ha !== hb) return false;
+  return Math.abs((a as number) - (b as number)) <= tol;
+}
+
+/** The same recorded pass: every reading either copy has, the other has too, and they agree. */
+function sameRecordedPass(a: RunRow, b: RunRow): boolean {
+  let agreed = 0;
+  for (const same of [
+    sameReading(a.rt, b.rt, 0.0015),
+    sameReading(a.ft60, b.ft60, 0.0015),
+    sameReading(finishEt(a), finishEt(b), 0.0015),
+    sameReading(finishMph(a), finishMph(b), 0.015),
+  ]) {
+    if (same === false) return false;
+    if (same) agreed++;
+  }
+  return agreed > 0;
+}
+
+/** Which copy of a relabeled pass is current: a manual fix, else the latest write. */
+function copyRank(r: RunRow): [number, string] {
+  return [(r._edited ? 2 : 0) + (r.manual_entry ? 1 : 0), r.created_at || ""];
+}
+
+export interface SupersededCopy {
+  run: RunRow;
+  /** The copy that replaced it, under the round getresults shows now. */
+  by: RunRow;
+}
+
+/**
+ * getresults moves passes between rounds after showing them — at MI1 2026 two
+ * Factory Stock Showdown Q2 pairs first appeared as E1, and GM1's Q1 started
+ * life as T1 — and the store keeps both copies, because the round is part of a
+ * row's identity. A copy is the same car in the same class, a few seconds
+ * apart under another round, with the same times; the latest write is the
+ * tower's correction, so every older copy is superseded. Copies whose times
+ * differ are separate passes — getresults has stamped two real passes with
+ * one clock time (RN1 2026 Super Gas) — and both stay.
+ */
+export function findSupersededCopies(runs: RunRow[]): {
+  runs: RunRow[];
+  superseded: SupersededCopy[];
+} {
+  const byCar = new Map<string, { run: RunRow; t: number }[]>();
+  for (const run of runs) {
+    const car = norm(run.car_number);
+    const t = tsMillis(run.timestamp);
+    if (!car || car === "BYE" || !t || !run.round) continue;
+    const key = `${car}|${norm(run.category)}`;
+    const list = byCar.get(key);
+    if (list) list.push({ run, t });
+    else byCar.set(key, [{ run, t }]);
+  }
+
+  const superseded = new Map<RunRow, RunRow>();
+  for (const list of byCar.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.t - b.t);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length && list[j].t - list[i].t <= RELABEL_WINDOW_MS; j++) {
+        const a = list[i].run;
+        const b = list[j].run;
+        if (norm(a.round) === norm(b.round) || !sameRecordedPass(a, b)) continue;
+        const [ra, ca] = copyRank(a);
+        const [rb, cb] = copyRank(b);
+        const aWins = ra !== rb ? ra > rb : ca > cb;
+        const bWins = ra !== rb ? rb > ra : cb > ca;
+        if (aWins) superseded.set(b, a);
+        else if (bWins) superseded.set(a, b);
+      }
+    }
+  }
+  if (superseded.size === 0) return { runs, superseded: [] };
+
+  // Point every stale copy at the copy that survives (a pass moved twice).
+  const current = (r: RunRow): RunRow => {
+    let c = r;
+    for (let hops = 0; superseded.has(c) && hops < 10; hops++) c = superseded.get(c)!;
+    return c;
+  };
+  return {
+    runs: runs.filter((r) => !superseded.has(r)),
+    superseded: [...superseded.keys()].map((run) => ({ run, by: current(run) })),
+  };
+}
+
+function carList(cars: string[]): string {
+  const shown = cars.slice(0, 8).join(", ");
+  return cars.length > 8 ? `${shown} and ${cars.length - 8} more` : shown;
+}
+
+/**
+ * "FACTORY STOCK SHOWDOWN: getresults moved 4 runs from E1 to Q2 (cars 402,
+ * 3397, B346, 3279) — the old E1 copies are left out of the EDAT." One line
+ * per class and move.
+ */
+function supersededWarnings(copies: SupersededCopy[], file: "EDAT" | "QDAT"): string[] {
+  const byMove = new Map<string, { category: string; from: string; to: string; cars: string[] }>();
+  for (const { run, by } of copies) {
+    const category = (run.category || "").trim();
+    const from = norm(run.round);
+    const to = norm(by.round);
+    const key = `${norm(category)}|${from}|${to}`;
+    const move = byMove.get(key) || { category, from, to, cars: [] };
+    move.cars.push((run.car_number || "").trim());
+    byMove.set(key, move);
+  }
+  return [...byMove.values()].map(({ category, from, to, cars }) => {
+    const one = cars.length === 1;
+    return `${category}: getresults moved ${cars.length} run${one ? "" : "s"} from ${from} to ${to} (car${
+      one ? "" : "s"
+    } ${carList(cars)}) — the old ${from} cop${one ? "y is" : "ies are"} left out of the ${file}.`;
+  });
+}
+
+/** A car can race once per elimination round; a second pairing means the round on file is wrong somewhere. */
+function repeatedCarWarnings(category: string, rounds: ElimRound[]): string[] {
+  const out: string[] = [];
+  for (const rd of rounds) {
+    const pairsByCar = new Map<string, number>();
+    for (const pair of rd.pairs) {
+      for (const car of new Set(pair.runs.map((r) => norm(r.car_number)))) {
+        if (car && car !== "BYE") pairsByCar.set(car, (pairsByCar.get(car) || 0) + 1);
+      }
+    }
+    const repeated = [...pairsByCar.entries()].filter(([, n]) => n > 1).map(([car]) => car);
+    if (repeated.length) {
+      const one = repeated.length === 1;
+      out.push(
+        `${category} ${rd.label}: car${one ? "" : "s"} ${carList(repeated)} ${
+          one ? "is" : "are"
+        } in more than one pairing — check the round before printing.`,
+      );
+    }
+  }
+  return out;
+}
+
 /**
  * Every stored card is usable — the /tech-cards page and the backfill tag
  * cards with their own source's event naming, which rarely equals the
@@ -526,7 +688,7 @@ function isQuarterMileClass(catRuns: RunRow[]): boolean {
 }
 
 export interface ElimPair {
-  /** Left lane first when lanes are known, else winner first. */
+  /** Winner first; lane order when no winner is marked. */
   runs: RunRow[];
   /** A bye — one racer, written with a SINGLE marker. */
   single: boolean;
@@ -546,9 +708,11 @@ export interface ElimRound {
  * One category's elimination rounds as pairings, in run order — the shared
  * shape behind the EDAT text and the Final Round Results PDF. Pairs come from
  * the timestamp grouping; a timing-system reset (same car twice in one pair)
- * keeps the row with the most recorded data. Rows within a pair are left
- * lane first when lanes are known, otherwise winner first (CompuLink's own
- * ordering, and what EData-imported rows preserve).
+ * keeps the row with the most recorded data. Rows within a pair are winner
+ * first, CompuLink's own ordering; the lane only orders a pair with no
+ * winner marked. Pass the class's qualifying rows too: an elimination row
+ * that getresults has since moved to a qualifying round is left out
+ * (findSupersededCopies).
  *
  * getresults never codes a final `F` — a 16-car pro field ends at E4, a
  * 32-car sportsman field at E5 — so the final is recognised by shape: the
@@ -561,7 +725,7 @@ export function elimRoundsForCategory(
   category: string,
   warnings: string[] = [],
 ): ElimRound[] {
-  const elimRuns = catRuns.filter((r) => isElimRound(r.round));
+  const elimRuns = findSupersededCopies(catRuns).runs.filter((r) => isElimRound(r.round));
   const roundCodes = [...new Set(elimRuns.map((r) => r.round as string))].sort(
     (a, b) => roundOrder(a) - roundOrder(b),
   );
@@ -588,10 +752,11 @@ export function elimRoundsForCategory(
       const pairRuns = [...byCar.values(), ...anonymous];
 
       pairRuns.sort((a, b) => {
+        const won = (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0);
+        if (won !== 0) return won;
         const la = laneOrder(a.lane);
         const lb = laneOrder(b.lane);
-        if (la !== null && lb !== null && la !== lb) return la - lb;
-        return (isRunWinner(b) ? 1 : 0) - (isRunWinner(a) ? 1 : 0);
+        return la !== null && lb !== null ? la - lb : 0;
       });
 
       if (pairRuns.length > 2) {
@@ -617,11 +782,12 @@ export function elimRoundsForCategory(
 }
 
 /**
- * Build one EDAT file per category from the given elimination runs, merging
- * entry-record fields (member number, full name, city, body, engine) in from
- * the tech cards. Rounds that aren't eliminations (Q, T, …) are ignored, so
- * passing a full event's runs is fine; tech cards for other events are
- * filtered out by event_name.
+ * Build one EDAT file per category from the given runs, merging entry-record
+ * fields (member number, full name, city, body, engine) in from the tech
+ * cards. Only elimination rounds are written, but pass the event's other runs
+ * too: that's how an elimination row getresults has since moved to a
+ * qualifying round is recognised and left out (findSupersededCopies). Tech
+ * cards for other events are filtered out by event_name.
  */
 export function buildEdataExport(
   runs: RunRow[],
@@ -629,9 +795,11 @@ export function buildEdataExport(
   opts: DataOutExportOptions = {},
 ): EdataExportResult {
   const warnings: string[] = [];
+  const { runs: current, superseded } = findSupersededCopies(runs);
+  warnings.push(...supersededWarnings(superseded.filter((c) => isElimRound(c.run.round)), "EDAT"));
 
   const byCategory = new Map<string, RunRow[]>();
-  for (const run of runs) {
+  for (const run of current) {
     if (!isElimRound(run.round)) continue;
     const cat = (run.category || "").trim();
     if (!cat) continue;
@@ -642,15 +810,16 @@ export function buildEdataExport(
 
   const isLocal = localCardTest(runs);
 
-  // Stable class numbering: known classes in RACE_CLASSES order (pros first),
-  // anything else alphabetically after them.
+  // Known classes in RACE_CLASSES order (pros first), anything else
+  // alphabetically after them.
   const categories = [...byCategory.entries()]
     .map(([category, catRuns]) => ({ category, catRuns, ...classInfo(category, catRuns) }))
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
+  const ownNumbers = compulinkNumbers(categories);
 
   const files: EdataExportFile[] = [];
 
-  categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
+  categories.forEach(({ category, catRuns, code: fallbackCode }) => {
     const techIndex = indexTechCards(
       techCards
         .filter((tc) => techCardMatchesCategory(tc, category, fallbackCode))
@@ -660,7 +829,9 @@ export function buildEdataExport(
     const code = techIndex.code || fallbackCode;
 
     const quarterMile = isQuarterMileClass(catRuns);
-    const rounds = elimRoundsForCategory(catRuns, category, warnings);
+    const supplied = opts.rounds?.get(norm(category));
+    const rounds = supplied?.length ? supplied : elimRoundsForCategory(catRuns, category, warnings);
+    warnings.push(...repeatedCarWarnings(category, rounds));
 
     const lines: string[] = [`Compulink StarTrak ${category.toUpperCase()} Elimination Results`];
     let pairs = 0;
@@ -700,7 +871,7 @@ export function buildEdataExport(
     }
 
     files.push({
-      filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}EDAT.TXT`,
+      filename: `C${opts.classNumbers?.get(norm(category)) ?? ownNumbers.get(norm(category))}EDAT.TXT`,
       category,
       classCode: code,
       rounds: rounds.map((r) => r.round),
@@ -972,9 +1143,11 @@ export function buildQdatExport(
   opts: DataOutExportOptions = {},
 ): QdatExportResult {
   const warnings: string[] = [];
+  const { runs: current, superseded } = findSupersededCopies(runs);
+  warnings.push(...supersededWarnings(superseded.filter((c) => isQualRound(c.run.round)), "QDAT"));
 
   const byCategory = new Map<string, RunRow[]>();
-  for (const run of runs) {
+  for (const run of current) {
     const cat = (run.category || "").trim();
     if (!cat) continue;
     const list = byCategory.get(cat);
@@ -988,10 +1161,11 @@ export function buildQdatExport(
     .filter(([, catRuns]) => catRuns.some((r) => isQualRound(r.round)))
     .map(([category, catRuns]) => ({ category, catRuns, ...classInfo(category, catRuns) }))
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
+  const ownNumbers = compulinkNumbers(categories);
 
   const files: QdatExportFile[] = [];
 
-  categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
+  categories.forEach(({ category, catRuns, code: fallbackCode }) => {
     const techIndex = indexTechCards(
       techCards
         .filter((tc) => techCardMatchesCategory(tc, category, fallbackCode))
@@ -1130,7 +1304,7 @@ export function buildQdatExport(
     );
 
     files.push({
-      filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}QDAT.TXT`,
+      filename: `C${opts.classNumbers?.get(norm(category)) ?? ownNumbers.get(norm(category))}QDAT.TXT`,
       category,
       classCode: code,
       rounds: roundCodes,
@@ -1170,9 +1344,11 @@ export interface DataOutExportResult {
 /**
  * The full Compulink text set for an event from its stored runs: EDAT for
  * every class with eliminations, QDAT for every class with qualifying, and
- * the SAME C# number for both files of a class — numbered across the union
- * of the two, in class order — so C3EDAT.TXT and C3QDAT.TXT are always the
- * same class even mid-event, when some classes have only qualified.
+ * the SAME C# number for both files of a class — the class's Compulink
+ * number (Factory Stock Showdown 16, as the tower's own pack names it), with
+ * the classes that have none taking the lowest numbers left free across the
+ * union of the two — so C16EDAT.TXT and C16QDAT.TXT are always the same
+ * class even mid-event, when some classes have only qualified.
  */
 export function buildDataOutExport(
   runs: RunRow[],
@@ -1180,7 +1356,7 @@ export function buildDataOutExport(
   opts: Pick<DataOutExportOptions, "qualRules"> = {},
 ): DataOutExportResult {
   const byCategory = new Map<string, RunRow[]>();
-  for (const run of runs) {
+  for (const run of findSupersededCopies(runs).runs) {
     if (!isElimRound(run.round) && !isQualRound(run.round)) continue;
     const cat = (run.category || "").trim();
     if (!cat) continue;
@@ -1191,7 +1367,7 @@ export function buildDataOutExport(
   const ordered = [...byCategory.entries()]
     .map(([category, catRuns]) => ({ category, ...classInfo(category, catRuns) }))
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
-  const classNumbers = new Map(ordered.map((c, i) => [norm(c.category), i + 1]));
+  const classNumbers = compulinkNumbers(ordered);
 
   const edat = buildEdataExport(runs, techCards, { classNumbers });
   const qdat = buildQdatExport(runs, techCards, { classNumbers, qualRules: opts.qualRules });

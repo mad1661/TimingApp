@@ -1340,8 +1340,9 @@ export default function DataOutPage() {
               never placed follow in best-ET order. Full names, member numbers, city, body and
               engine merge in from the tech cards, matched within each class by car number (or
               driver name); only rounds already on file are written, nothing is invented. EDAT
-              pairs are left lane then right; rounds imported from EData (no lanes) are written
-              winner-first, CompuLink&apos;s own convention.
+              pairs are written winner first, as the Compulink tower files list them, and every
+              class takes its Compulink number (Factory Stock Showdown is C16). A pass getresults
+              has since moved to another round is written under the round it shows now.
             </p>
           </div>
         </div>

@@ -86,7 +86,7 @@ export interface AccuTimeQualifier {
 }
 
 export interface AccuTimePair {
-  /** Rows winner-first (explicit WinnerFlag), for the finals/round PDFs. */
+  /** Rows winner-first (explicit WinnerFlag) — the order the EDAT and the finals/round PDFs print. */
   runs: Omit<RunRow, "id" | "created_at">[];
   single: boolean;
 }
@@ -1662,8 +1662,8 @@ export function parseAccuTimePack(
       }
     }
 
-    // Elimination rounds → RunRows. Lane order within a pair is preserved for
-    // the EDAT text; the pairs also carry winner-first copies for the PDFs.
+    // Elimination rounds → RunRows, lane order in `runs`; the pairs carry them
+    // winner-first, which is how the EDAT text and the PDFs both list them.
     const season = opts.season || (ini.raceDate ? ini.raceDate.slice(0, 4) : "");
     const elimRoundNumbers = [...elim.keys()].sort((a, b) => a - b);
     const runs: AccuTimeSession["runs"] = [];
@@ -1718,7 +1718,7 @@ export function parseAccuTimePack(
 
         const pairRuns = rows.map(toRun);
         runs.push(...pairRuns);
-        // PDFs list winners first, as the sheet's own note says.
+        // Winners first, as the sheet's own note and Compulink's EDAT have it.
         const winnerFirst = [...pairRuns].sort(
           (a, b) => (b.is_winner ? 1 : 0) - (a.is_winner ? 1 : 0),
         );
