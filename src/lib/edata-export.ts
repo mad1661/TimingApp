@@ -2,6 +2,7 @@ import type { RunRow } from "./db";
 import { RACE_CLASSES } from "./schedule-classes";
 import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
 import { finishEt, finishMph } from "./run-finish";
+import { assignCompulinkClassNumbers } from "./accutime-points";
 
 /**
  * Builder for CompuLink StarTrak "EData" elimination files (C##EDAT.TXT) — the
@@ -89,8 +90,8 @@ export interface DataOutExportOptions {
   /**
    * Class number per normalized category for the C#… filenames, so a class's
    * EDAT and QDAT share one number even when only one of the two has data.
-   * Defaults to sequential numbering in class order over the file's own
-   * categories.
+   * Defaults to each class's Compulink number (Factory Stock Showdown 16,
+   * Stock 13, …) over the file's own categories.
    */
   classNumbers?: Map<string, number>;
   /**
@@ -329,6 +330,14 @@ export interface CategoryTechIndex {
 /** classInfo for callers outside this module (AccuTime export, QDAT). */
 export function classCodeForCategory(category: string): { code: string; order: number } {
   return classInfo(category, []);
+}
+
+/** Compulink C# per normalized category, for categories already in class order. */
+function compulinkNumbers(categories: { category: string; code: string }[]): Map<string, number> {
+  const nums = assignCompulinkClassNumbers(
+    categories.map((c) => ({ className: c.category, classCode: c.code })),
+  );
+  return new Map(categories.map((c, i) => [norm(c.category), nums[i]]));
 }
 
 /**
@@ -642,15 +651,16 @@ export function buildEdataExport(
 
   const isLocal = localCardTest(runs);
 
-  // Stable class numbering: known classes in RACE_CLASSES order (pros first),
-  // anything else alphabetically after them.
+  // Known classes in RACE_CLASSES order (pros first), anything else
+  // alphabetically after them.
   const categories = [...byCategory.entries()]
     .map(([category, catRuns]) => ({ category, catRuns, ...classInfo(category, catRuns) }))
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
+  const ownNumbers = compulinkNumbers(categories);
 
   const files: EdataExportFile[] = [];
 
-  categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
+  categories.forEach(({ category, catRuns, code: fallbackCode }) => {
     const techIndex = indexTechCards(
       techCards
         .filter((tc) => techCardMatchesCategory(tc, category, fallbackCode))
@@ -700,7 +710,7 @@ export function buildEdataExport(
     }
 
     files.push({
-      filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}EDAT.TXT`,
+      filename: `C${opts.classNumbers?.get(norm(category)) ?? ownNumbers.get(norm(category))}EDAT.TXT`,
       category,
       classCode: code,
       rounds: rounds.map((r) => r.round),
@@ -988,10 +998,11 @@ export function buildQdatExport(
     .filter(([, catRuns]) => catRuns.some((r) => isQualRound(r.round)))
     .map(([category, catRuns]) => ({ category, catRuns, ...classInfo(category, catRuns) }))
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
+  const ownNumbers = compulinkNumbers(categories);
 
   const files: QdatExportFile[] = [];
 
-  categories.forEach(({ category, catRuns, code: fallbackCode }, catIndex) => {
+  categories.forEach(({ category, catRuns, code: fallbackCode }) => {
     const techIndex = indexTechCards(
       techCards
         .filter((tc) => techCardMatchesCategory(tc, category, fallbackCode))
@@ -1130,7 +1141,7 @@ export function buildQdatExport(
     );
 
     files.push({
-      filename: `C${opts.classNumbers?.get(norm(category)) ?? catIndex + 1}QDAT.TXT`,
+      filename: `C${opts.classNumbers?.get(norm(category)) ?? ownNumbers.get(norm(category))}QDAT.TXT`,
       category,
       classCode: code,
       rounds: roundCodes,
@@ -1170,9 +1181,11 @@ export interface DataOutExportResult {
 /**
  * The full Compulink text set for an event from its stored runs: EDAT for
  * every class with eliminations, QDAT for every class with qualifying, and
- * the SAME C# number for both files of a class — numbered across the union
- * of the two, in class order — so C3EDAT.TXT and C3QDAT.TXT are always the
- * same class even mid-event, when some classes have only qualified.
+ * the SAME C# number for both files of a class — the class's Compulink
+ * number (Factory Stock Showdown 16, as the tower's own pack names it), with
+ * the classes that have none taking the lowest numbers left free across the
+ * union of the two — so C16EDAT.TXT and C16QDAT.TXT are always the same
+ * class even mid-event, when some classes have only qualified.
  */
 export function buildDataOutExport(
   runs: RunRow[],
@@ -1191,7 +1204,7 @@ export function buildDataOutExport(
   const ordered = [...byCategory.entries()]
     .map(([category, catRuns]) => ({ category, ...classInfo(category, catRuns) }))
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
-  const classNumbers = new Map(ordered.map((c, i) => [norm(c.category), i + 1]));
+  const classNumbers = compulinkNumbers(ordered);
 
   const edat = buildEdataExport(runs, techCards, { classNumbers });
   const qdat = buildQdatExport(runs, techCards, { classNumbers, qualRules: opts.qualRules });

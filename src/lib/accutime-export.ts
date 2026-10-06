@@ -29,8 +29,8 @@ import {
 } from "./racedata-pdf";
 import {
   PRO_CLASS_CODES,
+  assignCompulinkClassNumbers,
   buildIdxFile,
-  compulinkClassNumber,
   scoreAccuTimeSession,
   type AccuPointsCategory,
   type AccuPointsSkipped,
@@ -97,8 +97,8 @@ export function buildAccuTimeArtifacts(
 ): AccuTimeArtifacts {
   const warnings: string[] = [];
 
-  // Order sessions the same way buildEdataExport orders categories, so
-  // C#EDAT and C#QDAT line up for the same class.
+  // Class order, pros first — the order the PDFs follow and the classes with
+  // no fixed number are handed free C# numbers in.
   const ordered = [...sessions].sort((a, b) => {
     const ca = classCodeForCategory(a.className);
     const cb = classCodeForCategory(b.className);
@@ -117,31 +117,19 @@ export function buildAccuTimeArtifacts(
   // Compulink class numbers name every class's files (C10QDAT / C10EDAT /
   // C10A16DP are all Super Street, per the golden RACEDATA sample). Classes
   // without a fixed number take the lowest unused one.
-  const usedNums = new Set<number>();
-  let nextSeq = 1;
-  const classNums = ordered.map((s) => {
-    let n = compulinkClassNumber(s.className, s.classCode);
-    if (n === null || usedNums.has(n)) {
-      while (usedNums.has(nextSeq)) nextSeq++;
-      n = nextSeq;
-    }
-    usedNums.add(n);
-    return n;
-  });
-  const numByCategory = new Map(ordered.map((s, i) => [s.className.toUpperCase(), classNums[i]]));
+  const classNums = assignCompulinkClassNumbers(ordered);
+  const categoryKey = (s: AccuTimeSession) => s.className.trim().toUpperCase().replace(/\s+/g, " ");
+  const numByCategory = new Map(ordered.map((s, i) => [categoryKey(s), classNums[i]]));
 
   // ---------- EDAT (all sessions' elim runs together) ----------
   const allRuns: RunRow[] = ordered.flatMap((s) => s.runs as RunRow[]);
   const allDriverCards = ordered.flatMap((s) => s.drivers.map(toEdataCard));
   const mergedCards = [...allDriverCards, ...storedTechCards];
   const edatResult = buildEdataExport(allRuns, mergedCards, {
+    classNumbers: numByCategory,
     missingRtFix: "the AccuTime file logged no reaction time for it. Check the pass on the timing computer before printing.",
   });
   warnings.push(...edatResult.warnings);
-  const edatFiles = edatResult.files.map((f) => {
-    const n = numByCategory.get(f.category.toUpperCase());
-    return n !== undefined ? { ...f, filename: `C${n}EDAT.TXT` } : f;
-  });
 
   const coverage = edatResult.files.map((f) => ({
     category: f.category,
@@ -400,7 +388,7 @@ export function buildAccuTimeArtifacts(
     : null;
 
   return {
-    edat: edatFiles,
+    edat: edatResult.files,
     qdat,
     finalsPdf,
     qualifyingPdf,

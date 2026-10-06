@@ -555,6 +555,32 @@ export function compulinkClassNumber(className: string, classCode: string): numb
 }
 
 /**
+ * One event's C# numbers, in the order the classes are given: every class
+ * its fixed Compulink number, then the classes with none (or whose number an
+ * earlier class already holds) the lowest numbers still free. Fixed numbers
+ * are claimed before any free one is handed out — Jr Street sorts ahead of
+ * Pro Mod in class order and would otherwise take Pro Mod's 5.
+ */
+export function assignCompulinkClassNumbers(
+  classes: { className: string; classCode: string }[],
+): number[] {
+  const used = new Set<number>();
+  const fixed = classes.map((c) => {
+    const n = compulinkClassNumber(c.className, c.classCode);
+    if (n === null || used.has(n)) return null;
+    used.add(n);
+    return n;
+  });
+  let next = 1;
+  return fixed.map((n) => {
+    if (n !== null) return n;
+    while (used.has(next)) next++;
+    used.add(next);
+    return next;
+  });
+}
+
+/**
  * The exact Compulink points-file string (points-calc format, golden-sample
  * layout): header + `Car#,Member#,Full Name,Division,Points,Deduction` rows +
  * End of File, CRLF line endings and a single DOS Ctrl-Z EOF marker. Points
