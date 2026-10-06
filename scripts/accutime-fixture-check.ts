@@ -20,6 +20,9 @@
  * qualifying/elimination split, PM = 5 / FSS = 16, one PDF pair per event, the
  * event pick and the race-mismatch guard — plus, when Mike's real zip is on
  * disk (MIKE_TEXT_ZIP), structure checks against the 2026 GL / Rockingham data.
+ * v1.47.1 adds the MI1 2026 Factory Stock Showdown regression, for both the
+ * getresults export and AccuTime: C16, winner-first pairs, and no qualifying
+ * pass in ROUND 1, checked car by car against the tower's own C16EDAT.TXT.
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -36,6 +39,9 @@ import {
   type AccuTimeSession,
 } from "../src/lib/accutime";
 import { buildAccuTimeArtifacts } from "../src/lib/accutime-export";
+import type { RunRow } from "../src/lib/db";
+import { buildDataOutArtifacts } from "../src/lib/dataout-export";
+import { buildDataOutExport, findSupersededCopies } from "../src/lib/edata-export";
 import {
   buildRacedataPdf,
   buildQualifyingPdf,
@@ -1056,6 +1062,220 @@ function pdfStrings(pdf: Uint8Array | null): string[] {
   } else {
     console.log("  --  Mike's text-export zip not found (MIKE_TEXT_ZIP) — real-data checks skipped");
   }
+}
+
+// ——— 13. MI1 2026 Factory Stock Showdown (v1.47.1) ———
+// Mark's getresults export came out as C13EDAT / C13QDAT with the loser on
+// top of every pair the left lane lost, and a 20-line ROUND 1: getresults
+// first showed two Q2 pairs as E1, then moved them, and the store kept both
+// copies. The stored rows are below (times and names as getresults has them);
+// the tower's own NAT-MI1-WWTR C16EDAT.TXT is the answer key, round by round.
+{
+  const OFFICIAL_C16: Record<string, string[]> = {
+    "ROUND 1": ["303", "3725", "4", "387K", "3279", "212", "5", "301H", "402", "1014", "1", "3397", "B346", "3047", "350", "107"],
+    "ROUND 2": ["350", "B346", "5", "303", "4", "402", "3279", "1"],
+    "ROUND 3": ["4", "350", "5", "3279"],
+    FINALS: ["4", "5"],
+  };
+  const FIRST_SCRAPE = "2026-10-03T16:24:25.355Z";
+  const LATER_SCRAPE = "2026-10-04T01:00:33.829Z";
+  // round, clock time, lane, car, driver, Q pos, RT, ET, MPH, won, written
+  type FssRow = [string, string, "L" | "R", string, string, number, number | null, number | null, number | null, boolean, string];
+  const P = "PM";
+  const ROWS: FssRow[] = [
+    ["E1", `10/02/2026 04:02:16 ${P}`, "L", "402", "David Janac", 19, 0.011, 7.657, 180.98, true, FIRST_SCRAPE],
+    ["E1", `10/02/2026 04:02:16 ${P}`, "R", "3397", "David Davies", 4, 0.04, 10.714, 101.21, false, FIRST_SCRAPE],
+    ["E1", `10/02/2026 04:03:25 ${P}`, "L", "B346", "Lee Hartman", 17, 0.038, 7.548, 182.3, true, FIRST_SCRAPE],
+    ["E1", `10/02/2026 04:03:25 ${P}`, "R", "3279", "Raymond Nash", 5, 0.04, 7.592, 181.08, false, FIRST_SCRAPE],
+    ["Q2", `10/02/2026 04:02:20 ${P}`, "L", "402", "David Janac", 19, 0.011, 7.657, 180.98, true, LATER_SCRAPE],
+    ["Q2", `10/02/2026 04:02:20 ${P}`, "R", "3397", "David Davies", 4, 0.04, 10.714, 101.21, false, LATER_SCRAPE],
+    ["Q2", `10/02/2026 04:03:30 ${P}`, "L", "B346", "Lee Hartman", 17, 0.038, 7.548, 182.3, true, LATER_SCRAPE],
+    ["Q2", `10/02/2026 04:03:30 ${P}`, "R", "3279", "Raymond Nash", 5, 0.04, 7.592, 181.08, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:33:24 ${P}`, "L", "303", "James Betz", 6, 0.068, 7.817, 160.16, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:33:24 ${P}`, "R", "3725", "Mike Lloyd", 17, 0.034, 10.942, 144.97, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:37:06 ${P}`, "L", "4", "Jonathan Allegrucci", 5, 0.091, 7.596, 181.52, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:37:06 ${P}`, "R", "387K", "Kyle Pawuk", 12, 0.068, 10.437, 98.46, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:38:15 ${P}`, "L", "3279", "Raymond Nash", 2, 0.057, 7.591, 182.82, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:38:15 ${P}`, "R", "212", "Richard Hord", 15, 0.033, 15.236, 90.72, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:40:04 ${P}`, "L", "5", "Scott Libersher", 3, 0.042, 7.577, 181.62, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:40:04 ${P}`, "R", "301H", "Matthew Hartman", 14, 0.005, 7.686, 182.26, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:41:03 ${P}`, "L", "1014", "Anthony Berge", 4, 0.042, 7.657, 186.2, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:41:03 ${P}`, "R", "402", "David Janac", 13, 0.011, 7.614, 183.62, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:42:24 ${P}`, "L", "3397", "David Davies", 7, 0.089, 7.547, 187.05, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:42:24 ${P}`, "R", "1", "Mark Pawuk", 10, 0.026, 7.582, 182.85, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:43:27 ${P}`, "L", "B346", "Lee Hartman", 1, 0.04, 7.694, 161.17, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:43:27 ${P}`, "R", "3047", "Kim Shirley", 16, 0.064, 7.719, 176.88, false, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:44:39 ${P}`, "L", "350", "Doug Duell", 8, 0.029, 7.617, 182.85, true, LATER_SCRAPE],
+    ["E1", `10/03/2026 05:44:39 ${P}`, "R", "107", "Doug Hamp", 9, 0.03, 13.041, 70.59, false, LATER_SCRAPE],
+    ["E2", `10/03/2026 07:46:31 ${P}`, "L", "350", "Doug Duell", 8, 0.049, 7.534, 183.89, true, LATER_SCRAPE],
+    ["E2", `10/03/2026 07:46:31 ${P}`, "R", "B346", "Lee Hartman", 1, 0.012, 8.296, 117.45, false, LATER_SCRAPE],
+    ["E2", `10/03/2026 07:49:36 ${P}`, "L", "5", "Scott Libersher", 3, 0.045, 7.561, 181.62, true, LATER_SCRAPE],
+    ["E2", `10/03/2026 07:49:36 ${P}`, "R", "303", "James Betz", 6, 0.052, 7.636, 166.42, false, LATER_SCRAPE],
+    ["E2", `10/03/2026 08:03:10 ${P}`, "L", "4", "Jonathan Allegrucci", 5, 0.022, 7.563, 181.84, true, LATER_SCRAPE],
+    ["E2", `10/03/2026 08:03:10 ${P}`, "R", "402", "David Janac", 13, null, null, null, false, LATER_SCRAPE],
+    ["E2", `10/03/2026 08:04:13 ${P}`, "L", "1", "Mark Pawuk", 10, -0.023, 17.894, 44.36, false, LATER_SCRAPE],
+    ["E2", `10/03/2026 08:04:13 ${P}`, "R", "3279", "Raymond Nash", 2, 0.021, 7.516, 184.95, true, LATER_SCRAPE],
+    ["E3", `10/04/2026 01:24:35 ${P}`, "L", "350", "Doug Duell", 8, 0.066, 7.636, 182.35, false, LATER_SCRAPE],
+    ["E3", `10/04/2026 01:24:35 ${P}`, "R", "4", "Jonathan Allegrucci", 5, 0.018, 7.62, 180.6, true, LATER_SCRAPE],
+    ["E3", `10/04/2026 01:27:45 ${P}`, "L", "3279", "Raymond Nash", 2, 0.031, 7.623, 181.01, false, LATER_SCRAPE],
+    ["E3", `10/04/2026 01:27:45 ${P}`, "R", "5", "Scott Libersher", 3, 0.041, 7.609, 180.55, true, LATER_SCRAPE],
+    ["E4", `10/04/2026 03:19:26 ${P}`, "L", "5", "Scott Libersher", 3, 0.04, 12.567, 86.19, false, LATER_SCRAPE],
+    ["E4", `10/04/2026 03:19:26 ${P}`, "R", "4", "Jonathan Allegrucci", 5, 0.066, 7.64, 179.92, true, LATER_SCRAPE],
+  ];
+  const FSS = "FACTORY STOCK SHOWDOWN";
+  const toRun = (
+    [round, timestamp, lane, car, name, qualPos, rt, et, mph, won, written]: FssRow,
+    category = FSS,
+  ): RunRow => ({
+    timestamp, round, qual_pos: qualPos, car_number: car, name, member_number: null, class_index: null,
+    rt, ft60: null, ft330: null, ft660: null, mph_660: null, ft1000: null, mph_1000: null,
+    ft1320: et, mph_1320: mph, mov: null, is_winner: won ? 1 : 0, is_dq: 0, result: won ? "W" : null,
+    place: null, category, lane, dial_in: null, event_code: "MI1", event_name: "NAPA Auto Parts NHRA Midwest Nationals 10/02/2026",
+    event_type: "N", season: "2026", start_date: "20261002", created_at: written,
+  });
+  // Every other class MI1 ran, one pass each: the class numbers are event-wide.
+  const OTHER_CLASSES = [
+    "TOP FUEL", "FUNNY CAR", "PRO STOCK", "PRO STOCK MOTORCYCLE", "PRO MOD", "SUPER COMP", "SUPER GAS",
+    "SUPER STOCK", "STOCK ELIMINATOR", "COMPETITION ELIMINATOR", "TOP DRAGSTER", "JR STREET", "HIGH SCHOOL",
+    "JR ARCH SHOOTOUT",
+  ];
+  const eventRuns: RunRow[] = [
+    ...ROWS.map((r) => toRun(r)),
+    ...OTHER_CLASSES.map((c) => toRun(["E1", `10/03/2026 11:00:00 AM`, "L", "1", "Driver 1", 1, 0.05, 6.5, 200, true, LATER_SCRAPE], c)),
+  ];
+
+  const carsByRound = (content: string): Record<string, string[]> => {
+    const out: Record<string, string[]> = {};
+    let heading = "";
+    for (const line of content.split("\r\n")) {
+      if (/^(ROUND \d+|FINALS)$/.test(line)) out[(heading = line)] = [];
+      else if (heading && line && line !== "End of File" && !line.startsWith("SINGLE,")) out[heading].push(line.split(",")[0]);
+    }
+    return out;
+  };
+  const sameAsTower = (content: string) => JSON.stringify(carsByRound(content)) === JSON.stringify(OFFICIAL_C16);
+
+  // getresults → Data Out (the path Mark's RACEDATA.zip came from).
+  const text = buildDataOutExport(eventRuns, []);
+  const fssEdat = text.edat.find((f) => f.category === FSS);
+  const fssQdat = text.qdat.find((f) => f.category === FSS);
+  check(
+    "MI1 getresults: FSS writes C16EDAT / C16QDAT, Compulink's number (not 13th in class order)",
+    fssEdat?.filename === "C16EDAT.TXT" && fssQdat?.filename === "C16QDAT.TXT",
+    `${fssEdat?.filename} / ${fssQdat?.filename}`,
+  );
+  const r1 = carsByRound(fssEdat?.content || "")["ROUND 1"] || [];
+  check(
+    "MI1 getresults: ROUND 1 is the 16-car field, every car once (the moved Q2 pairs stay out)",
+    r1.length === 16 && new Set(r1).size === 16,
+    r1.join(" "),
+  );
+  check(
+    "MI1 getresults: every round lists the tower's cars in the tower's order, winner first",
+    sameAsTower(fssEdat?.content || ""),
+    JSON.stringify(carsByRound(fssEdat?.content || "")),
+  );
+  check(
+    "MI1 getresults: Allegrucci heads the FINALS",
+    /\r\nFINALS\r\n4,0,FSS,5,Jonathan Allegrucci,/.test(fssEdat?.content || ""),
+    (fssEdat?.content || "").split("FINALS")[1],
+  );
+  check(
+    "MI1 getresults: the moved pairs are named in a warning",
+    text.warnings.some((w) => w.startsWith("FACTORY STOCK SHOWDOWN: getresults moved 4 runs from E1 to Q2 (cars 402, 3397, B346, 3279)")),
+    JSON.stringify(text.warnings),
+  );
+  const numOf = (category: string) => text.edat.find((f) => f.category === category)?.filename;
+  check(
+    "MI1 getresults: the other classes take their Compulink numbers too (PM 5, SC 8, SG 9, COMP 11, SS 12, STK 13, TD 15)",
+    numOf("PRO MOD") === "C5EDAT.TXT" &&
+      numOf("SUPER COMP") === "C8EDAT.TXT" &&
+      numOf("SUPER GAS") === "C9EDAT.TXT" &&
+      numOf("COMPETITION ELIMINATOR") === "C11EDAT.TXT" &&
+      numOf("SUPER STOCK") === "C12EDAT.TXT" &&
+      numOf("STOCK ELIMINATOR") === "C13EDAT.TXT" &&
+      numOf("TOP DRAGSTER") === "C15EDAT.TXT",
+    text.edat.map((f) => `${f.filename}=${f.category}`).join(" "),
+  );
+  check(
+    "MI1 getresults: classes with no Compulink number fill the free slots, never a numbered class's",
+    new Set(text.edat.map((f) => f.filename)).size === text.edat.length &&
+      ["JR STREET", "HIGH SCHOOL", "JR ARCH SHOOTOUT"].every((c) => ["C6EDAT.TXT", "C7EDAT.TXT", "C10EDAT.TXT"].includes(numOf(c) || "")),
+    text.edat.map((f) => `${f.filename}=${f.category}`).join(" "),
+  );
+  const pdfArts = buildDataOutArtifacts(eventRuns, [], { categories: [FSS] });
+  const finalsText = pdfStrings(pdfArts.finalsPdf);
+  check(
+    "MI1 getresults: the finals PDF names #4 Champion",
+    finalsText[finalsText.indexOf("Champion ......") + 1] === "# 4",
+    finalsText.slice(0, 20).join("|"),
+  );
+
+  // A relabel only counts when the times agree: two real passes getresults
+  // stamped with one clock time (RN1 2026 Super Gas) both stay.
+  const moved = findSupersededCopies(ROWS.map((r) => toRun(r)));
+  const differentPass = toRun(["Q1", `10/03/2026 05:41:03 ${P}`, "R", "402", "David Janac", 13, 0.02, 7.7, 180, true, "2026-10-05T00:00:00.000Z"]);
+  check(
+    "relabels: exactly the four stale E1 copies are superseded, each by its Q2 copy",
+    moved.superseded.length === 4 && moved.superseded.every((c) => c.run.round === "E1" && c.by.round === "Q2"),
+    moved.superseded.map((c) => `${c.run.car_number}:${c.run.round}->${c.by.round}`).join(" "),
+  );
+  check(
+    "relabels: a newer row with different times is a separate pass, not a correction",
+    findSupersededCopies([...ROWS.map((r) => toRun(r)), differentPass]).superseded.length === 4,
+  );
+
+  // AccuTime → EDAT for the same class: the two pairs logged under round 1 on
+  // Friday must stay qualifying, and the EDAT lists AccuTime's own pairs
+  // winner first — not left lane first.
+  const header =
+    '"RunNumber","RoundNumber","WinnerFlag","Lane","CarNumber","LastName","DialIn","ReactionTime","ft60","ft330","mph18","et18","mph1000","et1000","mph14","et14","Margin","TimeStamp"';
+  let runNo = 0;
+  const passNo = new Map<string, number>();
+  const logLines = ROWS.filter(([round]) => round.startsWith("E")).map(([round, ts, lane, car, name, , rt, et, mph, won]) => {
+    const key = `${round}|${ts}`;
+    if (!passNo.has(key)) passNo.set(key, ++runNo);
+    const raw = rt === null ? 0 : 0.4 + rt;
+    return `${passNo.get(key)},${round.slice(1)},${won ? 1 : 0},"${lane}","${car}","${name}",0,${raw.toFixed(4)},0,0,0,0,0,0,${mph ?? 0},${et ?? 0},0,${ts}`;
+  });
+  const ladder = ["B346", "3279", "5", "1014", "4", "303", "3397", "350", "107", "1", "3725", "387K", "402", "301H", "212", "3047"];
+  const nameOf = new Map(ROWS.map(([, , , car, name]) => [car, name]));
+  const accu = parseAccuTimePack([
+    { name: "MI1/Factory Stock Showdown/20261002120000dat.txt", data: latin1([header, ...logLines].join("\r\n") + "\r\n") },
+    {
+      name: "MI1/Factory Stock Showdown/20261002120000qly.txt",
+      data: qly(ladder.map((car, i) => [nameOf.get(car) || car, car, "0.4400", (7.511 + i * 0.02).toFixed(4), "182.00"])),
+    },
+  ]);
+  const fssSession = accu.sessions[0];
+  check(
+    "MI1 AccuTime: round-1 passes from Friday stay qualifying — E1 is 8 pairs of 16 cars",
+    fssSession?.classCode === "FSS" &&
+      fssSession.elimRounds[0]?.pairs.length === 8 &&
+      new Set(fssSession.elimRounds[0].pairs.flatMap((p) => p.runs.map((r) => r.car_number))).size === 16,
+    fssSession?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" "),
+  );
+  const accuArts = buildAccuTimeArtifacts(accu.sessions, []);
+  const accuEdat = accuArts.edat[0];
+  check(
+    "MI1 AccuTime: C16EDAT / C16QDAT",
+    accuEdat?.filename === "C16EDAT.TXT" && accuArts.qdat[0]?.filename === "C16QDAT.TXT",
+    `${accuEdat?.filename} / ${accuArts.qdat[0]?.filename}`,
+  );
+  check(
+    "MI1 AccuTime: EDAT matches the tower's C16EDAT round for round, winner first",
+    sameAsTower(accuEdat?.content || ""),
+    JSON.stringify(carsByRound(accuEdat?.content || "")),
+  );
+  check(
+    "MI1 AccuTime: the EDAT text and the finals PDF list the same pairs",
+    JSON.stringify(carsByRound(accuEdat?.content || "")) ===
+      JSON.stringify(
+        Object.fromEntries(
+          fssSession.elimRounds.map((rd) => [rd.label, rd.pairs.flatMap((p) => p.runs.map((r) => r.car_number))]),
+        ),
+      ),
+  );
 }
 
 if (failures > 0) {
