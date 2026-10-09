@@ -352,6 +352,69 @@ const T = (h: string) => `06/19/2026 ${h}`;
   check("ladder: pinned numbers, a withdrawal in its gap, a contradicted car last", q.qualifiers.map((e) => e.car).join(" ") === "1001 1002 1003 1004 1005", q.qualifiers.map((e) => e.car).join(" "));
 }
 
+// ——— 10b. Sheet details: heads-up ties, untimed and timeless qualifiers, a broken Q Pos column, eighth-mile readings ———
+{
+  const lineFor = (content: string, car: string) => lines(content).find((x) => x.startsWith(`${car},`)) || "";
+
+  const td = (h: string, car: string, et: number, mph: number, round = "Q1") =>
+    pass(round, `06/18/2026 ${h}`, car, et, { category: "TOP DRAGSTER", class_index: "TD", mph_1320: mph });
+  const tie = buildDataOutExport(
+    [
+      td("10:00:00 AM", "1601", 6.5, 210.0),
+      td("10:01:00 AM", "1602", 6.5, 215.0),
+      td("10:02:00 AM", "1603", 6.6, 220.0),
+      td("01:00:00 PM", "1603", 6.6, 222.5, "Q2"),
+    ],
+    [],
+    {},
+  ).qdat[0];
+  check("heads-up: an ET tie goes to the higher MPH", tie.qualifiers.map((e) => e.car).join(" ") === "1602 1601 1603", tie.qualifiers.map((e) => e.car).join(" "));
+  check("heads-up: of a car's equal ETs the faster pass is printed", lineFor(tie.content, "1603").endsWith(",6.600,222.50,222.50"), lineFor(tie.content, "1603"));
+
+  const stk = (h: string, car: string, et: number, dial: number) =>
+    pass("Q1", `06/18/2026 ${h}`, car, et, { category: "STOCK ELIMINATOR", class_index: "D/SA", dial_in: dial, mph_1320: et > 64 ? 0 : 120 });
+  const untimed = buildDataOutExport([stk("10:00:00 AM", "1701", 64.999, 11.55), stk("10:01:00 AM", "1702", 11.0, 11.55)], [], {
+    timing: "portatree",
+  }).qdat[0];
+  check(
+    "untimed: a car whose only pass never timed is listed last at 64.999, with its index and the difference",
+    untimed.qualifiers.map((e) => e.car).join(" ") === "1702 1701" && lineFor(untimed.content, "1701").endsWith(",64.999,11.55,53.449"),
+    lineFor(untimed.content, "1701"),
+  );
+
+  const noTime: RunRow[] = [
+    pass("Q1", "06/18/2026 10:00:00 AM", "1801", null, { category: "SUPER STOCK", class_index: "GT/GA", dial_in: 11.19 }),
+    pass("Q1", "06/18/2026 10:01:00 AM", "1802", 10.5, { category: "SUPER STOCK", class_index: "GT/GA", dial_in: 11.19 }),
+    pass("Q1", "06/18/2026 10:02:00 AM", "1811", null, { category: "TOP SPORTSMAN", class_index: "TS" }),
+    pass("Q1", "06/18/2026 10:03:00 AM", "1812", 7.0, { category: "TOP SPORTSMAN", class_index: "TS", mph_1320: 190 }),
+  ];
+  const compulink = buildDataOutExport(noTime, [], { timing: "compulink" });
+  const ssQ = compulink.qdat.find((f) => f.category === "SUPER STOCK")!;
+  const tsQ = compulink.qdat.find((f) => f.category === "TOP SPORTSMAN")!;
+  check("no time, Compulink: an index sheet prints 28.000 with the index and the difference", lineFor(ssQ.content, "1801").endsWith(",28.000,11.19,16.810"), lineFor(ssQ.content, "1801"));
+  check("no time, Compulink: a heads-up sheet prints 28.000 and 00.00 speeds", lineFor(tsQ.content, "1811").endsWith(",28.000,00.00,00.00"), lineFor(tsQ.content, "1811"));
+  const ptTs = buildDataOutExport(noTime, [], { timing: "portatree" }).qdat.find((f) => f.category === "TOP SPORTSMAN")!;
+  check("no time, Portatree: a heads-up sheet prints zeros", lineFor(ptTs.content, "1811").endsWith(",0.000,0.00,0.000"), lineFor(ptTs.content, "1811"));
+
+  const ps = (h: string, car: string, et: number, pos: number) =>
+    pass("Q4", `06/18/2026 ${h}`, car, et, { category: "PRO STOCK", class_index: "PS", qual_pos: pos, mph_1320: 205 });
+  const broken = buildDataOutExport([ps("10:00:00 AM", "1901", 6.6, 1), ps("10:01:00 AM", "1902", 6.5, 2), ps("10:02:00 AM", "1903", 6.55, 2)], [], {});
+  check(
+    "a Q Pos column that repeats a position isn't a ladder: before eliminations the rule orders the sheet",
+    broken.qdat[0].qualifiers.map((e) => e.car).join(" ") === "1902 1903 1901" && broken.warnings.some((w) => w.includes("repeats qualifying positions")),
+    broken.qdat[0].qualifiers.map((e) => e.car).join(" "),
+  );
+
+  const os = (h: string, car: string, et660: number, mph660: number, stray: Partial<RunRow> = {}) =>
+    run({ round: "Q1", timestamp: `06/18/2026 ${h}`, car_number: car, name: `Driver ${car}`, category: "OUTLAW STREET", class_index: "OS", rt: 0.05, ft660: et660, mph_660: mph660, ...stray });
+  const eighth = buildDataOutExport(
+    [os("10:00:00 AM", "2001", 3.987, 188.15, { ft1320: 6.811, mph_1320: 126.15 }), os("10:01:00 AM", "2002", 4.1, 180), os("10:02:00 AM", "2003", 4.2, 178)],
+    [],
+    {},
+  ).qdat[0];
+  check("eighth-mile sheet: a stray 1320 reading doesn't replace the pass's eighth-mile ET and MPH", lineFor(eighth.content, "2001").endsWith(",3.987,188.15,188.15"), lineFor(eighth.content, "2001"));
+}
+
 // ——— 11. Run selection: date window, a re-run round 1, a pass before round 1 ———
 {
   const cat = "NOVICE JR";
