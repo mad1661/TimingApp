@@ -23,6 +23,15 @@ import {
 } from "./edata-export";
 import { selectDataOutRuns } from "./dataout-runs";
 import {
+  PRO_CLASS_CODES,
+  buildPointsFileContent,
+  extractDivisionNumber,
+  scoreAccuTimeSession,
+  type AccuPointsRow,
+  type ProEventScale,
+  type ScoringSession,
+} from "./accutime-points";
+import {
   buildRacedataPdf,
   buildQualifyingPdf,
   type PdfCategory,
@@ -48,9 +57,23 @@ import { parseTsToDate } from "./timestamp-utils";
  * files list them (the Champion row is the first line of the finals pairing).
  */
 
+export interface DataOutPointsFile {
+  /** C10A11DP.TXT — the class's C# and the points race code. */
+  filename: string;
+  category: string;
+  classCode: string;
+  /** Cars in round 1 — the field the points bracket is picked by. */
+  fieldSize: number;
+  rows: AccuPointsRow[];
+  notes: string[];
+  content: string;
+}
+
 export interface DataOutArtifacts {
   edat: EdataExportFile[];
   qdat: QdatExportFile[];
+  /** CxAyyDP points files — built when a points race code is given. */
+  points: DataOutPointsFile[];
   finalsPdf: Uint8Array | null;
   qualifyingPdf: Uint8Array | null;
   warnings: string[];
@@ -78,6 +101,16 @@ export interface DataOutBuildOptions {
   timing?: TimingSystem;
   /** C# pinned per class (exact or normalized category name) — the tower's slot for a class it numbers its own way. */
   classNumbers?: Record<string, number>;
+  /**
+   * The race code in the points filenames ("11" → C10A11DP.TXT, the tower's
+   * own event number — LO1-7 2026 is "17" though its getresults code is 18).
+   * Points files are built only when it's given.
+   */
+  pointsRaceCode?: string;
+  /** Pro points scale (Indy / Pomona 2 pay more). Defaults to the regular season. */
+  proScale?: ProEventScale;
+  /** Racers who won their last round of an unfinished race get the next round's loss points. */
+  incompleteRace?: boolean;
 }
 
 /** getresults suffixes the event name with its date ("… Nationals 09/18/2026"); the sheets carry the date separately. */
@@ -122,9 +155,19 @@ export function buildDataOutArtifacts(
 
   const edat = text.edat.filter((f) => keep(f.category));
   const qdat = text.qdat.filter((f) => keep(f.category));
+  const raceCode = (opts.pointsRaceCode || "").trim().replace(/-/g, "");
+  const points = raceCode
+    ? buildDataOutPoints(runs, edat, qdat, techCards, {
+        raceCode,
+        timing,
+        proScale: opts.proScale,
+        incompleteRace: opts.incompleteRace,
+        warnings,
+      })
+    : [];
 
   if (opts.pdfs === false) {
-    return { edat, qdat, finalsPdf: null, qualifyingPdf: null, warnings, timing };
+    return { edat, qdat, points, finalsPdf: null, qualifyingPdf: null, warnings, timing };
   }
 
   // Every class with either file, in the same class order the text uses.
@@ -329,9 +372,150 @@ export function buildDataOutArtifacts(
   return {
     edat,
     qdat,
+    points,
     finalsPdf: finalsCats.length ? buildRacedataPdf(pdfEvent, finalsCats) : null,
     qualifyingPdf: qualCats.length ? buildQualifyingPdf(pdfEvent, qualCats) : null,
     warnings,
     timing,
   };
+}
+
+/**
+ * CxAyyDP points files from the same rounds the EDAT prints: winner,
+ * runner-up and round losers by the NHRA bracket for the round-1 field (the
+ * alcohol table plus qualifying and attempt points for TAD / TAFC, the pro
+ * national structure for the pros — the scoring the AccuTime export uses),
+ * then 10 points for every entrant who ran the class but not its
+ * eliminations. Rows run highest points first, ties in round-1 order, as the
+ * tower lists them. A class whose final isn't on file gets no points file.
+ *
+ * The division column is the racer's home division off the tech card; the
+ * timing data doesn't carry it, so a racer with no card on file prints 0.
+ */
+function buildDataOutPoints(
+  runs: RunRow[],
+  edat: EdataExportFile[],
+  qdat: QdatExportFile[],
+  techCards: EdataTechCard[],
+  opts: {
+    raceCode: string;
+    timing: TimingSystem;
+    proScale?: ProEventScale;
+    incompleteRace?: boolean;
+    warnings: string[];
+  },
+): DataOutPointsFile[] {
+  const isLocal = localCardTest(runs);
+  const files: DataOutPointsFile[] = [];
+  const noFinal: string[] = [];
+  let noDivision = 0;
+  for (const f of edat) {
+    const catRuns = runs.filter((r) => (r.category || "").trim() === f.category);
+    const rounds = elimRoundsForCategory(catRuns, f.category, [], { timing: opts.timing });
+    if (!rounds.length) continue;
+    if (!rounds[rounds.length - 1].isFinal) {
+      noFinal.push(f.category);
+      continue;
+    }
+    const idx = buildTechIndex(f.category, f.classCode, techCards, isLocal);
+    const cardFor = (car: string | null, name: string | null) => findTechCard(car, name, idx);
+    const q = qdat.find((x) => x.category === f.category);
+    const qualifying = (q?.qualifiers || []).map((e, i) => ({
+      pos: q!.positions[i] ?? i + 1,
+      car_number: e.car,
+      name: e.name,
+      rt: e.rt ?? null,
+      et: e.et,
+      mph: e.mph,
+      bestSession: null,
+    }));
+    const session: ScoringSession = {
+      classCode: f.classCode,
+      elimRounds: rounds,
+      qualifying,
+      qualSessionPasses: qualifyingSessions(catRuns),
+    };
+    const fieldSize = new Set(rounds[0].pairs.flatMap((p) => p.runs.map((r) => norm(r.car_number)))).size;
+    const scored = scoreAccuTimeSession(session, cardFor, {
+      proScale: opts.proScale,
+      incompleteRace: opts.incompleteRace,
+      fieldSize,
+    });
+    const rows = [...scored.rows];
+
+    // Everyone who ran the class but never its eliminations takes the 10
+    // entry points — the sportsman rule; alcohol and pro attempts are scored
+    // off the qualifying sheet above.
+    const alcohol = f.classCode === "TAD" || f.classCode === "TAFC";
+    if (!alcohol && !PRO_CLASS_CODES.has(f.classCode)) {
+      const scoredCars = new Set(rows.map((r) => norm(r.car_number)));
+      const entrants = new Map<string, RunRow>();
+      for (const r of catRuns) {
+        const car = norm(r.car_number);
+        if (!car || car === "BYE" || scoredCars.has(car) || entrants.has(car)) continue;
+        if (!(r.name || "").trim() && !(r.class_index || "").trim()) continue;
+        entrants.set(car, r);
+      }
+      for (const r of entrants.values()) {
+        const tc = cardFor(r.car_number, r.name);
+        rows.push({
+          car_number: (r.car_number || "").trim(),
+          member_number: (r.member_number || "").trim() || tc?.member_number || "",
+          name: (tc ? fullName(tc) : "") || (r.name || "").trim(),
+          division: extractDivisionNumber(tc?.home_division),
+          points: 10,
+          status: "Participated",
+          isWinner: false,
+          isRunnerUp: false,
+        });
+      }
+    }
+    for (const r of rows) {
+      if (!r.division) noDivision++;
+      // The card's full name, as the EDAT prints it, over the timing system's.
+      const tc = cardFor(r.car_number || null, r.name || null);
+      if (tc && fullName(tc)) r.name = fullName(tc);
+    }
+
+    const classNumber = f.filename.match(/^C(\d+)EDAT\.TXT$/)?.[1] || "";
+    files.push({
+      filename: `C${classNumber}A${opts.raceCode}DP.TXT`,
+      category: f.category,
+      classCode: f.classCode,
+      fieldSize,
+      rows,
+      notes: scored.notes,
+      content: buildPointsFileContent(f.category, rows, { portatree: opts.timing === "portatree" }),
+    });
+  }
+  if (noFinal.length) {
+    opts.warnings.push(`No final on file yet for ${noFinal.join(", ")} — no points file for ${noFinal.length === 1 ? "it" : "them"}.`);
+  }
+  if (noDivision) {
+    opts.warnings.push(
+      `${noDivision} points row${noDivision === 1 ? "" : "s"} print division 0 — the timing data has no home division, and no tech card with one matched. Import the event's tech cards to fill it.`,
+    );
+  }
+  return files;
+}
+
+/** Each qualifying session's best ET per car, in session order — the pro low-ET bonuses read these. */
+function qualifyingSessions(catRuns: RunRow[]): ScoringSession["qualSessionPasses"] {
+  const bySession = new Map<string, Map<string, { car_number: string; name: string; et: number | null }>>();
+  for (const r of catRuns) {
+    const round = norm(r.round);
+    if (!/^Q\d+$/.test(round)) continue;
+    const car = norm(r.car_number);
+    if (!car || car === "BYE") continue;
+    const et = r.ft1320 && r.ft1320 > 0 && r.ft1320 < 64.99 ? r.ft1320 : null;
+    const passes = bySession.get(round) || new Map();
+    const cur = passes.get(car);
+    if (!cur || (et !== null && (cur.et === null || et < cur.et))) {
+      passes.set(car, { car_number: (r.car_number || "").trim(), name: (r.name || "").trim(), et });
+    }
+    bySession.set(round, passes);
+  }
+  return [...bySession.entries()]
+    .sort(([a], [b]) => parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10))
+    .map(([round, passes]) => ({ session: parseInt(round.slice(1), 10), passes: [...passes.values()] }));
 }

@@ -194,6 +194,9 @@ export interface AccuPointsSkipped {
 
 type CardFor = (car: string | null, name: string | null) => EdataTechCard | null;
 
+/** What scoring reads from a session — Data Out builds the same shape from stored runs. */
+export type ScoringSession = Pick<AccuTimeSession, "classCode" | "elimRounds" | "qualifying" | "qualSessionPasses">;
+
 /**
  * Score one AccuTime session.
  *
@@ -209,9 +212,14 @@ type CardFor = (car: string | null, name: string | null) => EdataTechCard | null
  * sessions treated as incomplete) come back in `notes`.
  */
 export function scoreAccuTimeSession(
-  session: AccuTimeSession,
+  session: ScoringSession,
   cardFor: CardFor,
-  opts: { incompleteRace?: boolean; proScale?: ProEventScale } = {},
+  opts: {
+    incompleteRace?: boolean;
+    proScale?: ProEventScale;
+    /** The field the bracket is picked by; defaults to every car that raced eliminations. */
+    fieldSize?: number;
+  } = {},
 ): { rows: AccuPointsRow[]; notes: string[] } {
   const isAlcohol = ALCOHOL_CLASS_CODES.has(session.classCode);
   const isPro = PRO_CLASS_CODES.has(session.classCode);
@@ -255,7 +263,7 @@ export function scoreAccuTimeSession(
     }
   });
 
-  const fieldSize = racers.size;
+  const fieldSize = opts.fieldSize && opts.fieldSize > 0 ? opts.fieldSize : racers.size;
   const bracket = bracketFor(isAlcohol ? ALCOHOL_POINTS_BRACKETS : DEFAULT_POINTS_BRACKETS, fieldSize);
 
   let winnerKey: string | null = null;
@@ -610,7 +618,8 @@ export function assignCompulinkClassNumbers(
  * layout): header + `Car#,Member#,Full Name,Division,Points,Deduction` rows +
  * End of File, CRLF line endings and a single DOS Ctrl-Z EOF marker. Points
  * are the earned (base) points; the deduction rides the sixth field as the
- * audit trail.
+ * audit trail. A Portatree tower heads the file `Portatree EVENT Points` and
+ * ends it `End of File ` with a block of 106 Ctrl-Zs.
  */
 export function buildPointsFileContent(
   category: string,
@@ -622,8 +631,10 @@ export function buildPointsFileContent(
     points: number;
     deduction?: number;
   }[],
+  opts: { portatree?: boolean } = {},
 ): string {
-  const out: string[] = [`Compulink StarTrak EVENT Points for ${category || "CLASS"} w/REG code 1`];
+  const head = opts.portatree ? "Portatree" : "Compulink StarTrak";
+  const out: string[] = [`${head} EVENT Points for ${category || "CLASS"} w/REG code 1`];
   for (const r of rows) {
     out.push(
       [
@@ -636,6 +647,7 @@ export function buildPointsFileContent(
       ].join(","),
     );
   }
+  if (opts.portatree) return out.join("\r\n") + "\r\nEnd of File " + "\x1a".repeat(106);
   out.push("End of File");
   return out.join("\r\n") + "\r\n" + "\x1a";
 }

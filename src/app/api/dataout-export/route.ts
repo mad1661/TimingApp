@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllTechCards, getQualifyingConfig, getTaggedRunsForEvent } from "@/lib/db";
-import { qualRuleFromMode, type EdataTechCard, type QualRule } from "@/lib/edata-export";
+import { qualRuleFromMode, type EdataTechCard, type QualRule, type TimingSystem } from "@/lib/edata-export";
 import { buildDataOutArtifacts } from "@/lib/dataout-export";
+import { PRO_EVENT_SCALES, type ProEventScale } from "@/lib/accutime-points";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -23,19 +24,30 @@ interface DataOutRequest {
   /** Build the PDFs too. Off for the quick class-list load. */
   pdfs?: boolean;
   brand?: string;
+  /** C# the user pinned per class (category → number) — the tower's slot for a class it numbers its own way. */
+  class_numbers?: unknown;
+  /** The tower's event number in the points filenames (C10A11DP.TXT); points files are built only with one. */
+  points_race_code?: string;
+  pro_scale?: string;
+  incomplete_race?: boolean;
+  /** Tower dialect: "compulink" / "portatree", or omitted to read it off the stored rows. */
+  timing?: string;
 }
 
 /**
  * POST /api/dataout-export
- * { event_code, season, event_name?, series_header?, logos?, categories?, pdfs?, brand? }
+ * { event_code, season, event_name?, series_header?, logos?, categories?, pdfs?, brand?,
+ *   class_numbers?, points_race_code?, pro_scale?, incomplete_race?, timing? }
  *
- * Builds the Compulink package from the event's STORED runs: EDAT
+ * Builds the tower's RACEDATA package from the event's STORED runs: EDAT
  * elimination files and QDAT qualifying files (one per class, one class
- * number for both), plus — with `pdfs` on — the StarTrak qualifying PDF and
- * the Final Round Results PDF, the same sheets the AccuTime export renders.
- * Entry-record fields merge from the tech cards. Returns JSON:
- * { edat: [...], qdat: [...], finalsPdfBase64, qualifyingPdfBase64, warnings }.
- * The client turns these into downloads / a RACEDATA.zip.
+ * number for both), CxAyyDP points files when a points race code is given,
+ * plus — with `pdfs` on — the StarTrak qualifying PDF and the Final Round
+ * Results PDF, the same sheets the AccuTime export renders. Passes from
+ * outside the event's dates or another race filed under it are left out
+ * (nothing is moved). Entry-record fields merge from the tech cards. Returns
+ * JSON: { edat, qdat, points, timing, finalsPdfBase64, qualifyingPdfBase64,
+ * warnings }. The client turns these into downloads / a RACEDATA.zip.
  *
  * POST rather than GET because the header logos ride along as data URLs.
  */
@@ -102,6 +114,17 @@ export async function POST(request: NextRequest) {
       if (rule) qualRules[category.trim().toUpperCase().replace(/\s+/g, " ")] = rule;
     }
 
+    const classNumbers: Record<string, number> = {};
+    if (body.class_numbers && typeof body.class_numbers === "object") {
+      for (const [category, n] of Object.entries(body.class_numbers as Record<string, unknown>)) {
+        const num = typeof n === "number" ? n : parseInt(String(n), 10);
+        if (Number.isInteger(num) && num > 0 && num < 100) classNumbers[category] = num;
+      }
+    }
+    const timing: TimingSystem | undefined =
+      body.timing === "compulink" || body.timing === "portatree" ? body.timing : undefined;
+    const proScale = PRO_EVENT_SCALES.find((s) => s.value === body.pro_scale)?.value as ProEventScale | undefined;
+
     const artifacts = buildDataOutArtifacts(runs, techCards as unknown as EdataTechCard[], {
       eventName: body.event_name || "",
       seriesHeader: body.series_header || "",
@@ -110,6 +133,11 @@ export async function POST(request: NextRequest) {
       pdfs: body.pdfs !== false,
       brand: typeof body.brand === "string" ? body.brand : undefined,
       qualRules,
+      timing,
+      classNumbers,
+      pointsRaceCode: typeof body.points_race_code === "string" ? body.points_race_code : "",
+      proScale,
+      incompleteRace: body.incomplete_race === true,
     });
 
     const toB64 = (bytes: Uint8Array | null) => (bytes ? Buffer.from(bytes).toString("base64") : null);
@@ -130,6 +158,16 @@ export async function POST(request: NextRequest) {
           hasIndex: f.hasIndex,
           content: f.content,
         })),
+        points: artifacts.points.map((f) => ({
+          filename: f.filename,
+          category: f.category,
+          classCode: f.classCode,
+          fieldSize: f.fieldSize,
+          rows: f.rows.length,
+          notes: f.notes,
+          content: f.content,
+        })),
+        timing: artifacts.timing,
         finalsPdfBase64: toB64(artifacts.finalsPdf),
         qualifyingPdfBase64: toB64(artifacts.qualifyingPdf),
         warnings: [...artifacts.warnings, ...logoWarnings],

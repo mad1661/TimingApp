@@ -69,6 +69,16 @@ export function timingHeader(timing: TimingSystem): string {
   return timing === "portatree" ? "Portatree" : "Compulink StarTrak";
 }
 
+/**
+ * An EDAT / QDAT file as the tower writes it to disk: Compulink fills the
+ * last 128-byte record with DOS Ctrl-Zs, Portatree writes the text alone.
+ */
+export function racedataFileText(content: string, timing: TimingSystem): string {
+  if (timing === "portatree") return content;
+  const pad = (128 - (content.length % 128)) % 128;
+  return content + "\x1a".repeat(pad);
+}
+
 /** The tech-card fields the export reads (TechCardEntry satisfies this). */
 export interface EdataTechCard {
   car_number: string;
