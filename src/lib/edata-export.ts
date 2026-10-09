@@ -1095,7 +1095,7 @@ export function buildEdataExport(
           // A completed pass always has a reaction time; a blank one is a
           // hole in the stored row (or on getresults) and prints as a blank
           // on the sheet, so it's called out here rather than found in print.
-          const finished = (quarterMile ? r.ft1320 : finishEt(r)) !== null;
+          const finished = (quarterMile ? r.ft1320 : r.ft660) != null;
           if (finished && (r.rt === null || r.rt === undefined)) {
             noRt.push(`${rd.label.toLowerCase()} #${(r.car_number || "").trim() || "?"}${r.name ? ` ${r.name}` : ""}`);
           }
@@ -1414,14 +1414,18 @@ function qualRoundOrder(round: string): number {
   return e ? 200 + parseInt(e[1], 10) : 999;
 }
 
-/** A qualifying ET: a real finish, not a no-time stand-in (getresults' 99.999, Portatree's 64.999). */
+/**
+ * A qualifying ET: a real finish, not a no-time stand-in (getresults' 99.999,
+ * Portatree's 64.999). The class's own finish line, as the EDAT reads it — an
+ * eighth-mile pass can carry a stray 1320 reading (BM1 2026 Outlaw Street).
+ */
 function passEt(run: RunRow, quarterMile: boolean): number | null {
-  const et = quarterMile ? run.ft1320 : finishEt(run);
+  const et = quarterMile ? run.ft1320 : run.ft660;
   return et !== null && et !== undefined && et > 0 && et < 64.99 ? et : null;
 }
 
 function passMph(run: RunRow, quarterMile: boolean): number | null {
-  const mph = realMph(quarterMile ? run.mph_1320 : finishMph(run));
+  const mph = realMph(quarterMile ? run.mph_1320 : run.mph_660);
   return mph !== null && mph > 0 ? mph : null;
 }
 
