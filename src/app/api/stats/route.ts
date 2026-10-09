@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults, getClassElimBreakdown, saveClassElimConfig } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getVisibleEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults, getClassElimBreakdown, saveClassElimConfig } from "@/lib/db";
 import { isSameRacer } from "@/lib/run-finish";
 
 export const dynamic = "force-dynamic";
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
 
     if (type === "debug-timestamps") {
       if (!eventCode || !season) return jsonResponse({ error: "need event_code and season" }, { status: 400 });
-      const runs = await getEventRuns(eventCode, season);
+      const runs = await getVisibleEventRuns(eventCode, season);
       const data = runs
         .filter((r) => r.timestamp)
         .map((r) => ({ ts: r.timestamp, seq: r._scrape_seq ?? null, cat: r.category, round: r.round, name: r.name }))
@@ -218,7 +218,7 @@ export async function GET(request: NextRequest) {
     if (type === "class-designations") {
       const category = params.get("category");
       if (!category) return jsonResponse({ error: "category required" }, { status: 400 });
-      const runs = await getEventRuns(eventCode, season);
+      const runs = await getVisibleEventRuns(eventCode, season);
       const designations = new Set<string>();
       for (const r of runs) {
         if (r.category === category && r.class_index) {

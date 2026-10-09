@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { queryRuns, getCategories, getDistinctRounds, getDistinctClasses, getEvents } from "@/lib/db";
+import { queryRuns, getRunFilters, getEvents } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -34,7 +34,11 @@ export async function GET(request: NextRequest) {
       }, { headers: NO_STORE_HEADERS });
     }
 
-    const [result, categories, rounds, classes, events] = await Promise.all([
+    // Thrown-out passes are left out unless the caller is a control that
+    // restores them (the Runs page's Show Ignored, ET Finals' Round Review).
+    const includeIgnored = params.get("include_ignored") === "1";
+
+    const [result, filters, events] = await Promise.all([
       queryRuns({
         category: params.get("category") || undefined,
         name: params.get("name") || undefined,
@@ -47,16 +51,15 @@ export async function GET(request: NextRequest) {
         offset: params.get("offset") ? parseInt(params.get("offset")!) : 0,
         sort_by: params.get("sort_by") || "timestamp",
         sort_dir: (params.get("sort_dir") as "ASC" | "DESC") || "DESC",
+        include_ignored: includeIgnored,
       }),
-      getCategories(eventCode, season),
-      getDistinctRounds(eventCode, season),
-      getDistinctClasses(eventCode, season),
+      getRunFilters(eventCode, season, includeIgnored),
       getEvents(),
     ]);
 
     return NextResponse.json({
       ...result,
-      filters: { categories, seasons: [season], rounds, classes, events },
+      filters: { ...filters, seasons: [season], events },
     }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("Runs query error:", error);

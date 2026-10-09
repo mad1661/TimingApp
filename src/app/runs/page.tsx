@@ -88,7 +88,7 @@ function IgnoreConfirmModal({ run, onConfirm, onCancel }: { run: RunRow; onConfi
           <p className="text-gray-500 text-xs mt-1">{run.timestamp}</p>
         </div>
         <p className="text-gray-400 text-sm mb-5">
-          This run will be hidden from results and schedule calculations. You can restore it later.
+          This run will be hidden everywhere in the app — every page, stat, report, ladder, schedule and export. You can restore it later from Show Ignored.
         </p>
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white transition-colors">
@@ -161,6 +161,7 @@ function RunsPageInner() {
     params.set("sort_by", sortBy);
     params.set("sort_dir", sortDir);
     params.set("_v", String(live.dataVersion));
+    if (showIgnored) params.set("include_ignored", "1");
 
     try {
       const res = await fetch(`/api/runs?${params}`, { cache: "no-store" });
@@ -173,7 +174,7 @@ function RunsPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [nameFilter, categoryFilter, seasonFilter, roundFilter, classFilter, page, sortBy, sortDir, eventCode, season, live.dataVersion]);
+  }, [nameFilter, categoryFilter, seasonFilter, roundFilter, classFilter, page, sortBy, sortDir, eventCode, season, live.dataVersion, showIgnored]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -289,7 +290,10 @@ function RunsPageInner() {
         <div className="flex items-center gap-3">
           {ignoredKeys.size > 0 && (
             <button
-              onClick={() => setShowIgnored(!showIgnored)}
+              onClick={() => {
+                setShowIgnored(!showIgnored);
+                setPage(0);
+              }}
               className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showIgnored ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-400" : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-white"}`}
             >
               {showIgnored ? "Showing Ignored" : "Show Ignored"} ({ignoredKeys.size})
