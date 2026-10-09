@@ -1,7 +1,7 @@
 import { getDb } from "./firebase-admin";
 import { normalizeRacerSearch, finishEt } from "./run-finish";
 import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
-import { raceDayOf, raceDaysOf, resolveRaceDay } from "./race-day";
+import { eventWindow, inEventWindow, raceDayOf, raceDaysOf, resolveRaceDay, type EventWindow } from "./race-day";
 import {
   categoryKindFor,
   normalizeDesignation,
@@ -588,6 +588,174 @@ export async function purgeEventRuns(eventCode: string, season: string): Promise
   return deleted;
 }
 
+// --------------- Misfiled runs: quarantine ---------------
+//
+// Runs already stored under an event they don't belong to (dated outside its
+// window) are MOVED, never deleted: each batch doc's out-of-window rows are
+// copied to misfiled_runs/{event}_{season}/batches and taken off the doc in
+// one atomic write. restoreMisfiledRuns() puts them back.
+
+const MISFILED_RUNS = "misfiled_runs";
+
+export interface StoredRunBatch {
+  id: string;
+  runs: RunRow[];
+}
+
+export interface MisfiledPlan {
+  event_code: string;
+  season: string;
+  start_date: string | null;
+  window: EventWindow | null;
+  /** Stored rows and distinct passes per race day, and whether the day is in the window. */
+  days: { day: string; rows: number; passes: number; inWindow: boolean }[];
+  rowsToMove: number;
+  passesToMove: number;
+  batchDocs: number;
+  batchDocsAffected: number;
+}
+
+/** Which stored rows fall outside the window, batch doc by batch doc. */
+export function planMisfiledMove(
+  batches: StoredRunBatch[],
+  window: EventWindow | null,
+): { days: MisfiledPlan["days"]; moves: { id: string; keep: RunRow[]; move: RunRow[] }[] } {
+  const days = new Map<string, { rows: number; keys: Set<string>; inWindow: boolean }>();
+  const moves: { id: string; keep: RunRow[]; move: RunRow[] }[] = [];
+  for (const batch of batches) {
+    const keep: RunRow[] = [];
+    const move: RunRow[] = [];
+    for (const run of batch.runs) {
+      const inside = inEventWindow(run, window);
+      (inside ? keep : move).push(run);
+      const day = raceDayOf(run) || "undated";
+      let d = days.get(day);
+      if (!d) days.set(day, (d = { rows: 0, keys: new Set(), inWindow: inside }));
+      d.rows++;
+      d.keys.add(dedupKey(run));
+    }
+    if (move.length > 0) moves.push({ id: batch.id, keep, move });
+  }
+  return {
+    days: Array.from(days.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([day, d]) => ({ day, rows: d.rows, passes: d.keys.size, inWindow: d.inWindow })),
+    moves,
+  };
+}
+
+async function readRunBatches(eventCode: string, season: string): Promise<StoredRunBatch[]> {
+  const snap = await getDb().collection(collectionPath(eventCode, season)).get();
+  return snap.docs.map((d) => {
+    const runs = d.data().runs;
+    return { id: d.id, runs: Array.isArray(runs) ? (runs as RunRow[]) : [] };
+  });
+}
+
+/** The event's start date: as given, else its events row, else the one its runs carry most. */
+async function resolveStartDate(
+  eventCode: string,
+  season: string,
+  batches: StoredRunBatch[],
+  given?: string | null,
+): Promise<string | null> {
+  if (given) return given;
+  const snap = await getDb()
+    .collection("events")
+    .where("event_code", "==", eventCode)
+    .where("season", "==", season)
+    .limit(1)
+    .get();
+  const fromEvent = snap.empty ? "" : (snap.docs[0].data().start_date as string) || "";
+  if (fromEvent) return fromEvent;
+  const counts = new Map<string, number>();
+  for (const b of batches) for (const r of b.runs) if (r.start_date) counts.set(r.start_date, (counts.get(r.start_date) || 0) + 1);
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+}
+
+async function buildMisfiledPlan(eventCode: string, season: string, startDate?: string | null) {
+  const batches = await readRunBatches(eventCode, season);
+  const start = await resolveStartDate(eventCode, season, batches, startDate);
+  const window = eventWindow(start);
+  const { days, moves } = planMisfiledMove(batches, window);
+  const plan: MisfiledPlan = {
+    event_code: eventCode,
+    season,
+    start_date: start,
+    window,
+    days,
+    rowsToMove: moves.reduce((n, m) => n + m.move.length, 0),
+    passesToMove: days.filter((d) => !d.inWindow).reduce((n, d) => n + d.passes, 0),
+    batchDocs: batches.length,
+    batchDocsAffected: moves.length,
+  };
+  return { plan, moves };
+}
+
+/** Dry run: what moveMisfiledRuns() would take off the event. Reads only. */
+export async function getMisfiledPlan(eventCode: string, season: string, startDate?: string | null): Promise<MisfiledPlan> {
+  return (await buildMisfiledPlan(eventCode, season, startDate)).plan;
+}
+
+export async function moveMisfiledRuns(eventCode: string, season: string, startDate?: string | null): Promise<MisfiledPlan> {
+  const { plan, moves } = await buildMisfiledPlan(eventCode, season, startDate);
+  if (!plan.window) throw new Error(`No start date for ${eventKey(eventCode, season)}; pass start_date`);
+  const db = getDb();
+  const key = eventKey(eventCode, season);
+  const quarantine = db.collection(MISFILED_RUNS).doc(key);
+  const movedAt = new Date().toISOString();
+  for (const m of moves) {
+    const batch = db.batch();
+    batch.set(quarantine.collection("batches").doc(), {
+      event_code: eventCode,
+      season,
+      source_doc: m.id,
+      start_date: plan.start_date,
+      window: plan.window,
+      runs: m.move,
+      count: m.move.length,
+      moved_at: movedAt,
+      restored_at: null,
+    });
+    batch.update(db.collection(collectionPath(eventCode, season)).doc(m.id), { runs: m.keep, count: m.keep.length });
+    await batch.commit();
+  }
+  if (moves.length > 0) {
+    await quarantine.set({ event_code: eventCode, season, updated_at: movedAt }, { merge: true });
+  }
+  invalidateEventCache(eventCode, season);
+  console.log(`[DB] Moved ${plan.rowsToMove} misfiled rows (${plan.passesToMove} passes) off ${key} into ${MISFILED_RUNS}`);
+  return plan;
+}
+
+/** Put every quarantined batch for the event back under it. */
+export async function restoreMisfiledRuns(eventCode: string, season: string): Promise<{ batches: number; rows: number }> {
+  const db = getDb();
+  const key = eventKey(eventCode, season);
+  const snap = await db.collection(MISFILED_RUNS).doc(key).collection("batches").get();
+  const restoredAt = new Date().toISOString();
+  let batches = 0;
+  let rows = 0;
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    if (data.restored_at || !Array.isArray(data.runs)) continue;
+    const batch = db.batch();
+    batch.set(db.collection(collectionPath(eventCode, season)).doc(), {
+      runs: data.runs,
+      count: data.runs.length,
+      created_at: restoredAt,
+      restored_from: doc.id,
+    });
+    batch.update(doc.ref, { restored_at: restoredAt });
+    await batch.commit();
+    batches++;
+    rows += data.runs.length;
+  }
+  invalidateEventCache(eventCode, season);
+  console.log(`[DB] Restored ${rows} quarantined rows (${batches} batches) to ${key}`);
+  return { batches, rows };
+}
+
 // --------------- Write operations ---------------
 
 // Tracks events we've already verified or inserted this process so repeated
@@ -615,6 +783,139 @@ export async function insertEvent(event: Omit<EventRow, "id" | "created_at">): P
   } catch (err) {
     console.error("[DB] insertEvent error:", err);
   }
+}
+
+// --------------- Scraped runs: the event's date window ---------------
+//
+// getresults can list another race's days under an event: D3 event 38 (Lucas
+// Oil 10/07/2026) came back holding all 1,742 passes of the Midwest Nationals
+// run at the same track 10/02–10/04. Scraped passes are only stored under the
+// event when their race day falls in its window (eventWindow in race-day.ts).
+
+type ScrapedRun = Omit<RunRow, "id" | "created_at" | "_dedup_key">;
+
+export interface ScrapedStoreResult {
+  inserted: number;
+  /** Passes dated outside the event's window, by race day — none stored under it. */
+  outOfWindow: Record<string, number>;
+  /** Of those, how many went to the event that owns them ("MI1_2026" -> n). */
+  attributed: Record<string, number>;
+  /** Already on file under the event that owns them. */
+  alreadyOnOwner: number;
+  /** No event in the app could be shown to own them. */
+  skipped: number;
+}
+
+// Out-of-window passes already dealt with in this process, so a full re-scrape
+// that keeps returning the same foreign days doesn't reload other events.
+const _handledForeignRuns = new Set<string>();
+
+export async function storeScrapedRuns(
+  event: { event_code: string; season: string; start_date?: string | null },
+  runs: ScrapedRun[],
+): Promise<ScrapedStoreResult> {
+  const window = eventWindow(event.start_date);
+  const own: ScrapedRun[] = [];
+  const foreign: ScrapedRun[] = [];
+  for (const r of runs) (inEventWindow(r, window) ? own : foreign).push(r);
+
+  const result: ScrapedStoreResult = {
+    inserted: await insertRuns(event.event_code, event.season, own),
+    outOfWindow: {},
+    attributed: {},
+    alreadyOnOwner: 0,
+    skipped: 0,
+  };
+  if (foreign.length === 0) return result;
+
+  for (const r of foreign) {
+    const day = raceDayOf(r);
+    result.outOfWindow[day] = (result.outOfWindow[day] || 0) + 1;
+  }
+  const fresh = foreign.filter((r) => !_handledForeignRuns.has(dedupKey(r)));
+  if (fresh.length > 0) {
+    await attributeForeignRuns(event, fresh, result);
+    for (const r of fresh) _handledForeignRuns.add(dedupKey(r));
+  }
+  console.log(
+    `[DB] ${eventKey(event.event_code, event.season)}: ${foreign.length} scraped passes outside ${window?.from}..${window?.to} ` +
+      `not stored (${JSON.stringify(result.outOfWindow)}); attributed ${JSON.stringify(result.attributed)}, ` +
+      `already on owner ${result.alreadyOnOwner}, skipped ${result.skipped}`,
+  );
+  return result;
+}
+
+/**
+ * Hand out-of-window passes to the event that owns them. The owner must be the
+ * one event in the app whose window covers the pass's day and that already
+ * raced that class that day — without track names, the class on the day is the
+ * evidence. A pass it already holds needs nothing; anything unproven is skipped.
+ */
+async function attributeForeignRuns(
+  from: { event_code: string; season: string },
+  runs: ScrapedRun[],
+  result: ScrapedStoreResult,
+): Promise<void> {
+  const candidates = (await getEvents())
+    .filter((e) => e.season === from.season && e.event_code !== from.event_code)
+    .map((e) => ({ event: e, window: eventWindow(e.start_date) }))
+    .filter((c): c is { event: EventRow; window: EventWindow } => c.window !== null);
+
+  const byOwner = new Map<string, { event: EventRow; runs: ScrapedRun[] }>();
+  const classDays = new Map<string, Set<string>>();
+  const heldKeys = new Map<string, Set<string>>();
+  const ownerIndex = async (ev: EventRow) => {
+    const k = eventKey(ev.event_code, ev.season);
+    if (!classDays.has(k)) {
+      const held = await getEventRunsIncludingIgnored(ev.event_code, ev.season);
+      classDays.set(k, new Set(held.map((h) => `${raceDayOf(h)}|${h.category || ""}`)));
+      heldKeys.set(k, new Set(held.map((h) => passIdentity(h))));
+    }
+    return k;
+  };
+
+  for (const run of runs) {
+    const day = raceDayOf(run);
+    const covering = candidates.filter((c) => day >= c.window.from && day <= c.window.to);
+    const owners: EventRow[] = [];
+    for (const c of covering) {
+      const k = await ownerIndex(c.event);
+      if (classDays.get(k)!.has(`${day}|${run.category || ""}`)) owners.push(c.event);
+    }
+    if (owners.length !== 1) {
+      result.skipped++;
+      continue;
+    }
+    const owner = owners[0];
+    const k = eventKey(owner.event_code, owner.season);
+    if (heldKeys.get(k)!.has(passIdentity(run))) {
+      result.alreadyOnOwner++;
+      continue;
+    }
+    const entry = byOwner.get(k) || { event: owner, runs: [] };
+    // The scrape position belongs to the other event's grid walk and would
+    // scramble the owner's AM/PM walk, so it doesn't travel.
+    const { _scrape_seq: _seq, ...rest } = run;
+    void _seq;
+    entry.runs.push({
+      ...rest,
+      event_code: owner.event_code,
+      event_name: owner.event_name,
+      event_type: owner.event_type,
+      season: owner.season,
+      start_date: owner.start_date,
+    });
+    byOwner.set(k, entry);
+  }
+
+  for (const [k, { event, runs: owned }] of byOwner) {
+    result.attributed[k] = await insertRuns(event.event_code, event.season, owned);
+  }
+}
+
+/** A pass's identity apart from the event it is filed under. */
+function passIdentity(run: ScrapedRun | RunRow): string {
+  return dedupKey({ ...run, event_code: "", season: "" });
 }
 
 export async function insertRuns(

@@ -60,6 +60,39 @@ export function raceDayOf(run: Dated): string {
   return dayFromDateText(ts.split(/\s+/)[0]) || dayFromDateText(run.start_date);
 }
 
+/**
+ * The days an event's passes can fall on, from its start date: the test day
+ * before through EVENT_DAYS_AFTER_START days after (a Wednesday-to-Monday
+ * national, or a weekend pushed a day by rain). getresults has no end date, so
+ * the span is the longest event plus a rain day. Inclusive "YYYY-MM-DD" bounds;
+ * null when the start date can't be read (then nothing can be judged).
+ */
+export const EVENT_DAYS_BEFORE_START = 1;
+export const EVENT_DAYS_AFTER_START = 5;
+
+export interface EventWindow {
+  from: string;
+  to: string;
+}
+
+function shiftDay(day: string, days: number): string {
+  const [y, m, d] = day.split("-").map((n) => parseInt(n, 10));
+  return isoDay(new Date(y, m - 1, d + days));
+}
+
+export function eventWindow(startDate: string | null | undefined): EventWindow | null {
+  const start = dayFromDateText(startDate);
+  if (!start) return null;
+  return { from: shiftDay(start, -EVENT_DAYS_BEFORE_START), to: shiftDay(start, EVENT_DAYS_AFTER_START) };
+}
+
+/** Whether a pass can belong to the event; an undated pass is never ruled out. */
+export function inEventWindow(run: Dated, window: EventWindow | null): boolean {
+  if (!window) return true;
+  const day = raceDayOf(run);
+  return !day || (day >= window.from && day <= window.to);
+}
+
 /** Every race day in `runs`, oldest first, with how many passes each holds. */
 export function raceDaysOf(runs: Dated[]): { day: string; runs: number }[] {
   const counts = new Map<string, number>();

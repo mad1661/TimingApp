@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getVisibleEventRuns, getEvents, insertRuns, logFetch } from "@/lib/db";
+import { getVisibleEventRuns, getEvents, storeScrapedRuns, logFetch } from "@/lib/db";
 import { loginAndFetch } from "@/lib/scraper";
 import { parseTechCards, buildTechNoShowReport } from "@/lib/tech-noshows";
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
             eventName: event.event_name,
           });
           if (scraped.length > 0) {
-            const inserted = await insertRuns(eventCode, season, scraped);
+            const { inserted } = await storeScrapedRuns(event, scraped);
             await logFetch(eventCode, season, event.event_type, inserted);
             source = "live";
           }

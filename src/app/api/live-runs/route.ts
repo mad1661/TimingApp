@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch, fetchEventList } from "@/lib/scraper";
 import { excludeIgnoredRuns, getIgnoredKeys } from "@/lib/db";
+import { eventWindow, inEventWindow } from "@/lib/race-day";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -47,7 +48,8 @@ export async function GET(request: NextRequest) {
       loginAndFetch({ username, password, season, eventType, eventCode, startDate, eventName }),
       getIgnoredKeys(eventCode, season),
     ]);
-    const runs = excludeIgnoredRuns(scraped, ignoredKeys);
+    const window = eventWindow(startDate);
+    const runs = excludeIgnoredRuns(scraped, ignoredKeys).filter((r) => inEventWindow(r, window));
     return NextResponse.json({ runs, count: runs.length }, { headers: CORS });
   } catch (error) {
     console.error("live-runs error:", error);

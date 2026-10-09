@@ -9,8 +9,14 @@
  * 10/07 6 o'clock passes thrown out on the Runs page were never filtered either.
  * Racer names are placeholders; times, dials and ETs follow the real passes.
  */
-import { computeBestLosingPackage, excludeIgnoredRuns, normalizeDedupKey, type RunRow } from "../src/lib/db";
-import { raceDayOf, raceDaysOf, resolveRaceDay } from "../src/lib/race-day";
+import {
+  computeBestLosingPackage,
+  excludeIgnoredRuns,
+  normalizeDedupKey,
+  planMisfiledMove,
+  type RunRow,
+} from "../src/lib/db";
+import { eventWindow, inEventWindow, raceDayOf, raceDaysOf, resolveRaceDay } from "../src/lib/race-day";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -193,6 +199,50 @@ console.log("Best Losing Package, Super Stock round 1 (event 38 shape)");
   const e2 = computeBestLosingPackage(lateNight, ["E2"], ["SUPER STOCK"]);
   check("a round that ran past midnight stays on its race day", e2.raceDay === "2026-10-08", String(e2.raceDay));
   check("and keeps its after-midnight passes", names(e2.results["SUPER STOCK"]) === "After Midnight, Late Pair A");
+}
+
+console.log("Event date window (scrape guard + quarantine)");
+{
+  const window = eventWindow("20261007");
+  check("window runs from the test day before through start + 5", JSON.stringify(window) === '{"from":"2026-10-06","to":"2026-10-12"}', JSON.stringify(window));
+  check("ISO start dates read the same", JSON.stringify(eventWindow("2026-10-07")) === JSON.stringify(window));
+  check("no start date, no window", eventWindow("") === null && inEventWindow({ timestamp: "10/03/2026 9:30:51 AM" }, null));
+  const day = (timestamp: string | null) => inEventWindow({ timestamp, start_date: "20261007" }, window);
+  check("the previous weekend (Midwest Nationals 10/03) is outside", !day("10/03/2026 09:30:51 AM"));
+  check("10/05, the day before the test day, is outside", !day("10/05/2026 10:00:00 AM"));
+  check("the Tuesday test day is inside", day("10/06/2026 03:10:00 PM"));
+  check("race days are inside", day("10/07/2026 06:22:24 PM") && day("10/08/2026 11:24:14 AM"));
+  check("a Monday rain day is inside", day("10/12/2026 10:00:00 AM"));
+  check("the week after is outside", !day("10/13/2026 10:00:00 AM"));
+  check("an undated pass is never ruled out", day(null));
+
+  const nats = run({ timestamp: "10/03/2026 09:30:51 AM", car_number: "3307", category: "SUPER STOCK" });
+  const natsTf = run({ timestamp: "10/04/2026 02:15:00 PM", car_number: "1", category: "TOP FUEL" });
+  const test = run({ timestamp: "10/06/2026 03:10:00 PM", round: "T", car_number: "39" });
+  const today = run({ timestamp: "10/08/2026 11:24:14 AM", car_number: "3391" });
+  const plan = planMisfiledMove(
+    [
+      { id: "mixed", runs: [nats, today, natsTf] },
+      { id: "clean", runs: [test, today] },
+      { id: "foreign", runs: [{ ...nats }] },
+    ],
+    window,
+  );
+  check("only batch docs holding out-of-window rows are touched", plan.moves.map((m) => m.id).join(",") === "mixed,foreign");
+  const mixed = plan.moves.find((m) => m.id === "mixed")!;
+  check("a mixed doc keeps its in-window rows", mixed.keep.length === 1 && mixed.keep[0] === today && mixed.move.length === 2);
+  check("a fully foreign doc is emptied, not dropped", plan.moves.find((m) => m.id === "foreign")!.keep.length === 0);
+  check(
+    "per-day report counts stored rows and distinct passes",
+    JSON.stringify(plan.days) ===
+      JSON.stringify([
+        { day: "2026-10-03", rows: 2, passes: 1, inWindow: false },
+        { day: "2026-10-04", rows: 1, passes: 1, inWindow: false },
+        { day: "2026-10-06", rows: 1, passes: 1, inWindow: true },
+        { day: "2026-10-08", rows: 2, passes: 1, inWindow: true },
+      ]),
+    JSON.stringify(plan.days),
+  );
 }
 
 if (failures > 0) {
