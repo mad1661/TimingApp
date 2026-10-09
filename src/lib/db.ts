@@ -1,6 +1,7 @@
 import { getDb } from "./firebase-admin";
 import { normalizeRacerSearch, finishEt } from "./run-finish";
 import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
+import { raceDayOf, raceDaysOf, resolveRaceDay } from "./race-day";
 import {
   categoryKindFor,
   normalizeDesignation,
@@ -958,6 +959,8 @@ export interface RunFilters {
   categories: string[];
   rounds: string[];
   classes: string[];
+  /** Race days on file ("YYYY-MM-DD"), oldest first, with pass counts. */
+  days: { day: string; runs: number }[];
 }
 
 /** The filter lists the run pickers offer, from one read of the event. */
@@ -969,6 +972,7 @@ export async function getRunFilters(eventCode: string, season: string, includeIg
     categories: distinctCategories(runs),
     rounds: distinctRounds(runs),
     classes: Array.from(classes).sort(),
+    days: raceDaysOf(runs),
   };
 }
 
@@ -2171,22 +2175,45 @@ export interface BestLosingPackageEntry {
   timestamp: string;
 }
 
+export interface BestLosingPackageResult {
+  results: Record<string, BestLosingPackageEntry[]>;
+  /** Race day the list covers ("YYYY-MM-DD"); null = every day. */
+  raceDay: string | null;
+}
+
 export async function getBestLosingPackage(
   eventCode: string,
   season: string,
   rounds: string[],
-  categories: string[]
-): Promise<Record<string, BestLosingPackageEntry[]>> {
+  categories: string[],
+  raceDayParam?: string | null,
+): Promise<BestLosingPackageResult> {
   const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
+  return computeBestLosingPackage(allRuns, rounds, categories, raceDayParam);
+}
 
+/** Best Losing Package from already-loaded visible, AM/PM-tagged runs. */
+export function computeBestLosingPackage(
+  allRuns: RunRow[],
+  rounds: string[],
+  categories: string[],
+  raceDayParam?: string | null,
+): BestLosingPackageResult {
   const roundSet = new Set(rounds);
   const categorySet = new Set(categories);
+  const selected = allRuns.filter(
+    (r) => !!r.round && roundSet.has(r.round) && !!r.category && categorySet.has(r.category),
+  );
+  // One event's runs can hold the same round label on several days (a previous
+  // weekend getresults lists under this event, a midweek evening session), so
+  // the list covers a single race day: the one asked for, or by default the
+  // latest day the picked rounds and classes ran.
+  const raceDay = resolveRaceDay(raceDayParam, selected);
 
   // Filter to elimination losers with valid data. Eighth-mile classes finish
   // at 660', so the ET comes from finishEt(), not ft1320 alone.
-  const losers = allRuns.filter((r) => {
-    if (!r.round || !roundSet.has(r.round)) return false;
-    if (!r.category || !categorySet.has(r.category)) return false;
+  const losers = selected.filter((r) => {
+    if (raceDay && raceDayOf(r) !== raceDay) return false;
     if (r.is_winner === 1) return false;
     if (r.rt === null || r.rt === undefined || r.rt < 0) return false;
     const et = finishEt(r);
@@ -2230,7 +2257,7 @@ export async function getBestLosingPackage(
     }
   }
 
-  return result;
+  return { results: result, raceDay };
 }
 
 export interface EventWinnerEntry {
@@ -2306,21 +2333,26 @@ export interface PerfectRTEntry {
 export async function getPerfectReactionTimes(
   eventCode: string,
   season: string,
-  roundTypes?: string[]
-): Promise<Record<string, PerfectRTEntry[]>> {
+  roundTypes?: string[],
+  raceDayParam?: string | null,
+): Promise<{ results: Record<string, PerfectRTEntry[]>; raceDay: string | null }> {
   const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const types = new Set(roundTypes && roundTypes.length > 0 ? roundTypes : ["eliminations"]);
 
-  const perfects = allRuns.filter((r) => {
-    if (!r.round || !r.category || r.rt == null) return false;
-
+  const inRoundTypes = allRuns.filter((r) => {
+    if (!r.round || !r.category) return false;
     const rd = r.round.toUpperCase();
     const isElim = rd.startsWith("E") || rd.startsWith("R") || rd.startsWith("C") || rd === "F" || rd === "FINAL";
     const isQual = rd.startsWith("Q");
     const isTT = rd.startsWith("T");
+    return (types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT);
+  });
+  const raceDay = resolveRaceDay(raceDayParam, inRoundTypes);
 
-    if (!((types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT))) return false;
+  const perfects = inRoundTypes.filter((r) => {
+    if (raceDay && raceDayOf(r) !== raceDay) return false;
+    if (r.rt == null) return false;
 
     // Perfect RT is exactly 0.000 — must be non-negative, within tolerance,
     // and the run must have a valid finish time (excludes resets with rt=0 but
@@ -2353,7 +2385,7 @@ export async function getPerfectReactionTimes(
     result[cat].sort((a, b) => a.round.localeCompare(b.round) || a.timestamp.localeCompare(b.timestamp));
   }
 
-  return result;
+  return { results: result, raceDay };
 }
 
 export interface DeadOnEntry {
@@ -2370,14 +2402,20 @@ export interface DeadOnEntry {
 
 export async function getDeadOnRuns(
   eventCode: string,
-  season: string
-): Promise<Record<string, DeadOnEntry[]>> {
+  season: string,
+  raceDayParam?: string | null,
+): Promise<{ results: Record<string, DeadOnEntry[]>; raceDay: string | null }> {
   const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
-  const deadOns = allRuns.filter((r) => {
+  const elimRuns = allRuns.filter((r) => {
     const rd = (r.round || "").toUpperCase();
     if (!rd.startsWith("E") && !rd.startsWith("R") && !rd.startsWith("C") && rd !== "F" && rd !== "FINAL") return false;
-    if (!r.category) return false;
+    return !!r.category;
+  });
+  const raceDay = resolveRaceDay(raceDayParam, elimRuns);
+
+  const deadOns = elimRuns.filter((r) => {
+    if (raceDay && raceDayOf(r) !== raceDay) return false;
     const et = finishEt(r); // eighth-mile passes finish at 660'
     if (!et || et <= 0) return false;
     if (!r.dial_in || r.dial_in <= 0) return false;
@@ -2407,7 +2445,7 @@ export async function getDeadOnRuns(
     result[cat].sort((a, b) => a.round.localeCompare(b.round) || a.timestamp.localeCompare(b.timestamp));
   }
 
-  return result;
+  return { results: result, raceDay };
 }
 
 export async function getLatestPair(eventCode: string, season: string): Promise<RunRow[]> {

@@ -167,12 +167,14 @@ export async function GET(request: NextRequest) {
       if (rounds.length === 0 || categories.length === 0) {
         return jsonResponse({ error: "rounds and categories are required" }, { status: 400 });
       }
-      const results = await getBestLosingPackage(eventCode, season, rounds, categories);
+      // race_day: "YYYY-MM-DD", "all", or omitted for the latest day the
+      // picked rounds and classes ran.
+      const { results, raceDay } = await getBestLosingPackage(eventCode, season, rounds, categories, params.get("race_day"));
       const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
       const memberMap = await bulkLookupMembership([...new Set(allNames)]);
       const memberLookup: Record<string, string> = {};
       memberMap.forEach((v, k) => { memberLookup[k] = v; });
-      return jsonResponse({ results, membership: memberLookup });
+      return jsonResponse({ results, membership: memberLookup, raceDay });
     }
 
     if (type === "event-winners") {
@@ -186,23 +188,28 @@ export async function GET(request: NextRequest) {
 
     if (type === "perfect-rt") {
       const roundTypes = params.get("round_types")?.split(",").filter(Boolean) || [];
-      const results = await getPerfectReactionTimes(eventCode, season, roundTypes.length > 0 ? roundTypes : undefined);
+      const { results, raceDay } = await getPerfectReactionTimes(
+        eventCode,
+        season,
+        roundTypes.length > 0 ? roundTypes : undefined,
+        params.get("race_day"),
+      );
       // Lookup membership numbers from tech cards
       const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
       const memberMap = await bulkLookupMembership([...new Set(allNames)]);
       const memberLookup: Record<string, string> = {};
       memberMap.forEach((v, k) => { memberLookup[k] = v; });
-      return jsonResponse({ results, membership: memberLookup });
+      return jsonResponse({ results, membership: memberLookup, raceDay });
     }
 
     if (type === "dead-on") {
-      const results = await getDeadOnRuns(eventCode, season);
+      const { results, raceDay } = await getDeadOnRuns(eventCode, season, params.get("race_day"));
       // Lookup membership numbers from tech cards
       const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
       const memberMap = await bulkLookupMembership([...new Set(allNames)]);
       const memberLookup: Record<string, string> = {};
       memberMap.forEach((v, k) => { memberLookup[k] = v; });
-      return jsonResponse({ results, membership: memberLookup });
+      return jsonResponse({ results, membership: memberLookup, raceDay });
     }
 
     if (type === "qualifying-config") {

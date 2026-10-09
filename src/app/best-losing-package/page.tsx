@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import RaceDayPicker, { type RaceDayChoice, type RaceDayOption } from "@/components/RaceDayPicker";
 import { copyTableForPublication } from "@/lib/clipboard";
+import { formatPassTime, formatRaceDay } from "@/lib/race-day";
 
 interface PackageEntry {
   name: string;
@@ -33,6 +35,10 @@ export default function BestLosingPackagePage() {
   const [selectedRounds, setSelectedRounds] = useState<Set<string>>(new Set());
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
+  const [availableDays, setAvailableDays] = useState<RaceDayOption[]>([]);
+  const [raceDay, setRaceDay] = useState<RaceDayChoice>("latest");
+  const [appliedDay, setAppliedDay] = useState<string | null>(null);
+
   const [results, setResults] = useState<Record<string, PackageEntry[]>>({});
   const [membership, setMembership] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -45,6 +51,8 @@ export default function BestLosingPackagePage() {
     setFiltersLoading(true);
     setSelectedRounds(new Set());
     setSelectedCategories(new Set());
+    setRaceDay("latest");
+    setAppliedDay(null);
     setResults({});
     setSearched(false);
     fetch(`/api/runs?event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&limit=1`)
@@ -53,6 +61,7 @@ export default function BestLosingPackagePage() {
         if (data.filters) {
           setAvailableRounds(data.filters.rounds || []);
           setAvailableCategories(data.filters.categories || []);
+          setAvailableDays(data.filters.days || []);
         }
       })
       .catch(console.error)
@@ -100,12 +109,13 @@ export default function BestLosingPackagePage() {
       const rounds = Array.from(selectedRounds).join(",");
       const categories = Array.from(selectedCategories).join(",");
       const res = await fetch(
-        `/api/stats?type=best-losing-package&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&rounds=${encodeURIComponent(rounds)}&categories=${encodeURIComponent(categories)}`,
+        `/api/stats?type=best-losing-package&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&rounds=${encodeURIComponent(rounds)}&categories=${encodeURIComponent(categories)}&race_day=${encodeURIComponent(raceDay)}`,
         { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || {});
       setMembership(data.membership || {});
+      setAppliedDay(data.raceDay ?? null);
       setSearched(true);
     } catch (err) {
       console.error(err);
@@ -122,6 +132,7 @@ export default function BestLosingPackagePage() {
   }, [live.dataVersion]);
 
   const hasSelections = selectedRounds.size > 0 && selectedCategories.size > 0;
+  const reportTitle = `Best Losing Package - ${selectedEventName || selectedEvent}${appliedDay ? ` - ${formatRaceDay(appliedDay)}` : ""}`;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -214,6 +225,13 @@ export default function BestLosingPackagePage() {
         </div>
       )}
 
+      <RaceDayPicker
+        days={availableDays}
+        value={raceDay}
+        onChange={setRaceDay}
+        applied={searched ? appliedDay : undefined}
+      />
+
       {/* Search Button */}
       <button
         onClick={search}
@@ -246,11 +264,11 @@ export default function BestLosingPackagePage() {
         return (
           <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
             <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
-              <h3 className="text-white font-bold text-lg">Best Losing Package - {selectedEventName || selectedEvent}</h3>
+              <h3 className="text-white font-bold text-lg">{reportTitle}</h3>
               <button
                 onClick={async () => {
                   const ok = await copyTableForPublication({
-                    title: `Best Losing Package - ${selectedEventName || selectedEvent}`,
+                    title: reportTitle,
                     headers: ["Racer", "Category", "Car Number", "Package", "Membership"],
                     rows: blpWinners.map((w) => [
                       w.name,
@@ -311,7 +329,8 @@ export default function BestLosingPackagePage() {
         <div className="bg-nhra-card border-2 border-gray-600/30 rounded-xl px-6 py-10 text-center">
           <p className="text-gray-400 font-bold text-lg mb-1">No Losing Package Results</p>
           <p className="text-gray-500 text-sm">
-            No losing runs with valid RT, ET, and dial-in found for the selected rounds and classes.
+            No losing runs with valid RT, ET, and dial-in found for the selected rounds and classes
+            {appliedDay ? ` on ${formatRaceDay(appliedDay)}` : ""}.
             Heads-up classes (Top Fuel, Funny Car, etc.) typically don&apos;t have dial-ins.
           </p>
         </div>
@@ -366,6 +385,7 @@ export default function BestLosingPackagePage() {
                           {entry.name}
                         </Link>
                         <p className="text-xs text-nhra-accent font-bold">#{entry.car_number}</p>
+                        <p className="text-xs text-gray-500">{formatPassTime(entry.timestamp)}</p>
                       </div>
                       <div className="col-span-1 text-right text-gray-400 text-sm">
                         {entry.round === "F" ? "Final" : entry.round.startsWith("C") ? `C${entry.round.slice(1)}` : `R${entry.round.slice(1)}`}
@@ -411,6 +431,7 @@ export default function BestLosingPackagePage() {
                               {entry.name}
                             </Link>
                             <p className="text-xs text-nhra-accent font-bold">#{entry.car_number}</p>
+                            <p className="text-xs text-gray-500">{formatPassTime(entry.timestamp)}</p>
                           </div>
                         </div>
                         <span className={`px-3 py-1 rounded-lg font-bold font-mono text-sm ${

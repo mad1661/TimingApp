@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         runs: [],
         total: 0,
-        filters: { categories: [], seasons: [], rounds: [], classes: [], events },
+        filters: { categories: [], seasons: [], rounds: [], classes: [], days: [], events },
       }, { headers: NO_STORE_HEADERS });
     }
 
