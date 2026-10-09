@@ -1,12 +1,15 @@
-"""Verdict for every points-file difference (points_cmp.py output), checked against the EDATs.
+"""Verdict for every points-file difference (points_cmp.py output), checked against the EDATs and stored runs.
 
-python3 scripts/dataout-parity/points_classify.py <points.json> <app dir>
+python3 scripts/dataout-parity/points_classify.py <points.json> <app dir>   (SHOW_UNEXPLAINED=1 lists those)
 A points value is getresults data when the racer's rounds in the app's EDAT
-differ from the tower's (lost rows, DQs, keying errors, missing days); the
+differ from the tower's (lost rows, DQs, keying errors, missing days); a row
+on one side only is checked against the car's stored passes (row_verdict);
+a row at another position needs a reason for the move (order_verdicts). The
 rest are the documented limits — divisions, Portatree's tie order, the
 national pro / FSS structure, the tower's entry list.
 """
 import collections, glob, json, os, re, sys
+from datetime import date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cmp import read, parse_edat, norm_name
 from paths import ROOT, EVENT_PACKS as M
@@ -93,11 +96,54 @@ def order_verdicts(rrows, arows, ref_rb, app_rb, ref_r1, app_r1, portatree):
     return {c: why.get(c, shifted) for c in moved}
 
 
+def event_window(runs):
+    """The event's date window (race-day.ts eventWindow): the test day before through start + 5."""
+    s = collections.Counter(r.get('start_date') for r in runs if r.get('start_date')).most_common(1)[0][0]
+    d = date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    return d - timedelta(days=1), d + timedelta(days=5)
+
+
+def run_day(r):
+    m = re.match(r'(\d\d)/(\d\d)/(\d{4})', r.get('timestamp') or '')
+    return date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m else None
+
+
+def row_verdict(d, k, live, window, ref_rb):
+    """A racer on one points file only, checked against the stored runs."""
+    car = (re.search(r'#(\S*) ', d).group(1) or '').upper()
+    rs = [r for r in live if key(r.get('category')) == k and (r.get('car_number') or '').strip().upper() == car]
+    named = [r for r in rs if (r.get('name') or '').strip() or (r.get('class_index') or '').strip()]
+    in_window = [r for r in rs if run_day(r) and window[0] <= run_day(r) <= window[1]]
+    elims = [r for r in rs if re.match(r'^E\d+$', r.get('round') or '')]
+    if 'missing from app' in d:
+        if not car:
+            return 'FOLDER: the tower row has no car number'
+        if not rs:
+            return 'SOURCE: the racer has no pass in this class on getresults'
+        if not in_window:
+            return "SOURCE: the racer's only passes on getresults are outside the event's dates (another race)"
+        if not named:
+            return ('EXCEPTION: getresults shows a bare car number (no driver, no class); the tower knows the car from its own '
+                    'entry list, and leaves most such numbers out, as the app does')
+        return 'UNEXPLAINED: tower entrant with passes on getresults'
+    if car.startswith('M-TEST'):
+        return 'APP DATA: test row "m-TEST" in the production store (throw it out on the Runs page)'
+    if elims and not named:
+        return 'SOURCE: a car number getresults keyed in error (no driver on any row); the tower has the racer under its right number'
+    if elims and car not in ref_rb:
+        return "SOURCE: getresults has this racer in eliminations the tower's file doesn't (keying / lost opponent row)"
+    if elims:
+        return 'EXCEPTION: the tower raced this car but left it out of its points file (points eligibility is not in the data)'
+    return "EXCEPTION: the tower doesn't list this entrant (its points entry list is not in the timing data)"
+
+
 def main():
     pts = json.load(open(sys.argv[1]))
     appdir = sys.argv[2]
     verdicts = collections.Counter()
     for ev, v in pts.items():
+        live = json.load(open(f'{ROOT}/live/{ev}.json'))['runs']
+        window = event_window(live)
         rd = glob.glob(f'{ROOT}/flat/{M[ev]}-*')[0]
         ref_e, ref_r1, ref_p = {}, {}, {}
         for p in glob.glob(rd + '/*'):
@@ -120,7 +166,10 @@ def main():
             cat = re.match(r'POINTS (.*?)(?::| #)', d).group(1)
             k = key(cat)
             if g == 'pts_div':
-                verdicts['EXCEPTION: home division is not in the timing data (tech card has none; national packs print A)'] += 1
+                f, a = re.search(r'division folder (\S*) vs app (\S*)', d).groups()
+                verdicts['EXCEPTION: national packs print A for the division' if f == 'A'
+                         else 'EXCEPTION: home division is not in the timing data and no matched tech card has one (the app prints 0 rather than guess)' if a in ('', '0')
+                         else 'ENTRY: the tech card\'s home division differs from the tower\'s'] += 1
             elif g in ('pts_member', 'pts_name'):
                 verdicts['ENTRY: member number / name from the tech card'] += 1
             elif g == 'pts_file':
@@ -134,7 +183,10 @@ def main():
                 else:
                     verdicts["EXCEPTION: the tower's own C# slot for this class (pin it on the page)"] += 1
             elif g == 'pts_row':
-                verdicts['SOURCE/ENTRY: entrant on one side only (tower entry list, or a racer getresults lost)'] += 1
+                why = row_verdict(d, k, live, window, ref_e.get(k, {}))
+                verdicts[why] += 1
+                if why.startswith('UNEXPLAINED') and os.environ.get('SHOW_UNEXPLAINED'):
+                    print('UNEXPLAINED', ev, d)
             elif g == 'pts_order':
                 car = re.search(r'#(\S+):', d).group(1).upper()
                 why = order.get(k, {}).get(car, 'UNEXPLAINED: position')
