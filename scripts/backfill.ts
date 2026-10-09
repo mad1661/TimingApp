@@ -32,7 +32,7 @@ import {
   SessionExpiredError,
   type NhraEvent,
 } from "../src/lib/scraper";
-import { insertEvent, insertRuns } from "../src/lib/db";
+import { insertEvent, storeScrapedRuns } from "../src/lib/db";
 
 // ----- config -----
 
@@ -172,7 +172,9 @@ async function main(): Promise<void> {
               season: ev.season,
               start_date: ev.startDate,
             });
-            inserted = await insertRuns(ev.eventCode, ev.season, runs);
+            inserted = (
+              await storeScrapedRuns({ event_code: ev.eventCode, season: ev.season, start_date: ev.startDate }, runs)
+            ).inserted;
           }
           console.log(`  ok ${tag} — scraped ${runs.length}, inserted ${inserted}`);
 

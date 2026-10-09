@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch } from "@/lib/scraper";
 import { fetchEventRunsViaApi } from "@/lib/nhra-api";
-import { insertRuns, insertEvent, logFetch, purgeEventRuns, invalidateEventCache } from "@/lib/db";
+import { storeScrapedRuns, insertEvent, logFetch, purgeEventRuns, invalidateEventCache } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -56,14 +56,14 @@ export async function POST(request: NextRequest) {
       console.log(`[FetchData] Last runs: ${last5.join(" | ")}`);
     }
     await insertEvent({ event_code: eventCode, event_type: eventType, event_name: eventName, season, start_date: startDate });
-    const inserted = await insertRuns(eventCode, season, runs);
+    const { inserted, outOfWindow } = await storeScrapedRuns({ event_code: eventCode, season, start_date: startDate }, runs);
     if (inserted > 0) {
       await logFetch(eventCode, season, eventType, inserted);
     }
     console.log(`[FetchData] Inserted ${inserted} new runs (${runs.length} total parsed)`);
 
     return NextResponse.json(
-      { success: true, source, totalParsed: runs.length, inserted, purged: !!purge, fetchedAt: new Date().toISOString() },
+      { success: true, source, totalParsed: runs.length, inserted, outOfWindow, purged: !!purge, fetchedAt: new Date().toISOString() },
       { headers: NO_STORE_HEADERS },
     );
   } catch (error) {

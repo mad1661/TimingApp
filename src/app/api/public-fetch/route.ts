@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch, fetchEventDates, invalidateSession, type NhraEvent } from "@/lib/scraper";
-import { getEvents, insertEvent, insertRuns, getScheduleData, getDistinctRounds, getCategories, invalidateEventCache, type RunRow } from "@/lib/db";
+import { getEvents, insertEvent, storeScrapedRuns, getScheduleData, getDistinctRounds, getCategories, invalidateEventCache, type RunRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
         season: event.season,
         start_date: event.start_date,
       });
-      inserted = await insertRuns(event.event_code, event.season, allRuns);
+      inserted = (await storeScrapedRuns(event, allRuns)).inserted;
     } catch (err) {
       scrapeError = err instanceof Error ? err.message : String(err);
       console.error("[public-fetch] scrape failed:", scrapeError);

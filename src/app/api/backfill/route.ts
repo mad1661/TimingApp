@@ -5,7 +5,7 @@ import {
   scrapeEventWithCookies,
   type NhraEvent,
 } from "@/lib/scraper";
-import { insertEvent, insertRuns, invalidateEventCache } from "@/lib/db";
+import { insertEvent, storeScrapedRuns, invalidateEventCache } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -60,7 +60,10 @@ export async function POST(request: NextRequest) {
             season: ev.season,
             start_date: ev.startDate,
           });
-          const inserted = await insertRuns(ev.eventCode, ev.season, runs);
+          const { inserted } = await storeScrapedRuns(
+            { event_code: ev.eventCode, season: ev.season, start_date: ev.startDate },
+            runs,
+          );
           results.push({ key, scraped: runs.length, inserted });
         } catch (err) {
           results.push({ key, error: err instanceof Error ? err.message : String(err) });
