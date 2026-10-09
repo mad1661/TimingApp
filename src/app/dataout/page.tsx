@@ -16,6 +16,7 @@ import {
   type PointsDeduction,
   type ProEventScale,
 } from "@/lib/accutime-points";
+import { racedataFileText, type TimingSystem } from "@/lib/edata-export";
 
 // Class picker options for sessions whose Class.ini carries no code: real
 // racing classes only (the schedule placeholders — Secure "X", Track Prep… —
@@ -85,22 +86,35 @@ const QUAL_RULE_LABELS: Record<string, string> = {
   best_rt: "best reaction time",
 };
 
+interface PointsOutFile {
+  filename: string;
+  category: string;
+  classCode: string;
+  fieldSize: number;
+  rows: number;
+  notes: string[];
+  content: string;
+}
+
 interface DataOutResult {
   edat: ExportFile[];
   qdat: QdatFile[];
+  points?: PointsOutFile[];
+  timing?: TimingSystem;
   finalsPdfBase64: string | null;
   qualifyingPdfBase64: string | null;
   warnings: string[];
 }
 
-/** One class row on the export checklist: its EDAT and/or QDAT. */
+/** One class row on the export checklist: its EDAT, QDAT and points file. */
 interface ExportClass {
   category: string;
   classCode: string;
-  /** From the C# filename — the same number on both files. */
+  /** From the C# filename — the same number on every file of the class. */
   classNum: number;
   edat: ExportFile | null;
   qdat: QdatFile | null;
+  points: PointsOutFile | null;
 }
 
 function classNumOf(filename: string): number {
@@ -108,17 +122,51 @@ function classNumOf(filename: string): number {
   return m ? parseInt(m[1], 10) : 999;
 }
 
-function mergeExportClasses(edat: ExportFile[], qdat: QdatFile[]): ExportClass[] {
+function mergeExportClasses(edat: ExportFile[], qdat: QdatFile[], points: PointsOutFile[] = []): ExportClass[] {
   const byCat = new Map<string, ExportClass>();
-  for (const f of edat) {
-    byCat.set(f.category, { category: f.category, classCode: f.classCode, classNum: classNumOf(f.filename), edat: f, qdat: null });
-  }
-  for (const f of qdat) {
-    const row = byCat.get(f.category);
-    if (row) row.qdat = f;
-    else byCat.set(f.category, { category: f.category, classCode: f.classCode, classNum: classNumOf(f.filename), edat: null, qdat: f });
-  }
+  const row = (f: { category: string; classCode: string; filename: string }) => {
+    let r = byCat.get(f.category);
+    if (!r) {
+      r = { category: f.category, classCode: f.classCode, classNum: classNumOf(f.filename), edat: null, qdat: null, points: null };
+      byCat.set(f.category, r);
+    }
+    return r;
+  };
+  for (const f of edat) row(f).edat = f;
+  for (const f of qdat) row(f).qdat = f;
+  for (const f of points) row(f).points = f;
   return [...byCat.values()].sort((a, b) => a.classNum - b.classNum || a.category.localeCompare(b.category));
+}
+
+// The C# a user pinned per class (the tower's slot for a class it numbers its
+// own way — juniors, shootouts) and the points race code, kept per event.
+const DATAOUT_PREFS_KEY = "timindata_dataout_prefs";
+
+interface DataOutPrefs {
+  classNumbers: Record<string, number>;
+  pointsRaceCode: string;
+}
+
+function loadDataOutPrefs(eventCode: string, season: string): DataOutPrefs | null {
+  try {
+    const all = JSON.parse(localStorage.getItem(DATAOUT_PREFS_KEY) || "{}");
+    const p = all[`${eventCode}_${season}`];
+    return p && typeof p === "object"
+      ? { classNumbers: p.classNumbers || {}, pointsRaceCode: typeof p.pointsRaceCode === "string" ? p.pointsRaceCode : "" }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDataOutPrefs(eventCode: string, season: string, prefs: DataOutPrefs): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(DATAOUT_PREFS_KEY) || "{}");
+    all[`${eventCode}_${season}`] = prefs;
+    localStorage.setItem(DATAOUT_PREFS_KEY, JSON.stringify(all));
+  } catch {
+    // Storage full or blocked — the pins just don't persist.
+  }
 }
 
 interface AccuSession {
@@ -454,6 +502,15 @@ export default function DataOutPage() {
   const [selectedClasses, setSelectedClasses] = useState<Set<string>>(new Set());
   const [includeEdat, setIncludeEdat] = useState(true);
   const [includeQdat, setIncludeQdat] = useState(true);
+  const [includePoints, setIncludePoints] = useState(true);
+  // Per-event export settings: pinned C# numbers and the points race code.
+  const [classPins, setClassPins] = useState<Record<string, number>>({});
+  const [pointsRaceCode, setPointsRaceCode] = useState("");
+  const [pointsProScale, setPointsProScale] = useState<ProEventScale>("regular");
+  // "auto" reads the tower dialect off the stored rows; the response says which it used.
+  const [timingChoice, setTimingChoice] = useState<"auto" | TimingSystem>("auto");
+  const [exportTiming, setExportTiming] = useState<TimingSystem>("compulink");
+  const [detectedTiming, setDetectedTiming] = useState<TimingSystem>("compulink");
   // The PDFs build server-side for the picked classes on demand (they carry
   // the header logos), separately from the quick class-list load.
   const [pdfBuilding, setPdfBuilding] = useState(false);
@@ -730,6 +787,10 @@ export default function DataOutPage() {
         logos: extra.pdfs ? accuLogos : undefined,
         categories: extra.categories,
         pdfs: extra.pdfs,
+        class_numbers: classPins,
+        points_race_code: pointsRaceCode.trim(),
+        pro_scale: pointsProScale,
+        timing: timingChoice === "auto" ? undefined : timingChoice,
       }),
     });
     const body = await res.json();
@@ -744,11 +805,18 @@ export default function DataOutPage() {
     try {
       const result = await postDataOut(ec, s, { pdfs: false });
       if (seq !== exportFetchSeq.current) return;
-      const classes = mergeExportClasses(result.edat, result.qdat);
+      const classes = mergeExportClasses(result.edat, result.qdat, result.points || []);
       setExportClasses(classes);
       setExportWarnings(result.warnings);
-      // Everything starts checked — the common case is "give me the event".
-      setSelectedClasses(new Set(classes.map((c) => c.category)));
+      setExportTiming(result.timing || "compulink");
+      if (timingChoice === "auto") setDetectedTiming(result.timing || "compulink");
+      // Everything starts checked — the common case is "give me the event" —
+      // and a reload for a changed setting keeps what was picked.
+      setSelectedClasses((prev) => {
+        const names = classes.map((c) => c.category);
+        const kept = names.filter((n) => prev.has(n));
+        return new Set(prev.size && kept.length ? kept : names);
+      });
     } catch (err) {
       if (seq !== exportFetchSeq.current) return;
       setExportClasses(null);
@@ -759,8 +827,9 @@ export default function DataOutPage() {
     }
   }
 
-  // The class checklist loads itself whenever the event/season fields settle,
-  // so downloading is: tick the classes, hit Download.
+  // A new event starts clean, with the settings saved for it (pinned C#
+  // numbers, points race code — a divisional code like "11" is its own
+  // default; a national's tower number has to be typed).
   useEffect(() => {
     const ec = eventCode.trim();
     const s = season.trim();
@@ -770,6 +839,16 @@ export default function DataOutPage() {
     setPdfError("");
     setPdfNote("");
     setSelectedClasses(new Set());
+    const prefs = ec && s ? loadDataOutPrefs(ec, s) : null;
+    setClassPins(prefs?.classNumbers || {});
+    setPointsRaceCode(prefs ? prefs.pointsRaceCode : /^\d+$/.test(ec) ? ec : "");
+  }, [eventCode, season]);
+
+  // The class checklist loads itself whenever the event/season fields or the
+  // export settings settle, so downloading is: tick the classes, hit Download.
+  useEffect(() => {
+    const ec = eventCode.trim();
+    const s = season.trim();
     if (!ec || !s) {
       exportFetchSeq.current++; // cancel anything in flight
       return;
@@ -777,7 +856,22 @@ export default function DataOutPage() {
     const t = setTimeout(() => loadExportClasses(ec, s), 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventCode, season]);
+  }, [eventCode, season, classPins, pointsRaceCode, pointsProScale, timingChoice]);
+
+  /** Pin a class to the tower's C# (blank or 0 unpins it). */
+  function pinClassNumber(category: string, value: string) {
+    const n = parseInt(value, 10);
+    const next = { ...classPins };
+    if (Number.isInteger(n) && n > 0 && n < 100) next[category] = n;
+    else delete next[category];
+    setClassPins(next);
+    saveDataOutPrefs(eventCode.trim(), season.trim(), { classNumbers: next, pointsRaceCode: pointsRaceCode.trim() });
+  }
+
+  function changePointsRaceCode(value: string) {
+    setPointsRaceCode(value);
+    saveDataOutPrefs(eventCode.trim(), season.trim(), { classNumbers: classPins, pointsRaceCode: value.trim() });
+  }
 
   function toggleClass(category: string) {
     setSelectedClasses((prev) => {
@@ -788,13 +882,14 @@ export default function DataOutPage() {
     });
   }
 
-  /** The text files the current ticks and toggles select. */
+  /** The text files the current ticks and toggles select, as the tower writes them to disk. */
   function pickedTextFiles(): { filename: string; content: string }[] {
     const out: { filename: string; content: string }[] = [];
     for (const c of exportClasses || []) {
       if (!selectedClasses.has(c.category)) continue;
-      if (includeQdat && c.qdat) out.push(c.qdat);
-      if (includeEdat && c.edat) out.push(c.edat);
+      if (includeQdat && c.qdat) out.push({ filename: c.qdat.filename, content: racedataFileText(c.qdat.content, exportTiming) });
+      if (includeEdat && c.edat) out.push({ filename: c.edat.filename, content: racedataFileText(c.edat.content, exportTiming) });
+      if (includePoints && c.points) out.push(c.points);
     }
     return out;
   }
@@ -1327,22 +1422,23 @@ export default function DataOutPage() {
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
         <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
           <div>
-            <h2 className="text-white font-bold text-lg">Export from getresults — EDAT / QDAT / PDFs</h2>
+            <h2 className="text-white font-bold text-lg">Export from getresults — EDAT / QDAT / points / PDFs</h2>
             <p className="text-xs text-gray-400 mt-1 max-w-2xl">
               Import the tech cards, tick the classes you want, then download. The list shows every
               class with qualifying or elimination rounds on file for the event code and season
               above. <span className="font-mono">C#EDAT.TXT</span> holds the eliminations,{" "}
-              <span className="font-mono">C#QDAT.TXT</span> the qualifying order — the same class
-              number on both — and the PDFs are the StarTrak qualifying sheet and the Final Round
-              Results with each class&apos;s round-by-round page, exactly as the AccuTime export
-              prints them. The qualifying order is each racer&apos;s last <em>Q Pos</em> on
-              getresults (the final ladder position once eliminations are on file); racers it
-              never placed follow in best-ET order. Full names, member numbers, city, body and
-              engine merge in from the tech cards, matched within each class by car number (or
-              driver name); only rounds already on file are written, nothing is invented. EDAT
-              pairs are written winner first, as the Compulink tower files list them, and every
-              class takes its Compulink number (Factory Stock Showdown is C16). A pass getresults
-              has since moved to another round is written under the round it shows now.
+              <span className="font-mono">C#QDAT.TXT</span> the qualifying sheet and{" "}
+              <span className="font-mono">C#AyyDP.TXT</span> the event points (with a points race
+              code) — the same class number on all three — and the PDFs are the StarTrak qualifying
+              sheet and the Final Round Results, exactly as the AccuTime export prints them. The
+              files follow the tower&apos;s own rules: each class qualifies the way the tower ranks
+              it (Super Comp / Gas / Street list their round-1 winners, Stock / Super Stock / Comp
+              go furthest under the index, juniors on the tree), once eliminations are on file the
+              tower&apos;s own ladder numbers pin the order, and Portatree events are written in
+              Portatree&apos;s format. Passes from outside the event&apos;s dates, or from another
+              race filed under it, are left out (and named below — nothing is moved or deleted).
+              Full names, member numbers, city, body and engine merge in from the tech cards; only
+              rounds already on file are written, nothing is invented.
             </p>
           </div>
         </div>
@@ -1466,11 +1562,28 @@ export default function DataOutPage() {
                         </td>
                         <td className="px-3 py-2 font-mono text-xs">
                           <span className="flex items-center gap-1.5 flex-wrap">
+                            <label
+                              className="flex items-center gap-0.5 text-gray-500"
+                              title="The class's C# number. A tower numbers its own extra classes (juniors, shootouts) as it likes — type its number here to match its files; clear it to go back to the default."
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              C
+                              <input
+                                type="number"
+                                min={1}
+                                max={99}
+                                value={classPins[c.category] ?? c.classNum}
+                                onChange={(e) => pinClassNumber(c.category, e.target.value)}
+                                className={`w-11 px-1 py-0.5 bg-nhra-darker border rounded text-xs ${
+                                  classPins[c.category] ? "border-yellow-500/50 text-yellow-400" : "border-nhra-border text-gray-300"
+                                }`}
+                              />
+                            </label>
                             <span
                               className={`px-1.5 py-0.5 rounded border ${
                                 c.qdat ? "border-green-500/40 text-green-400" : "border-nhra-border text-gray-600"
                               }`}
-                              title={c.qdat ? `${c.qdat.filename} — qualifying order` : "No qualifying rounds on file"}
+                              title={c.qdat ? `${c.qdat.filename} — qualifying order` : "No qualifying sheet for this class"}
                             >
                               {c.qdat ? c.qdat.filename : "QDAT"}
                             </span>
@@ -1482,6 +1595,14 @@ export default function DataOutPage() {
                             >
                               {c.edat ? c.edat.filename : "EDAT"}
                             </span>
+                            {c.points && (
+                              <span
+                                className="px-1.5 py-0.5 rounded border border-green-500/40 text-green-400"
+                                title={`${c.points.filename} — event points, ${c.points.rows} racers (field of ${c.points.fieldSize})`}
+                              >
+                                {c.points.filename}
+                              </span>
+                            )}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-gray-400 text-xs">
@@ -1534,6 +1655,48 @@ export default function DataOutPage() {
           </div>
         )}
 
+        {exportClasses && exportClasses.length > 0 && (
+          <div className="mt-3 flex items-end gap-4 flex-wrap text-xs text-gray-400">
+            <label className="block">
+              Points race code
+              <input
+                value={pointsRaceCode}
+                onChange={(e) => changePointsRaceCode(e.target.value)}
+                placeholder="e.g. 11"
+                className="mt-1 block w-24 px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white placeholder-gray-600"
+                title="The tower's event number in the points filenames: 11 → C10A11DP.TXT. It isn't always the getresults code (LO1-7 2026 is 17 though getresults calls it 18; nationals use their own number). Blank = no points files."
+              />
+            </label>
+            <label className="block">
+              Pro points scale
+              <select
+                value={pointsProScale}
+                onChange={(e) => setPointsProScale(e.target.value as ProEventScale)}
+                className="mt-1 block px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white"
+              >
+                {PRO_EVENT_SCALES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              Tower format
+              <select
+                value={timingChoice}
+                onChange={(e) => setTimingChoice(e.target.value as "auto" | TimingSystem)}
+                className="mt-1 block px-2 py-1.5 bg-nhra-darker border border-nhra-border rounded-lg text-sm text-white"
+                title="Compulink and Portatree towers write the same files in different dialects (headers, time format, byes, finals). Auto reads it off the getresults rows."
+              >
+                <option value="auto">Auto ({detectedTiming === "portatree" ? "Portatree" : "Compulink"})</option>
+                <option value="compulink">Compulink StarTrak</option>
+                <option value="portatree">Portatree</option>
+              </select>
+            </label>
+          </div>
+        )}
+
         {!exportLoading && exportClasses && exportClasses.length > 0 && (
           <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
             {(() => {
@@ -1574,6 +1737,15 @@ export default function DataOutPage() {
                     className="accent-nhra-red cursor-pointer"
                   />
                   EDAT
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer" title="CxAyyDP event points — needs the points race code">
+                  <input
+                    type="checkbox"
+                    checked={includePoints}
+                    onChange={(e) => setIncludePoints(e.target.checked)}
+                    className="accent-nhra-red cursor-pointer"
+                  />
+                  Points
                 </label>
               </div>
               {(() => {

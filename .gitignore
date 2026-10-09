@@ -16,3 +16,6 @@ Screenshot*
 .DS_Store
 .vscode/
 tsconfig.tsbuildinfo
+# Data Out parity check: tower packs and run snapshots carry racer names
+.dataout-parity/
+__pycache__/

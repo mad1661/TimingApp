@@ -194,6 +194,9 @@ export interface AccuPointsSkipped {
 
 type CardFor = (car: string | null, name: string | null) => EdataTechCard | null;
 
+/** What scoring reads from a session — Data Out builds the same shape from stored runs. */
+export type ScoringSession = Pick<AccuTimeSession, "classCode" | "elimRounds" | "qualifying" | "qualSessionPasses">;
+
 /**
  * Score one AccuTime session.
  *
@@ -209,9 +212,14 @@ type CardFor = (car: string | null, name: string | null) => EdataTechCard | null
  * sessions treated as incomplete) come back in `notes`.
  */
 export function scoreAccuTimeSession(
-  session: AccuTimeSession,
+  session: ScoringSession,
   cardFor: CardFor,
-  opts: { incompleteRace?: boolean; proScale?: ProEventScale } = {},
+  opts: {
+    incompleteRace?: boolean;
+    proScale?: ProEventScale;
+    /** The field the bracket is picked by; defaults to every car that raced eliminations. */
+    fieldSize?: number;
+  } = {},
 ): { rows: AccuPointsRow[]; notes: string[] } {
   const isAlcohol = ALCOHOL_CLASS_CODES.has(session.classCode);
   const isPro = PRO_CLASS_CODES.has(session.classCode);
@@ -255,7 +263,7 @@ export function scoreAccuTimeSession(
     }
   });
 
-  const fieldSize = racers.size;
+  const fieldSize = opts.fieldSize && opts.fieldSize > 0 ? opts.fieldSize : racers.size;
   const bracket = bracketFor(isAlcohol ? ALCOHOL_POINTS_BRACKETS : DEFAULT_POINTS_BRACKETS, fieldSize);
 
   let winnerKey: string | null = null;
@@ -524,12 +532,29 @@ export function deductionsFor(
 // Pro Mod 5 and Factory Stock Showdown 16 — the slots Jr Dragster and
 // Sportsman Motorcycle hold at divisional races; both never share an event,
 // and if they did the second one takes the lowest free number.
+// PRO is Pro Stock's code in the towers' own class tables (IDX); a class the
+// tower files under a pro slot (LO2-4 2026's juniors) carries that slot's code.
 const CLASS_NUMBER_BY_CODE: Record<string, number> = {
-  TF: 1, FC: 2, PS: 3, PSM: 4,
+  TF: 1, FC: 2, PS: 3, PRO: 3, PSM: 4,
   JR: 5, PM: 5, TAD: 6, TAFC: 7,
   SC: 8, SG: 9, SST: 10, COMP: 11, SS: 12, STK: 13, TS: 14, TD: 15,
   SMC: 16, FSS: 16, SPRO: 17, PROET: 21, SPTM: 25, ETM: 29,
 };
+
+// The national tower's slots for its special classes (the BM1 and II1 2026
+// packs and IDX tables agree): the 2Fast2Tasty pro challenges take the second
+// TF / FC / PS / PSM slots. Matched by name before the class code — their cars
+// carry the pro classes' own codes (FC, TF), whose slots the pro classes hold.
+const SPECIAL_CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
+  [/2\s*FAST\s*2\s*TASTY\s+TF\b/, 17],
+  [/2\s*FAST\s*2\s*TASTY\s+FC\b/, 21],
+  [/2\s*FAST\s*2\s*TASTY\s+PS\b/, 25],
+  [/2\s*FAST\s*2\s*TASTY\s+PSM\b/, 29],
+  [/SNOWMOBILE/, 22],
+  [/OUTLAW\s+STREET/, 24],
+  [/\bJDRL\b/, 27],
+  [/SOX\W*MARTIN|HEMI\s+CHALLENGE/, 28],
+];
 
 const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
   [/PRO\s*MOD/, 5],
@@ -547,25 +572,35 @@ const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
 
 /** Fixed Compulink class number for a class, or null when it has none. */
 export function compulinkClassNumber(className: string, classCode: string): number | null {
+  const name = (className || "").toUpperCase();
+  for (const [re, n] of SPECIAL_CLASS_NUMBER_BY_NAME) if (re.test(name)) return n;
   const code = (classCode || "").trim().toUpperCase();
   if (code && CLASS_NUMBER_BY_CODE[code] !== undefined) return CLASS_NUMBER_BY_CODE[code];
-  const name = (className || "").toUpperCase();
   for (const [re, n] of CLASS_NUMBER_BY_NAME) if (re.test(name)) return n;
   return null;
 }
 
 /**
- * One event's C# numbers, in the order the classes are given: every class
- * its fixed Compulink number, then the classes with none (or whose number an
- * earlier class already holds) the lowest numbers still free. Fixed numbers
- * are claimed before any free one is handed out — Jr Street sorts ahead of
- * Pro Mod in class order and would otherwise take Pro Mod's 5.
+ * One event's C# numbers, in the order the classes are given: a number the
+ * caller pins (`preset` — the tower's own slot for a class it numbers its own
+ * way, like the juniors) first, then every class its fixed Compulink number,
+ * then the classes with none (or whose number an earlier class already holds)
+ * the lowest numbers still free. Fixed numbers are claimed before any free one
+ * is handed out — Jr Street sorts ahead of Pro Mod in class order and would
+ * otherwise take Pro Mod's 5.
  */
 export function assignCompulinkClassNumbers(
-  classes: { className: string; classCode: string }[],
+  classes: { className: string; classCode: string; preset?: number | null }[],
 ): number[] {
   const used = new Set<number>();
-  const fixed = classes.map((c) => {
+  const pinned = classes.map((c) => {
+    const n = c.preset;
+    if (n === null || n === undefined || !Number.isInteger(n) || n < 1 || used.has(n)) return null;
+    used.add(n);
+    return n;
+  });
+  const fixed = classes.map((c, i) => {
+    if (pinned[i] !== null) return pinned[i];
     const n = compulinkClassNumber(c.className, c.classCode);
     if (n === null || used.has(n)) return null;
     used.add(n);
@@ -585,7 +620,8 @@ export function assignCompulinkClassNumbers(
  * layout): header + `Car#,Member#,Full Name,Division,Points,Deduction` rows +
  * End of File, CRLF line endings and a single DOS Ctrl-Z EOF marker. Points
  * are the earned (base) points; the deduction rides the sixth field as the
- * audit trail.
+ * audit trail. A Portatree tower heads the file `Portatree EVENT Points` and
+ * ends it `End of File ` with a block of 106 Ctrl-Zs.
  */
 export function buildPointsFileContent(
   category: string,
@@ -597,8 +633,10 @@ export function buildPointsFileContent(
     points: number;
     deduction?: number;
   }[],
+  opts: { portatree?: boolean } = {},
 ): string {
-  const out: string[] = [`Compulink StarTrak EVENT Points for ${category || "CLASS"} w/REG code 1`];
+  const head = opts.portatree ? "Portatree" : "Compulink StarTrak";
+  const out: string[] = [`${head} EVENT Points for ${category || "CLASS"} w/REG code 1`];
   for (const r of rows) {
     out.push(
       [
@@ -611,6 +649,7 @@ export function buildPointsFileContent(
       ].join(","),
     );
   }
+  if (opts.portatree) return out.join("\r\n") + "\r\nEnd of File " + "\x1a".repeat(106);
   out.push("End of File");
   return out.join("\r\n") + "\r\n" + "\x1a";
 }
