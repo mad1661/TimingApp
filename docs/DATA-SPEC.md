@@ -294,8 +294,9 @@ All endpoints return JSON with `no-store` cache headers. Most useful:
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/runs?event_code=&season=&limit=&category=&round=` | cleaned runs + filter lists (categories, rounds, classes) |
+| `GET /api/runs?event_code=&season=&limit=&category=&round=` | cleaned runs + filter lists (categories, rounds, classes, race days) — thrown-out (ignored) passes are left out unless `include_ignored=1` |
 | `GET /api/stats?type=dashboard&event_code=&season=` | event summary |
+| `GET /api/stats?type=best-losing-package&rounds=&categories=&race_day=` | best losing packages for one race day (`YYYY-MM-DD`, `all`, or omitted = latest day those rounds ran); `perfect-rt` and `dead-on` take the same `race_day` |
 | `GET /api/stats?type=qualifying&category=&rounds=&mode=stock_super_stock` | qualifying order vs class index |
 | `GET /api/stats?type=class-elims&category=` | class-elims breakdown (classes, combos, seeds) |
 | `GET /api/stats?type=brackets&category=` | elimination runs + no-shows |

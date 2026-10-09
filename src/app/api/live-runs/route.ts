@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginAndFetch, fetchEventList } from "@/lib/scraper";
+import { excludeIgnoredRuns, getIgnoredKeys } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -42,7 +43,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "code and start are required (or pass list=1)" }, { status: 400, headers: CORS });
     }
 
-    const runs = await loginAndFetch({ username, password, season, eventType, eventCode, startDate, eventName });
+    const [scraped, ignoredKeys] = await Promise.all([
+      loginAndFetch({ username, password, season, eventType, eventCode, startDate, eventName }),
+      getIgnoredKeys(eventCode, season),
+    ]);
+    const runs = excludeIgnoredRuns(scraped, ignoredKeys);
     return NextResponse.json({ runs, count: runs.length }, { headers: CORS });
   } catch (error) {
     console.error("live-runs error:", error);

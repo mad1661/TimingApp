@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { insertRuns, getEventRuns, type RunRow } from "@/lib/db";
+import { insertRuns, getEventRunsIncludingIgnored, type RunRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Infer event_name / event_type / start_date from existing runs in this event.
-    const existing = await getEventRuns(event_code, season);
+    // Any stored row will do, thrown out or not — nothing from it is shown, and
+    // an event whose passes were all locked out still has its metadata.
+    const existing = await getEventRunsIncludingIgnored(event_code, season);
     const template = existing[0];
 
     const normalized = runs.map((r) => ({

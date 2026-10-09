@@ -1081,7 +1081,7 @@ function RoundReview({
       try {
         const [runsRes, ignRes] = await Promise.all([
           fetch(
-            `/api/runs?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(activeCat.category)}&round=${encodeURIComponent(activeRound)}&limit=500&sort_by=timestamp&sort_dir=ASC`,
+            `/api/runs?event_code=${encodeURIComponent(eventCode)}&season=${encodeURIComponent(season)}&category=${encodeURIComponent(activeCat.category)}&round=${encodeURIComponent(activeRound)}&limit=500&sort_by=timestamp&sort_dir=ASC&include_ignored=1`,
             { cache: "no-store" },
           ),
           fetch(

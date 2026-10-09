@@ -8,7 +8,7 @@ import {
   toApiStartDate,
   type NhraEventType,
 } from "@/lib/nhra-api";
-import { getEventRuns } from "@/lib/db";
+import { getVisibleEventRuns } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     }
 
     const mapped = mapApiRunsToRunRows(apiRaw, meta);
-    const stored = eventCode && season ? await getEventRuns(eventCode, season) : [];
+    const stored = eventCode && season ? await getVisibleEventRuns(eventCode, season) : [];
 
     return NextResponse.json(
       {

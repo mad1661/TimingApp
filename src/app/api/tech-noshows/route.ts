@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getEventRuns, getEvents, insertRuns, logFetch } from "@/lib/db";
+import { getVisibleEventRuns, getEvents, insertRuns, logFetch } from "@/lib/db";
 import { loginAndFetch } from "@/lib/scraper";
 import { parseTechCards, buildTechNoShowReport } from "@/lib/tech-noshows";
 
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const runs = await getEventRuns(eventCode, season);
+    const runs = await getVisibleEventRuns(eventCode, season);
     if (runs.length === 0) {
       return NextResponse.json(
         { error: "No runs available for this event — live fetch failed and nothing is stored. Try the Setup page." },

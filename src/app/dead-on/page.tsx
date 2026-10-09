@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import RaceDayPicker, { type RaceDayChoice, type RaceDayOption } from "@/components/RaceDayPicker";
 import { copyTableForPublication } from "@/lib/clipboard";
+import { formatPassTime, formatRaceDay } from "@/lib/race-day";
 
 interface DeadOnEntry {
   name: string;
@@ -23,24 +25,39 @@ export default function DeadOnPage() {
   const selectedEventName = live.config?.eventName || "";
   const selectedSeason = live.config?.season || "";
 
+  const [availableDays, setAvailableDays] = useState<RaceDayOption[]>([]);
+  const [raceDay, setRaceDay] = useState<RaceDayChoice>("latest");
+  const [appliedDay, setAppliedDay] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, DeadOnEntry[]>>({});
   const [membership, setMembership] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [winnersCopied, setWinnersCopied] = useState(false);
 
+  useEffect(() => {
+    if (!selectedEvent || !selectedSeason) return;
+    setRaceDay("latest");
+    setAppliedDay(null);
+    setResults({});
+    setSearched(false);
+    fetch(`/api/runs?event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&limit=1`)
+      .then((r) => r.json())
+      .then((data) => setAvailableDays(data.filters?.days || []))
+      .catch(console.error);
+  }, [selectedEvent, selectedSeason]);
 
   async function search() {
     if (!selectedEvent || !selectedSeason) return;
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/stats?type=dead-on&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}`,
+        `/api/stats?type=dead-on&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&race_day=${encodeURIComponent(raceDay)}`,
         { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || {});
       setMembership(data.membership || {});
+      setAppliedDay(data.raceDay ?? null);
       setSearched(true);
     } catch (err) {
       console.error(err);
@@ -67,6 +84,7 @@ export default function DeadOnPage() {
     .filter(([, entries]) => entries.length > 0)
     .sort(([a], [b]) => a.localeCompare(b))
     .flatMap(([, entries]) => entries);
+  const reportTitle = `Dead On - ${selectedEventName || selectedEvent}${appliedDay ? ` - ${formatRaceDay(appliedDay)}` : ""}`;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -74,6 +92,14 @@ export default function DeadOnPage() {
         <h1 className="text-3xl font-bold text-white mb-2">Dead On</h1>
         <p className="text-gray-400">Racers who ran exactly on their dial-in in elimination rounds</p>
       </div>
+
+      <RaceDayPicker
+        days={availableDays}
+        value={raceDay}
+        onChange={setRaceDay}
+        applied={searched ? appliedDay : undefined}
+        accent="blue"
+      />
 
       {/* Search Button */}
       <button
@@ -101,7 +127,9 @@ export default function DeadOnPage() {
       {searched && !loading && totalCount === 0 && (
         <div className="bg-nhra-card border-2 border-gray-600/30 rounded-xl px-6 py-10 text-center">
           <p className="text-gray-400 font-bold text-lg mb-1">No Dead On Runs</p>
-          <p className="text-gray-500 text-sm">Nobody ran exactly on their dial-in in eliminations at this event</p>
+          <p className="text-gray-500 text-sm">
+            Nobody ran exactly on their dial-in in eliminations {appliedDay ? `on ${formatRaceDay(appliedDay)}` : "at this event"}
+          </p>
         </div>
       )}
 
@@ -109,11 +137,11 @@ export default function DeadOnPage() {
       {searched && !loading && deadOnRows.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
           <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
-            <h3 className="text-white font-bold text-lg">Dead On - {selectedEventName || selectedEvent}</h3>
+            <h3 className="text-white font-bold text-lg">{reportTitle}</h3>
             <button
               onClick={async () => {
                 const ok = await copyTableForPublication({
-                  title: `Dead On - ${selectedEventName || selectedEvent}`,
+                  title: reportTitle,
                   headers: ["Racer", "Category", "Car Number", "Round", "ET", "Dial-In", "Membership"],
                   rows: deadOnRows.map((w) => [
                     w.name,
@@ -217,6 +245,7 @@ export default function DeadOnPage() {
                             <p className="text-xs text-gray-500">Member: {membership[entry.name]}</p>
                           )}
                         </div>
+                        <p className="text-xs text-gray-500">{formatPassTime(entry.timestamp)}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 shrink-0 ml-4">

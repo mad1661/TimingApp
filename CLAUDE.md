@@ -12,7 +12,7 @@ npm run lint     # next lint — the only automated check in this repo
 npm run backfill # one-time historical scrape into Firestore (see below)
 ```
 
-There is **no test framework** configured. Validate changes with `npm run lint` and by running the app (`npm run dev`).
+There is **no test framework** configured. Validate changes with `npm run lint` and by running the app (`npm run dev`). Regression checks are plain scripts: `npx tsx scripts/accutime-fixture-check.ts` and `npx tsx scripts/run-visibility-check.ts` (ignored-key matching, race days).
 
 `npm run backfill` (runs `scripts/backfill.ts` via `tsx`) must run **locally, not in the sandbox** — getresults.nhradata.com is firewalled there. It needs `NHRA_USERNAME`, `NHRA_PASSWORD`, and Firestore credentials (`GOOGLE_APPLICATION_CREDENTIALS` or the `FB_ADMIN_*` env vars). It checkpoints to `.backfill-progress.json` and is safe to re-run (writes dedupe).
 
@@ -36,9 +36,15 @@ The app version shows in the navbar footer, sourced from `src/lib/version.ts` (`
 
 3. **Dedupe** — every run gets `_dedup_key = timestamp|car|round|lane|event|season` (AM/PM stripped). `insertRuns()` only writes new/changed rows, so re-scraping is cheap and idempotent.
 
+4. **Thrown-out runs** — ignoring a pass (Runs page, or *Throw out* in ET Finals) adds its dedup key to `ignored_runs/{eventCode}_{season}`; nothing is deleted. **`getVisibleEventRuns()` is the default data path**: the event's runs minus that list, keys compared normalized on both sides (`normalizeDedupKey`, so lists saved with 24-hour keys still match afternoon runs), and with `tag: true` AM/PM is inferred over the full set *before* filtering. Every page, stat, report, export, ladder, schedule and API reads it — a thrown-out pass is gone everywhere. The raw `getEventRunsIncludingIgnored()` is only for the controls that put a pass back: edit-run, the ET Finals standings (its pass log shows thrown-out passes with *Count again*) and `/api/runs?include_ignored=1` for the Runs page's Show Ignored and ET Finals' Round Review — plus add-pair, which copies one row's event metadata. New readers of runs use the visible path.
+
 ### Timestamp AM/PM inference (central domain quirk)
 
 CompuLink emits timestamps **without an AM/PM marker**. `inferAmPm()` (scraper.ts) and `tagRunTimestamps()` (db.ts) reconstruct it by walking each day's runs chronologically: start in AM, flip to PM at the noon crossing (hour hits 12, or drops e.g. 11→1). A large amount of downstream logic (schedule, round ordering, "recent runs") depends on this ordering being correct — be careful editing it. Related: 4-wide ("quad") rounds get bogus timestamps for the second pair; `parseRunsFromHtml` repairs these, but **only** for rounds `detectFourWideRounds()` confirms are genuinely 4-wide, so normal 2-wide pairs aren't mis-merged.
+
+### Race days (one event, several unrelated days)
+
+One event's stored runs can span days that reuse the same round labels. getresults listed a track's previous weekend under the new event's date dropdown: D3 event 38 (Lucas Oil 10/07/2026) holds 10/02–10/04 from the weekend before (Q1–Q4, E1–E6), a 10/06 test day, a 10/07 evening session run as E1–E3, and the real 10/08 eliminations. Practice days run as E1 too (why ET Finals has `scoreFromDate`/`excludedDates`). The round name can't tell these apart; the day can. `src/lib/race-day.ts` (pure, client + server): `raceDayOf()` is the date of the AM/PM-tagged timestamp — a pass marked AM before 6:00 counts toward the night before, so a round run past midnight stays whole — falling back to the row's `start_date` when the timestamp has no date. `resolveRaceDay()` reads a `race_day` param: `YYYY-MM-DD`, `all`, or by default the latest day **the report's own rounds/classes** ran (not the event's latest day, so it never opens on a day they didn't run). Best Losing Package, Perfect RT and Dead On take `race_day`, return the day applied, show each pass's date, and share `RaceDayPicker`; `/api/runs` filters list the days. Event-level views (winners, qualifying, ladders, brackets, Data Out) still span every day on file.
 
 ### Client data flow
 

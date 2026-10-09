@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useLiveData } from "@/components/LiveDataProvider";
+import RaceDayPicker, { type RaceDayChoice, type RaceDayOption } from "@/components/RaceDayPicker";
 import { copyTableForPublication } from "@/lib/clipboard";
+import { formatPassTime, formatRaceDay } from "@/lib/race-day";
 
 interface PerfectRTEntry {
   name: string;
@@ -23,12 +25,26 @@ export default function PerfectRTPage() {
   const selectedSeason = live.config?.season || "";
 
   const [roundTypes, setRoundTypes] = useState<Set<string>>(new Set(["eliminations"]));
+  const [availableDays, setAvailableDays] = useState<RaceDayOption[]>([]);
+  const [raceDay, setRaceDay] = useState<RaceDayChoice>("latest");
+  const [appliedDay, setAppliedDay] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, PerfectRTEntry[]>>({});
   const [membership, setMembership] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [winnersCopied, setWinnersCopied] = useState(false);
 
+  useEffect(() => {
+    if (!selectedEvent || !selectedSeason) return;
+    setRaceDay("latest");
+    setAppliedDay(null);
+    setResults({});
+    setSearched(false);
+    fetch(`/api/runs?event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&limit=1`)
+      .then((r) => r.json())
+      .then((data) => setAvailableDays(data.filters?.days || []))
+      .catch(console.error);
+  }, [selectedEvent, selectedSeason]);
 
   function toggleRoundType(type: string) {
     setRoundTypes((prev) => {
@@ -48,12 +64,13 @@ export default function PerfectRTPage() {
     try {
       const rtParam = Array.from(roundTypes).join(",");
       const res = await fetch(
-        `/api/stats?type=perfect-rt&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&round_types=${encodeURIComponent(rtParam)}`,
+        `/api/stats?type=perfect-rt&event_code=${encodeURIComponent(selectedEvent)}&season=${encodeURIComponent(selectedSeason)}&round_types=${encodeURIComponent(rtParam)}&race_day=${encodeURIComponent(raceDay)}`,
         { cache: "no-store" }
       );
       const data = await res.json();
       setResults(data.results || {});
       setMembership(data.membership || {});
+      setAppliedDay(data.raceDay ?? null);
       setSearched(true);
     } catch (err) {
       console.error(err);
@@ -75,6 +92,7 @@ export default function PerfectRTPage() {
   const allEntries = Object.entries(results)
     .sort(([a], [b]) => a.localeCompare(b))
     .flatMap(([, entries]) => entries);
+  const reportTitle = `Perfect Reaction Time - ${selectedEventName || selectedEvent}${appliedDay ? ` - ${formatRaceDay(appliedDay)}` : ""}`;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -107,6 +125,14 @@ export default function PerfectRTPage() {
         </div>
       </div>
 
+      <RaceDayPicker
+        days={availableDays}
+        value={raceDay}
+        onChange={setRaceDay}
+        applied={searched ? appliedDay : undefined}
+        accent="green"
+      />
+
       {/* Search Button */}
       <button
         onClick={search}
@@ -133,7 +159,9 @@ export default function PerfectRTPage() {
       {searched && !loading && totalCount === 0 && (
         <div className="bg-nhra-card border-2 border-gray-600/30 rounded-xl px-6 py-10 text-center">
           <p className="text-gray-400 font-bold text-lg mb-1">No Perfect Lights</p>
-          <p className="text-gray-500 text-sm">Nobody hit a 0.000 RT in the selected round types at this event</p>
+          <p className="text-gray-500 text-sm">
+            Nobody hit a 0.000 RT in the selected round types {appliedDay ? `on ${formatRaceDay(appliedDay)}` : "at this event"}
+          </p>
         </div>
       )}
 
@@ -141,11 +169,11 @@ export default function PerfectRTPage() {
       {searched && !loading && allEntries.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-8">
           <div className="px-6 py-4 bg-nhra-darker border-b border-nhra-border flex items-center justify-between">
-            <h3 className="text-white font-bold text-lg">Perfect Reaction Time - {selectedEventName || selectedEvent}</h3>
+            <h3 className="text-white font-bold text-lg">{reportTitle}</h3>
             <button
               onClick={async () => {
                 const ok = await copyTableForPublication({
-                  title: `Perfect Reaction Time - ${selectedEventName || selectedEvent}`,
+                  title: reportTitle,
                   headers: ["Racer", "Category", "Car Number", "Round", "Membership"],
                   rows: allEntries.map((w) => {
                     const roundLabel = w.round === "F" ? "Final"
@@ -254,6 +282,7 @@ export default function PerfectRTPage() {
                             <p className="text-xs text-gray-500">Member: {membership[entry.name]}</p>
                           )}
                         </div>
+                        <p className="text-xs text-gray-500">{formatPassTime(entry.timestamp)}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 shrink-0 ml-4">

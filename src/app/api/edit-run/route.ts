@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/firebase-admin";
-import { getEventRuns, getIgnoredKeys, upsertRun, type RunRow } from "@/lib/db";
+import { getEventRunsIncludingIgnored, getIgnoredKeys, upsertRun, type RunRow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "event_code, season, dedup_key and updates required" }, { status: 400 });
     }
 
-    const allRuns = await getEventRuns(event_code, season);
+    const allRuns = await getEventRunsIncludingIgnored(event_code, season);
     const original = allRuns.find((r) => r._dedup_key === dedup_key);
     if (!original) {
       return NextResponse.json({ error: "Run not found for dedup_key" }, { status: 404 });

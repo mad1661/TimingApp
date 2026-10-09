@@ -1,6 +1,7 @@
 import { getDb } from "./firebase-admin";
 import { normalizeRacerSearch, finishEt } from "./run-finish";
 import { parseTsToDate as parseTsToDateShared, buildTimestampGroups } from "./timestamp-utils";
+import { raceDayOf, raceDaysOf, resolveRaceDay } from "./race-day";
 import {
   categoryKindFor,
   normalizeDesignation,
@@ -258,7 +259,13 @@ async function ensureEventCache(eventCode: string, season: string): Promise<Even
   return _cache.get(key)!;
 }
 
-export async function getEventRuns(eventCode: string, season: string): Promise<RunRow[]> {
+/**
+ * Every stored run for an event, thrown-out passes included. Only the controls
+ * whose job is to put a thrown-out pass back (edit-run, the Runs page's Show
+ * Ignored, ET Finals' Count again) read this; everything that shows or counts
+ * runs goes through getVisibleEventRuns().
+ */
+export async function getEventRunsIncludingIgnored(eventCode: string, season: string): Promise<RunRow[]> {
   const cache = await ensureEventCache(eventCode, season);
   // Mark runs with timestamps clearly in the future as phantoms — but only if
   // they have no timing data. Runs WITH timing data are real runs that the
@@ -277,6 +284,52 @@ export async function getEventRuns(eventCode: string, season: string): Promise<R
     }
   }
   return cache.runs.filter((r) => !r._phantom);
+}
+
+export async function getIgnoredKeys(eventCode: string, season: string): Promise<Set<string>> {
+  try {
+    const db = getDb();
+    const doc = await db.collection("ignored_runs").doc(`${eventCode}_${season}`).get();
+    if (doc.exists) {
+      const keys: string[] = doc.data()?.keys || [];
+      return new Set(keys.map(normalizeDedupKey));
+    }
+  } catch (err) {
+    console.error("[DB] Failed to load ignored keys:", err);
+  }
+  return new Set();
+}
+
+type DedupableRun = Omit<RunRow, "id" | "created_at" | "_dedup_key"> & { _dedup_key?: string };
+
+/**
+ * Drop the passes on the ignored list. Both sides are compared in the current
+ * key shape: stored lists can hold keys written while the hour was encoded
+ * 24-hour, and freshly scraped rows have no `_dedup_key` yet.
+ */
+export function excludeIgnoredRuns<T extends DedupableRun>(runs: T[], ignoredKeys: Set<string>): T[] {
+  if (ignoredKeys.size === 0) return runs;
+  const ignored = new Set(Array.from(ignoredKeys, normalizeDedupKey));
+  return runs.filter((r) => !ignored.has(normalizeDedupKey(r._dedup_key || dedupKey(r))));
+}
+
+/**
+ * An event's runs minus the passes thrown out by hand (ignored_runs) — what
+ * every page, report, export and API builds from. `tag` infers AM/PM over the
+ * FULL set before filtering, so a thrown-out pass still anchors its day's noon
+ * crossing exactly as it does on the Runs page.
+ */
+export async function getVisibleEventRuns(
+  eventCode: string,
+  season: string,
+  opts: { tag?: boolean; pmStart?: boolean } = {},
+): Promise<RunRow[]> {
+  const [allRuns, ignoredKeys] = await Promise.all([
+    getEventRunsIncludingIgnored(eventCode, season),
+    getIgnoredKeys(eventCode, season),
+  ]);
+  if (opts.tag) tagRunTimestamps(allRuns, opts.pmStart);
+  return excludeIgnoredRuns(allRuns, ignoredKeys);
 }
 
 // --------------- Dedup ---------------
@@ -821,11 +874,19 @@ export interface RunsQuery {
   offset?: number;
   sort_by?: string;
   sort_dir?: "ASC" | "DESC";
+  /** Thrown-out passes too — only for the controls that restore them. */
+  include_ignored?: boolean;
+}
+
+async function runsForQuery(eventCode: string, season: string, includeIgnored: boolean | undefined): Promise<RunRow[]> {
+  if (!includeIgnored) return getVisibleEventRuns(eventCode, season, { tag: true });
+  const runs = await getEventRunsIncludingIgnored(eventCode, season);
+  tagRunTimestamps(runs);
+  return runs;
 }
 
 export async function queryRuns(q: RunsQuery): Promise<{ runs: RunRow[]; total: number }> {
-  let runs = await getEventRuns(q.event_code, q.season);
-  tagRunTimestamps(runs);
+  let runs = await runsForQuery(q.event_code, q.season, q.include_ignored);
 
   if (q.category) runs = runs.filter((r) => r.category === q.category);
   if (q.round) runs = runs.filter((r) => r.round === q.round);
@@ -865,8 +926,12 @@ export async function queryRuns(q: RunsQuery): Promise<{ runs: RunRow[]; total: 
 }
 
 export async function getCategories(eventCode: string, season: string): Promise<string[]> {
+  return distinctCategories(await getVisibleEventRuns(eventCode, season));
+}
+
+function distinctCategories(runs: RunRow[]): string[] {
   const cats = new Set<string>();
-  (await getEventRuns(eventCode, season)).forEach((r) => { if (r.category) cats.add(r.category); });
+  runs.forEach((r) => { if (r.category) cats.add(r.category); });
   return Array.from(cats).sort();
 }
 
@@ -881,15 +946,34 @@ export function roundSortKey(r: string): number {
 }
 
 export async function getDistinctRounds(eventCode: string, season: string): Promise<string[]> {
+  return distinctRounds(await getVisibleEventRuns(eventCode, season));
+}
+
+function distinctRounds(runs: RunRow[]): string[] {
   const rounds = new Set<string>();
-  (await getEventRuns(eventCode, season)).forEach((r) => { if (r.round) rounds.add(r.round); });
+  runs.forEach((r) => { if (r.round) rounds.add(r.round); });
   return Array.from(rounds).sort((a, b) => roundSortKey(a) - roundSortKey(b));
 }
 
-export async function getDistinctClasses(eventCode: string, season: string): Promise<string[]> {
+export interface RunFilters {
+  categories: string[];
+  rounds: string[];
+  classes: string[];
+  /** Race days on file ("YYYY-MM-DD"), oldest first, with pass counts. */
+  days: { day: string; runs: number }[];
+}
+
+/** The filter lists the run pickers offer, from one read of the event. */
+export async function getRunFilters(eventCode: string, season: string, includeIgnored?: boolean): Promise<RunFilters> {
+  const runs = await runsForQuery(eventCode, season, includeIgnored);
   const classes = new Set<string>();
-  (await getEventRuns(eventCode, season)).forEach((r) => { if (r.class_index) classes.add(r.class_index); });
-  return Array.from(classes).sort();
+  runs.forEach((r) => { if (r.class_index) classes.add(r.class_index); });
+  return {
+    categories: distinctCategories(runs),
+    rounds: distinctRounds(runs),
+    classes: Array.from(classes).sort(),
+    days: raceDaysOf(runs),
+  };
 }
 
 export async function getEvents(): Promise<EventRow[]> {
@@ -907,14 +991,14 @@ export async function getEvents(): Promise<EventRow[]> {
 }
 
 export async function searchRacers(search: string, eventCode: string, season: string): Promise<{ name: string; car_number: string; category: string }[]> {
-  return collectRacerMatches(search, await getEventRuns(eventCode, season));
+  return collectRacerMatches(search, await getVisibleEventRuns(eventCode, season));
 }
 
 export async function searchRacersAllEvents(search: string): Promise<{ name: string; car_number: string; category: string }[]> {
   const events = await getEvents();
   const runs: RunRow[] = [];
   for (const ev of events) {
-    runs.push(...await getEventRuns(ev.event_code, ev.season));
+    runs.push(...await getVisibleEventRuns(ev.event_code, ev.season));
   }
   return collectRacerMatches(search, runs);
 }
@@ -948,16 +1032,14 @@ function collectRacerMatches(
 export async function getRacerRuns(name: string, eventCode: string, season: string): Promise<RunRow[]> {
   const wanted = (name || "").trim();
   if (!wanted) return [];
-  const runs = await getEventRuns(eventCode, season);
-  tagRunTimestamps(runs);
+  const runs = await getVisibleEventRuns(eventCode, season, { tag: true });
   return runs
     .filter((r) => (r.name || "").trim() === wanted)
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")));
 }
 
 export async function getCarNumberRuns(carNumber: string, eventCode: string, season: string): Promise<RunRow[]> {
-  const runs = await getEventRuns(eventCode, season);
-  tagRunTimestamps(runs);
+  const runs = await getVisibleEventRuns(eventCode, season, { tag: true });
   const cn = carNumber.trim().toLowerCase();
   return runs
     .filter((r) => {
@@ -973,8 +1055,7 @@ export async function getRacerRunsAllEvents(name: string, excludeEventCode?: str
   const allRuns: RunRow[] = [];
   for (const ev of events) {
     if (excludeEventCode && excludeSeason && ev.event_code === excludeEventCode && ev.season === excludeSeason) continue;
-    const runs = await getEventRuns(ev.event_code, ev.season);
-    tagRunTimestamps(runs);
+    const runs = await getVisibleEventRuns(ev.event_code, ev.season, { tag: true });
     for (const r of runs) {
       if (r.name === name) {
         allRuns.push(r);
@@ -989,8 +1070,7 @@ export async function getCarNumberRunsAllEvents(carNumber: string): Promise<RunR
   const allRuns: RunRow[] = [];
   const cn = carNumber.trim().toLowerCase();
   for (const ev of events) {
-    const runs = await getEventRuns(ev.event_code, ev.season);
-    tagRunTimestamps(runs);
+    const runs = await getVisibleEventRuns(ev.event_code, ev.season, { tag: true });
     for (const r of runs) {
       if (!r.car_number) continue;
       const stored = r.car_number.trim().toLowerCase();
@@ -1014,7 +1094,7 @@ export interface DashboardStats {
 }
 
 export async function getDashboardStats(eventCode: string, season: string): Promise<DashboardStats> {
-  const allRuns = await getEventRuns(eventCode, season);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const validRuns = allRuns.filter((r) => r.name && r.name !== "");
   const racers = new Set(validRuns.map((r) => r.name));
@@ -1029,7 +1109,6 @@ export async function getDashboardStats(eventCode: string, season: string): Prom
     if (r.mph_1320 && r.mph_1320 > 0 && (!fastestSpeed || r.mph_1320 > fastestSpeed.mph_1320!)) fastestSpeed = r;
   }
 
-  tagRunTimestamps(validRuns);
   const recentRuns = [...validRuns]
     .sort((a, b) => tsSortKey(b.timestamp || "").localeCompare(tsSortKey(a.timestamp || "")))
     .slice(0, 20);
@@ -1049,7 +1128,7 @@ export async function getDashboardStats(eventCode: string, season: string): Prom
 export async function getCategoryStats(eventCode: string, season: string): Promise<{ category: string; count: number; bestET: number | null; avgRT: number | null; bestSpeed: number | null }[]> {
   const byCategory = new Map<string, RunRow[]>();
 
-  const runs = await getEventRuns(eventCode, season);
+  const runs = await getVisibleEventRuns(eventCode, season);
 
   runs.forEach((run) => {
     if (!run.category) return;
@@ -1112,7 +1191,7 @@ export type DetailedCategoryStat = HeadsUpCategoryStat | BracketCategoryStat;
 
 export async function getDetailedCategoryStats(eventCode: string, season: string): Promise<DetailedCategoryStat[]> {
   const byCategory = new Map<string, RunRow[]>();
-  const runs = await getEventRuns(eventCode, season);
+  const runs = await getVisibleEventRuns(eventCode, season);
 
   runs.forEach((run) => {
     if (!run.category) return;
@@ -1193,8 +1272,7 @@ export async function getDetailedCategoryStats(eventCode: string, season: string
 }
 
 export async function getEliminationRuns(eventCode: string, season: string, category: string): Promise<RunRow[]> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
   return allRuns
     .filter((r) => r.category === category && r.round?.startsWith("E"))
     .sort((a, b) => {
@@ -1210,8 +1288,7 @@ export async function getEliminationRuns(eventCode: string, season: string, cate
  * export (src/lib/edata-export.ts).
  */
 export async function getElimRunsForEvent(eventCode: string, season: string): Promise<RunRow[]> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
   return allRuns.filter((r) => !!r.round && (/^E\d+$/.test(r.round) || r.round === "F"));
 }
 
@@ -1222,9 +1299,7 @@ export async function getElimRunsForEvent(eventCode: string, season: string): Pr
  * qualifying sheet alongside the eliminations.
  */
 export async function getTaggedRunsForEvent(eventCode: string, season: string): Promise<RunRow[]> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
-  return allRuns;
+  return getVisibleEventRuns(eventCode, season, { tag: true });
 }
 
 export interface NoShow {
@@ -1281,7 +1356,7 @@ export interface NoShowResult {
 }
 
 export async function getAllNoShows(eventCode: string, season: string): Promise<NoShowResult> {
-  const allRuns = await getEventRuns(eventCode, season);
+  const allRuns = await getVisibleEventRuns(eventCode, season);
   const elimRuns = allRuns.filter((r) => r.round?.startsWith("E"));
 
   const categories = [...new Set(elimRuns.map((r) => r.category).filter(Boolean))] as string[];
@@ -1322,7 +1397,7 @@ export interface DidNotRace {
 }
 
 export async function getDidNotRace(eventCode: string, season: string): Promise<DidNotRace[]> {
-  const allRuns = await getEventRuns(eventCode, season);
+  const allRuns = await getVisibleEventRuns(eventCode, season);
 
   const elimCarNumbers = new Map<string, Set<string>>();
   const qualifiers = new Map<string, Map<string, { name: string; lastRound: string }>>();
@@ -1436,7 +1511,7 @@ export async function getMissingFromEliminations(
   season: string,
   eventName?: string,
 ): Promise<MissingEntry[]> {
-  const allRuns = await getEventRuns(eventCode, season);
+  const allRuns = await getVisibleEventRuns(eventCode, season);
 
   // Per-category index of every car number that appears in any run of that
   // category, separated by elim vs qualifying.
@@ -1597,8 +1672,7 @@ export async function getDoubledUpRacers(
   eventCode: string,
   season: string,
 ): Promise<DoubledRacer[]> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   // Per-category elimination context: which rounds have run, and which car
   // numbers appear in each round (for "later round already started" checks).
@@ -1744,7 +1818,7 @@ export async function getOpponentsForRuns(runs: RunRow[], eventCode: string, sea
   const targetTimestamps = new Set(runs.map((r) => r.timestamp).filter(Boolean) as string[]);
   if (targetTimestamps.size === 0) return { opponents: new Map(), tsGroups: new Map() };
 
-  const allEventRuns = await getEventRuns(eventCode, season);
+  const allEventRuns = await getVisibleEventRuns(eventCode, season);
   const allTimestamps = allEventRuns.map((r) => r.timestamp).filter(Boolean) as string[];
   const tsGroups = buildTimestampGroups(allTimestamps);
 
@@ -1991,31 +2065,8 @@ function tagRunTimestamps(runs: RunRow[], pmStart: boolean = false): void {
 
 const SESSION_GAP_MAX_MIN = 10;
 
-export async function getIgnoredKeys(eventCode: string, season: string): Promise<Set<string>> {
-  try {
-    const db = getDb();
-    const doc = await db.collection("ignored_runs").doc(`${eventCode}_${season}`).get();
-    if (doc.exists) {
-      const keys: string[] = doc.data()?.keys || [];
-      return new Set(keys.map(normalizeDedupKey));
-    }
-  } catch (err) {
-    console.error("[DB] Failed to load ignored keys:", err);
-  }
-  return new Set();
-}
-
 export async function getScheduleData(eventCode: string, season: string, pmStart: boolean = false): Promise<ScheduleEntry[]> {
-  const [allRuns, ignoredKeys] = await Promise.all([
-    getEventRuns(eventCode, season),
-    getIgnoredKeys(eventCode, season),
-  ]);
-
-  tagRunTimestamps(allRuns, pmStart);
-
-  const eventRuns = ignoredKeys.size > 0
-    ? allRuns.filter((r) => !r._dedup_key || !ignoredKeys.has(r._dedup_key))
-    : allRuns;
+  const eventRuns = await getVisibleEventRuns(eventCode, season, { tag: true, pmStart });
 
   // Build timestamp groups per category/round so nearby timestamps are merged
   const runsByKey = new Map<string, RunRow[]>();
@@ -2124,23 +2175,45 @@ export interface BestLosingPackageEntry {
   timestamp: string;
 }
 
+export interface BestLosingPackageResult {
+  results: Record<string, BestLosingPackageEntry[]>;
+  /** Race day the list covers ("YYYY-MM-DD"); null = every day. */
+  raceDay: string | null;
+}
+
 export async function getBestLosingPackage(
   eventCode: string,
   season: string,
   rounds: string[],
-  categories: string[]
-): Promise<Record<string, BestLosingPackageEntry[]>> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  categories: string[],
+  raceDayParam?: string | null,
+): Promise<BestLosingPackageResult> {
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
+  return computeBestLosingPackage(allRuns, rounds, categories, raceDayParam);
+}
 
+/** Best Losing Package from already-loaded visible, AM/PM-tagged runs. */
+export function computeBestLosingPackage(
+  allRuns: RunRow[],
+  rounds: string[],
+  categories: string[],
+  raceDayParam?: string | null,
+): BestLosingPackageResult {
   const roundSet = new Set(rounds);
   const categorySet = new Set(categories);
+  const selected = allRuns.filter(
+    (r) => !!r.round && roundSet.has(r.round) && !!r.category && categorySet.has(r.category),
+  );
+  // One event's runs can hold the same round label on several days (a previous
+  // weekend getresults lists under this event, a midweek evening session), so
+  // the list covers a single race day: the one asked for, or by default the
+  // latest day the picked rounds and classes ran.
+  const raceDay = resolveRaceDay(raceDayParam, selected);
 
   // Filter to elimination losers with valid data. Eighth-mile classes finish
   // at 660', so the ET comes from finishEt(), not ft1320 alone.
-  const losers = allRuns.filter((r) => {
-    if (!r.round || !roundSet.has(r.round)) return false;
-    if (!r.category || !categorySet.has(r.category)) return false;
+  const losers = selected.filter((r) => {
+    if (raceDay && raceDayOf(r) !== raceDay) return false;
     if (r.is_winner === 1) return false;
     if (r.rt === null || r.rt === undefined || r.rt < 0) return false;
     const et = finishEt(r);
@@ -2184,7 +2257,7 @@ export async function getBestLosingPackage(
     }
   }
 
-  return result;
+  return { results: result, raceDay };
 }
 
 export interface EventWinnerEntry {
@@ -2204,8 +2277,7 @@ export async function getEventWinners(
   season: string,
   categories: string[]
 ): Promise<EventWinnerEntry[]> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const categorySet = new Set(categories);
   // Find the last elimination round winner per category (the event winner)
@@ -2261,22 +2333,26 @@ export interface PerfectRTEntry {
 export async function getPerfectReactionTimes(
   eventCode: string,
   season: string,
-  roundTypes?: string[]
-): Promise<Record<string, PerfectRTEntry[]>> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  roundTypes?: string[],
+  raceDayParam?: string | null,
+): Promise<{ results: Record<string, PerfectRTEntry[]>; raceDay: string | null }> {
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const types = new Set(roundTypes && roundTypes.length > 0 ? roundTypes : ["eliminations"]);
 
-  const perfects = allRuns.filter((r) => {
-    if (!r.round || !r.category || r.rt == null) return false;
-
+  const inRoundTypes = allRuns.filter((r) => {
+    if (!r.round || !r.category) return false;
     const rd = r.round.toUpperCase();
     const isElim = rd.startsWith("E") || rd.startsWith("R") || rd.startsWith("C") || rd === "F" || rd === "FINAL";
     const isQual = rd.startsWith("Q");
     const isTT = rd.startsWith("T");
+    return (types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT);
+  });
+  const raceDay = resolveRaceDay(raceDayParam, inRoundTypes);
 
-    if (!((types.has("eliminations") && isElim) || (types.has("qualifying") && isQual) || (types.has("time_trials") && isTT))) return false;
+  const perfects = inRoundTypes.filter((r) => {
+    if (raceDay && raceDayOf(r) !== raceDay) return false;
+    if (r.rt == null) return false;
 
     // Perfect RT is exactly 0.000 — must be non-negative, within tolerance,
     // and the run must have a valid finish time (excludes resets with rt=0 but
@@ -2309,7 +2385,7 @@ export async function getPerfectReactionTimes(
     result[cat].sort((a, b) => a.round.localeCompare(b.round) || a.timestamp.localeCompare(b.timestamp));
   }
 
-  return result;
+  return { results: result, raceDay };
 }
 
 export interface DeadOnEntry {
@@ -2326,15 +2402,20 @@ export interface DeadOnEntry {
 
 export async function getDeadOnRuns(
   eventCode: string,
-  season: string
-): Promise<Record<string, DeadOnEntry[]>> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  season: string,
+  raceDayParam?: string | null,
+): Promise<{ results: Record<string, DeadOnEntry[]>; raceDay: string | null }> {
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
-  const deadOns = allRuns.filter((r) => {
+  const elimRuns = allRuns.filter((r) => {
     const rd = (r.round || "").toUpperCase();
     if (!rd.startsWith("E") && !rd.startsWith("R") && !rd.startsWith("C") && rd !== "F" && rd !== "FINAL") return false;
-    if (!r.category) return false;
+    return !!r.category;
+  });
+  const raceDay = resolveRaceDay(raceDayParam, elimRuns);
+
+  const deadOns = elimRuns.filter((r) => {
+    if (raceDay && raceDayOf(r) !== raceDay) return false;
     const et = finishEt(r); // eighth-mile passes finish at 660'
     if (!et || et <= 0) return false;
     if (!r.dial_in || r.dial_in <= 0) return false;
@@ -2364,12 +2445,11 @@ export async function getDeadOnRuns(
     result[cat].sort((a, b) => a.round.localeCompare(b.round) || a.timestamp.localeCompare(b.timestamp));
   }
 
-  return result;
+  return { results: result, raceDay };
 }
 
 export async function getLatestPair(eventCode: string, season: string): Promise<RunRow[]> {
-  const runs = await getEventRuns(eventCode, season);
-  tagRunTimestamps(runs);
+  const runs = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const withTimestamp = runs.filter((r) => r.timestamp);
   const withData = withTimestamp.filter((r) => r.rt != null || r.ft1320 != null || r.ft660 != null);
@@ -2399,8 +2479,7 @@ export async function getLatestPair(eventCode: string, season: string): Promise<
 // recorded timing data yet. These are cars with a timestamp but no rt/ft1320/
 // ft660 values — the NHRA system posts pairings before they actually run.
 export async function getNextPair(eventCode: string, season: string): Promise<RunRow[]> {
-  const runs = await getEventRuns(eventCode, season);
-  tagRunTimestamps(runs);
+  const runs = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const withTimestamp = runs.filter((r) => r.timestamp);
   const withoutData = withTimestamp.filter(
@@ -2625,8 +2704,7 @@ export async function getQualifyingResults(
   mode: string,
   tiebreaker: "mph" | "first_run"
 ): Promise<QualifyingEntry[]> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
 
   const roundSet = new Set(rounds.map((r) => r.toUpperCase()));
 
@@ -2957,7 +3035,7 @@ export async function getLadderRoundResults(
   category: string,
   round: string,
 ): Promise<LadderRoundResultPair[]> {
-  const allRuns = await getEventRuns(eventCode, season);
+  const allRuns = await getVisibleEventRuns(eventCode, season);
   const filtered = allRuns.filter(
     (r) => r.category === category && r.round === round,
   );
@@ -3207,8 +3285,7 @@ export async function getClassElimBreakdown(
   category: string,
   rounds?: string[],
 ): Promise<ClassElimBreakdown> {
-  const allRuns = await getEventRuns(eventCode, season);
-  tagRunTimestamps(allRuns);
+  const allRuns = await getVisibleEventRuns(eventCode, season, { tag: true });
   const catRuns = allRuns.filter((r) => r.category === category);
 
   // Default to qualifying rounds; fall back to time trials for events that
@@ -3828,7 +3905,7 @@ export async function getEtFinalsStandings(
   }
 > {
   const [allRuns, rostersAll, savedMeta, trackNames, classDefaults, ignoredKeys] = await Promise.all([
-    getEventRuns(eventCode, season),
+    getEventRunsIncludingIgnored(eventCode, season),
     getEtFinalsRosters(),
     getEtFinalsConfigWithMeta(eventCode, season),
     getEtFinalsTrackNames(season),

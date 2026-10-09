@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults, getClassElimBreakdown, saveClassElimConfig } from "@/lib/db";
+import { getDashboardStats, getCategoryStats, getDetailedCategoryStats, getRacerRuns, getRacerRunsAllEvents, getCarNumberRuns, getCarNumberRunsAllEvents, searchRacers, searchRacersAllEvents, getEliminationRuns, detectNoShows, getAllNoShows, getDidNotRace, getMissingFromEliminations, getDoubledUpRacers, getOpponentsForRuns, getScheduleData, getLatestPair, getNextPair, getBestLosingPackage, getEventWinners, getPerfectReactionTimes, getDeadOnRuns, bulkLookupMembership, getQualifyingConfig, saveQualifyingConfig, getQualifyingResults, getClassIndexTable, saveClassIndexTable, getVisibleEventRuns, getLadderHeader, saveLadderHeader, getLadderState, saveLadderState, getLadderRoundResults, getClassElimBreakdown, saveClassElimConfig } from "@/lib/db";
 import { isSameRacer } from "@/lib/run-finish";
 
 export const dynamic = "force-dynamic";
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
 
     if (type === "debug-timestamps") {
       if (!eventCode || !season) return jsonResponse({ error: "need event_code and season" }, { status: 400 });
-      const runs = await getEventRuns(eventCode, season);
+      const runs = await getVisibleEventRuns(eventCode, season);
       const data = runs
         .filter((r) => r.timestamp)
         .map((r) => ({ ts: r.timestamp, seq: r._scrape_seq ?? null, cat: r.category, round: r.round, name: r.name }))
@@ -167,12 +167,14 @@ export async function GET(request: NextRequest) {
       if (rounds.length === 0 || categories.length === 0) {
         return jsonResponse({ error: "rounds and categories are required" }, { status: 400 });
       }
-      const results = await getBestLosingPackage(eventCode, season, rounds, categories);
+      // race_day: "YYYY-MM-DD", "all", or omitted for the latest day the
+      // picked rounds and classes ran.
+      const { results, raceDay } = await getBestLosingPackage(eventCode, season, rounds, categories, params.get("race_day"));
       const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
       const memberMap = await bulkLookupMembership([...new Set(allNames)]);
       const memberLookup: Record<string, string> = {};
       memberMap.forEach((v, k) => { memberLookup[k] = v; });
-      return jsonResponse({ results, membership: memberLookup });
+      return jsonResponse({ results, membership: memberLookup, raceDay });
     }
 
     if (type === "event-winners") {
@@ -186,23 +188,28 @@ export async function GET(request: NextRequest) {
 
     if (type === "perfect-rt") {
       const roundTypes = params.get("round_types")?.split(",").filter(Boolean) || [];
-      const results = await getPerfectReactionTimes(eventCode, season, roundTypes.length > 0 ? roundTypes : undefined);
+      const { results, raceDay } = await getPerfectReactionTimes(
+        eventCode,
+        season,
+        roundTypes.length > 0 ? roundTypes : undefined,
+        params.get("race_day"),
+      );
       // Lookup membership numbers from tech cards
       const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
       const memberMap = await bulkLookupMembership([...new Set(allNames)]);
       const memberLookup: Record<string, string> = {};
       memberMap.forEach((v, k) => { memberLookup[k] = v; });
-      return jsonResponse({ results, membership: memberLookup });
+      return jsonResponse({ results, membership: memberLookup, raceDay });
     }
 
     if (type === "dead-on") {
-      const results = await getDeadOnRuns(eventCode, season);
+      const { results, raceDay } = await getDeadOnRuns(eventCode, season, params.get("race_day"));
       // Lookup membership numbers from tech cards
       const allNames = Object.values(results).flat().map((e: { name: string }) => e.name);
       const memberMap = await bulkLookupMembership([...new Set(allNames)]);
       const memberLookup: Record<string, string> = {};
       memberMap.forEach((v, k) => { memberLookup[k] = v; });
-      return jsonResponse({ results, membership: memberLookup });
+      return jsonResponse({ results, membership: memberLookup, raceDay });
     }
 
     if (type === "qualifying-config") {
@@ -218,7 +225,7 @@ export async function GET(request: NextRequest) {
     if (type === "class-designations") {
       const category = params.get("category");
       if (!category) return jsonResponse({ error: "category required" }, { status: 400 });
-      const runs = await getEventRuns(eventCode, season);
+      const runs = await getVisibleEventRuns(eventCode, season);
       const designations = new Set<string>();
       for (const r of runs) {
         if (r.category === category && r.class_index) {

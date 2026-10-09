@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getEventRuns, type RunRow } from "@/lib/db";
+import { getVisibleEventRuns, type RunRow } from "@/lib/db";
 import { buildTimestampGroups, parseTsToDate } from "@/lib/timestamp-utils";
 
 export interface RoundPrintRun {
@@ -159,7 +159,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "event_code, season, and round are required" }, { status: 400 });
     }
 
-    const allRuns = await getEventRuns(eventCode, season);
+    const allRuns = await getVisibleEventRuns(eventCode, season);
 
     // Assign run numbers event-wide and chronologically: the very first run of
     // the event is #1, the last run on the last day is the highest number.
