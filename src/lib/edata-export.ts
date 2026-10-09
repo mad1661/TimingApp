@@ -1677,10 +1677,11 @@ export function buildQdatExport(
         ? styleForRule(rule, hasIndex)
         : classStyle;
 
-    // An index belongs to the class designation (every B/SA car runs 11.25),
-    // so a car getresults shows no dial-in for takes its designation's.
+    // An index belongs to the class designation (every B/SA car runs 11.25,
+    // every SG car 9.90), so a car getresults shows no dial-in for takes its
+    // designation's.
     const designationIndex = new Map<string, number>();
-    if (style === "index") {
+    if (style === "index" || style === "super") {
       const seen = new Map<string, Map<number, number>>();
       for (const p of allQualPasses) {
         const d = classDesignation(p);
