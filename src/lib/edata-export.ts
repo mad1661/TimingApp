@@ -1223,27 +1223,33 @@ export function buildQdatFile(
   }
   if (topSpeed) lines.push(`Top Speed ${topSpeed.mph.toFixed(2)} ${headCar(topSpeed.car)} ${csvSafe(topSpeed.name)}`);
 
+  // A qualifier with no timed pass: a Compulink sheet prints 28.000 (the index
+  // and the difference beside it, or 00.00 speeds), Portatree's heads-up zeros.
+  const UNTIMED = 28;
   for (const e of entries) {
     let tail: string[];
     if (style === "rt" && !portatree) {
       const rt = e.rt ?? null;
       tail = rt !== null ? [fmtQualRt(rt), "    ", fmtQualRt(rt)] : ["", "    ", ""];
     } else if (style === "index" || style === "super") {
-      const et = e.et !== null ? fmtTime(e.et) : "";
-      const diff = e.et !== null && e.index !== null ? (portatree ? portatreeDiff(e.et, e.index) : (e.et - e.index).toFixed(3)) : "";
+      const t = e.et ?? (style === "index" && !portatree ? UNTIMED : null);
+      const et = t !== null ? fmtTime(t) : "";
+      const diff = t !== null && e.index !== null ? (portatree ? portatreeDiff(t, e.index) : (t - e.index).toFixed(3)) : "";
       tail = [style === "super" && !portatree ? et.padStart(6) : et, e.index !== null ? e.index.toFixed(2) : "", diff];
     } else if (portatree) {
       const et = e.et !== null ? fmtTime(e.et) : "";
       const passMph = e.passMph ?? e.mph;
       if (opts.zeroColumns) tail = [et, "0", "0"];
       else if (style === "rt") tail = [et, passMph !== null ? passMph.toFixed(2) : "", e.rt != null ? truncFixed(e.rt, 3) : ""];
+      else if (e.et === null) tail = ["0.000", passMph !== null ? passMph.toFixed(2) : "0.00", "0.000"];
       else tail = [et, passMph !== null ? passMph.toFixed(2) : "", et];
     } else {
       const passMph = e.passMph ?? e.mph;
+      const noSpeed = e.et === null ? "00.00" : "";
       tail = [
-        e.et !== null ? e.et.toFixed(3) : "",
-        passMph !== null ? passMph.toFixed(2) : "",
-        e.mph !== null ? e.mph.toFixed(2) : "",
+        (e.et ?? UNTIMED).toFixed(3),
+        passMph !== null ? passMph.toFixed(2) : noSpeed,
+        e.mph !== null ? e.mph.toFixed(2) : noSpeed,
       ];
     }
     lines.push(
@@ -1422,6 +1428,12 @@ function qualRoundOrder(round: string): number {
 function passEt(run: RunRow, quarterMile: boolean): number | null {
   const et = quarterMile ? run.ft1320 : run.ft660;
   return et !== null && et !== undefined && et > 0 && et < 64.99 ? et : null;
+}
+
+/** getresults' 64.999 for a run that started but never timed — the towers print it on the qualifying sheet. */
+function untimedEt(run: RunRow, quarterMile: boolean): number | null {
+  const et = quarterMile ? run.ft1320 : run.ft660;
+  return et !== null && et !== undefined && et >= 64.99 && et < 65 ? 64.999 : null;
 }
 
 function passMph(run: RunRow, quarterMile: boolean): number | null {
@@ -1722,8 +1734,12 @@ export function buildQdatExport(
       const tc = findTechCard(agg.car || null, agg.latest.name, techIndex);
       if (tc) enriched++;
       const carIndex = carIndexFrom(agg.qualPasses) ?? designationIndex.get(classDesignation(agg.latest)) ?? null;
-      const best = bestQualPass(agg.qualPasses, rule, quarterMile, carIndex);
-      const index = best ? (passIndex(best) ?? carIndex) : null;
+      // A car whose only passes never timed is still on the sheet, last, with the 64.999.
+      const best =
+        bestQualPass(agg.qualPasses, rule, quarterMile, carIndex) ??
+        [...agg.qualPasses].reverse().find((p) => untimedEt(p, quarterMile) !== null) ??
+        null;
+      const index = best ? (passIndex(best) ?? carIndex) : carIndex;
       const key: [number, number] = best ? qualSortKey(best, rule, quarterMile, index) : [WORST, WORST];
       const mph = agg.qualPasses
         .map((p) => passMph(p, quarterMile))
@@ -1739,7 +1755,7 @@ export function buildQdatExport(
         factoredHp: tc?.factored_hp || "",
         name: (tc ? fullName(tc) : "") || csvSafe(agg.latest.name || ""),
         cityState: tc ? cityState(tc) : "",
-        et: best ? passEt(best, quarterMile) : null,
+        et: best ? (passEt(best, quarterMile) ?? untimedEt(best, quarterMile)) : null,
         index: style === "index" || style === "super" ? index : null,
         mph,
         passMph: best ? passMph(best, quarterMile) : null,
