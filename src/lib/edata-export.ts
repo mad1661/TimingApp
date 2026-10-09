@@ -297,16 +297,31 @@ function bodyWord(w: string): string {
   return w;
 }
 
+// Makes a tech card's body text often starts with — the tower's body field is
+// the model alone ("'06 Cobalt", not "'06 Chevy Cobalt").
+const BODY_MAKES = new Set([
+  "CHEVY", "CHEVROLET", "CHEVRLOET", "CHEV", "FORD", "DODGE", "PONTIAC", "PLYMOUTH", "OLDSMOBILE", "OLDS", "BUICK",
+  "MERCURY", "AMC", "CHRYSLER", "CADILLAC", "LINCOLN", "GMC", "TOYOTA", "NISSAN", "DATSUN", "MAZDA", "SUBARU", "VW",
+  "VOLKSWAGEN", "STUDEBAKER", "WILLYS", "JEEP", "HYUNDAI", "MITSUBISHI",
+]);
+
+/** Drop a leading make — except where it is the model's own name (Chevy II) or all there is. */
+function modelOnly(words: string[]): string[] {
+  if (words.length < 2 || !BODY_MAKES.has(words[0].toUpperCase())) return words;
+  if (/^(II|2|LL|11)$/i.test(words[1])) return words;
+  return words.slice(1);
+}
+
 /**
- * "'08 Chevy Cobalt" — apostrophe-year plus normalized make/model. Cards
- * arrive with the year in every position: its own column, "'63 Nova",
+ * "'08 Cobalt" — apostrophe-year plus the normalized model. Cards arrive
+ * with the year in every position: its own column, "'63 Nova",
  * "2025 Chevy Camaro" or "Camaro 2016" — all read as the same thing.
  */
 export function bodyString(tc: EdataTechCard): string {
   let words = (tc.body_type || "").trim().split(/\s+/).filter(Boolean);
   // Some entries already carry the year in the body ("'63 Nova").
   if (words.length && /^'\d{2}$/.test(words[0])) {
-    return csvSafe([words[0], ...words.slice(1).map(bodyWord)].join(" "));
+    return csvSafe([words[0], ...modelOnly(words.slice(1)).map(bodyWord)].join(" "));
   }
   let digits = (tc.body_year || "").replace(/\D/g, "");
   // A four-digit year leading or trailing the body text is the year, not a model.
@@ -317,7 +332,7 @@ export function bodyString(tc: EdataTechCard): string {
     digits = digits || words[words.length - 1];
     words = words.slice(0, -1);
   }
-  const body = words.map(bodyWord).join(" ");
+  const body = modelOnly(words).map(bodyWord).join(" ");
   const year = digits ? `'${digits.slice(-2).padStart(2, "0")}` : "";
   return csvSafe([year, body].filter(Boolean).join(" "));
 }
@@ -337,8 +352,9 @@ export function engineString(tc: EdataTechCard): string {
   return csvSafe(make || cid);
 }
 
+/** "Troy Coughlin Jr" — the tower writes the suffix without its period. */
 export function fullName(tc: EdataTechCard): string {
-  return csvSafe(`${tc.first_name || ""} ${tc.last_name || ""}`);
+  return csvSafe(`${tc.first_name || ""} ${tc.last_name || ""}`).replace(/\b(Jr|Sr)\./gi, "$1");
 }
 
 /** "1969" — QDAT prints the four-digit year; tech cards often carry two. */
@@ -607,7 +623,8 @@ function runLine(run: RunRow, tc: EdataTechCard | null, ctx: LineContext): strin
   const fields = [
     csvSafe(run.car_number || ""),
     csvSafe(run.member_number || "") || (tc ? csvSafe(tc.member_number || "") : "") || "0",
-    classDesignation(run) || ctx.classCode,
+    // A Portatree tower leaves the class blank where its entry has none.
+    classDesignation(run) || (portatree ? "" : ctx.classCode),
     pos !== null ? String(pos) : portatree ? "" : "0",
     (tc ? fullName(tc) : "") || csvSafe(run.name || ""),
     tc ? cityState(tc) : "",
