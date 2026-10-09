@@ -3,8 +3,10 @@ import {
   buildDataOutExport,
   buildTechIndex,
   classCodeForCategory,
+  detectTimingSystem,
   elimRoundsForCategory,
   findTechCard,
+  isQuarterMileClass,
   localCardTest,
   fmtRt,
   fmtEt,
@@ -17,7 +19,9 @@ import {
   type EdataExportFile,
   type QdatExportFile,
   type QualRule,
+  type TimingSystem,
 } from "./edata-export";
+import { selectDataOutRuns } from "./dataout-runs";
 import {
   buildRacedataPdf,
   buildQualifyingPdf,
@@ -50,6 +54,8 @@ export interface DataOutArtifacts {
   finalsPdf: Uint8Array | null;
   qualifyingPdf: Uint8Array | null;
   warnings: string[];
+  /** The tower dialect the text files were written in. */
+  timing: TimingSystem;
 }
 
 export interface DataOutBuildOptions {
@@ -66,6 +72,12 @@ export interface DataOutBuildOptions {
   brand?: string;
   /** Per-class qualifying rule (normalized category → rule), from the event's qualifying setup. */
   qualRules?: Record<string, QualRule>;
+  /** The event's start date (getresults' YYYYMMDD) — its date window; defaults to the runs' own. */
+  eventStartDate?: string | null;
+  /** The tower dialect to write; defaults to the one the stored rows show (detectTimingSystem). */
+  timing?: TimingSystem;
+  /** C# pinned per class (exact or normalized category name) — the tower's slot for a class it numbers its own way. */
+  classNumbers?: Record<string, number>;
 }
 
 /** getresults suffixes the event name with its date ("… Nationals 09/18/2026"); the sheets carry the date separately. */
@@ -88,13 +100,20 @@ function norm(s: string | null | undefined): string {
 }
 
 export function buildDataOutArtifacts(
-  runs: RunRow[],
+  storedRuns: RunRow[],
   techCards: EdataTechCard[],
   opts: DataOutBuildOptions = {},
 ): DataOutArtifacts {
-  const brand = (opts.brand || "").trim() || "Compulink";
-  const text = buildDataOutExport(runs, techCards, { qualRules: opts.qualRules });
-  const warnings = [...text.warnings];
+  const selection = selectDataOutRuns(storedRuns, { startDate: opts.eventStartDate });
+  const runs = selection.runs;
+  const timing = opts.timing || detectTimingSystem(runs);
+  const brand = (opts.brand || "").trim() || (timing === "portatree" ? "Portatree" : "Compulink");
+  const classNumberPresets = new Map<string, number>();
+  for (const [category, n] of Object.entries(opts.classNumbers || {})) {
+    if (Number.isInteger(n) && n > 0) classNumberPresets.set(norm(category), n);
+  }
+  const text = buildDataOutExport(runs, techCards, { qualRules: opts.qualRules, timing, classNumberPresets });
+  const warnings = [...selection.warnings, ...text.warnings];
 
   const wanted = opts.categories && opts.categories.length > 0
     ? new Set(opts.categories.map(norm))
@@ -105,7 +124,7 @@ export function buildDataOutArtifacts(
   const qdat = text.qdat.filter((f) => keep(f.category));
 
   if (opts.pdfs === false) {
-    return { edat, qdat, finalsPdf: null, qualifyingPdf: null, warnings };
+    return { edat, qdat, finalsPdf: null, qualifyingPdf: null, warnings, timing };
   }
 
   // Every class with either file, in the same class order the text uses.
@@ -127,7 +146,7 @@ export function buildDataOutArtifacts(
     const code = (e || q)?.classCode || classCodeForCategory(category).code;
     const idx = buildTechIndex(category, code, techCards, isLocal);
     const cardFor = (car: string | null, name: string | null) => findTechCard(car, name, idx);
-    const quarterMile = e ? catRuns.some((r) => r.ft1320 !== null || r.mph_1320 !== null) : true;
+    const quarterMile = e ? isQuarterMileClass(catRuns) : true;
     const rounds = e ? elimRoundsForCategory(catRuns, category) : [];
 
     // The field is round one: everyone below that line on the qualifying
@@ -148,15 +167,17 @@ export function buildDataOutArtifacts(
         entries: q.qualifiers.map((entry, qi) => {
           const diff =
             entry.et !== null && entry.index !== null ? (entry.et - entry.index).toFixed(3) : "";
+          // A class that qualifies on the tree prints its reaction time where the ET goes.
+          const shown = q.style === "rt" ? entry.rt ?? null : entry.et;
           return {
-            pos: String(qi + 1),
+            pos: String(q.positions[qi] ?? qi + 1),
             num: entry.car,
             cls: entry.classOrIndex,
             driver: entry.name,
             hometown: entry.cityState,
             car: entry.body,
             motor: entry.engine,
-            et: entry.et !== null ? entry.et.toFixed(3) : "",
+            et: shown !== null ? shown.toFixed(3) : "",
             index: entry.index !== null ? entry.index.toFixed(2) : "",
             diff,
           };
@@ -172,7 +193,7 @@ export function buildDataOutArtifacts(
       // when getresults placed them, and the computed order when it didn't).
       const sheetPos = new Map<string, string>();
       q?.qualifiers.forEach((entry, qi) => {
-        if (entry.car) sheetPos.set(norm(entry.car), String(qi + 1));
+        if (entry.car) sheetPos.set(norm(entry.car), String(q.positions[qi] ?? qi + 1));
       });
       const qfy = (run: RunRow) =>
         run.qual_pos != null && run.qual_pos > 0
@@ -311,5 +332,6 @@ export function buildDataOutArtifacts(
     finalsPdf: finalsCats.length ? buildRacedataPdf(pdfEvent, finalsCats) : null,
     qualifyingPdf: qualCats.length ? buildQualifyingPdf(pdfEvent, qualCats) : null,
     warnings,
+    timing,
   };
 }

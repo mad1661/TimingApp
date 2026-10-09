@@ -531,7 +531,18 @@ const CLASS_NUMBER_BY_CODE: Record<string, number> = {
   SMC: 16, FSS: 16, SPRO: 17, PROET: 21, SPTM: 25, ETM: 29,
 };
 
+// The national tower's slots for its special classes (the BM1 and II1 2026
+// packs and IDX tables agree): the 2Fast2Tasty pro challenges take the second
+// TF / FC / PS / PSM slots.
 const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
+  [/2\s*FAST\s*2\s*TASTY\s+TF\b/, 17],
+  [/2\s*FAST\s*2\s*TASTY\s+FC\b/, 21],
+  [/2\s*FAST\s*2\s*TASTY\s+PS\b/, 25],
+  [/2\s*FAST\s*2\s*TASTY\s+PSM\b/, 29],
+  [/SNOWMOBILE/, 22],
+  [/OUTLAW\s+STREET/, 24],
+  [/\bJDRL\b/, 27],
+  [/SOX\W*MARTIN|HEMI\s+CHALLENGE/, 28],
   [/PRO\s*MOD/, 5],
   [/FACTORY\s*STOCK/, 16],
   [/SUPER\s*COMP/, 8],
@@ -555,17 +566,26 @@ export function compulinkClassNumber(className: string, classCode: string): numb
 }
 
 /**
- * One event's C# numbers, in the order the classes are given: every class
- * its fixed Compulink number, then the classes with none (or whose number an
- * earlier class already holds) the lowest numbers still free. Fixed numbers
- * are claimed before any free one is handed out — Jr Street sorts ahead of
- * Pro Mod in class order and would otherwise take Pro Mod's 5.
+ * One event's C# numbers, in the order the classes are given: a number the
+ * caller pins (`preset` — the tower's own slot for a class it numbers its own
+ * way, like the juniors) first, then every class its fixed Compulink number,
+ * then the classes with none (or whose number an earlier class already holds)
+ * the lowest numbers still free. Fixed numbers are claimed before any free one
+ * is handed out — Jr Street sorts ahead of Pro Mod in class order and would
+ * otherwise take Pro Mod's 5.
  */
 export function assignCompulinkClassNumbers(
-  classes: { className: string; classCode: string }[],
+  classes: { className: string; classCode: string; preset?: number | null }[],
 ): number[] {
   const used = new Set<number>();
-  const fixed = classes.map((c) => {
+  const pinned = classes.map((c) => {
+    const n = c.preset;
+    if (n === null || n === undefined || !Number.isInteger(n) || n < 1 || used.has(n)) return null;
+    used.add(n);
+    return n;
+  });
+  const fixed = classes.map((c, i) => {
+    if (pinned[i] !== null) return pinned[i];
     const n = compulinkClassNumber(c.className, c.classCode);
     if (n === null || used.has(n)) return null;
     used.add(n);
