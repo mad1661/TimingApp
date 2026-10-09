@@ -1534,7 +1534,7 @@ const WORST = Number.POSITIVE_INFINITY;
 function qualSortKey(p: RunRow, rule: QualRule, quarterMile: boolean, index: number | null): [number, number] {
   // Thousandths, as the tower compares: 9.479 - 10.25 and 9.579 - 10.35 are
   // the same 0.771 under, and the pass run first ranks ahead (the caller's
-  // run-order tiebreak).
+  // run-order tiebreak). A heads-up tie goes to the higher MPH.
   const k = (v: number) => Math.round(v * 1000) / 1000;
   const et = passEt(p, quarterMile);
   if (rule === "best_rt") {
@@ -1544,7 +1544,7 @@ function qualSortKey(p: RunRow, rule: QualRule, quarterMile: boolean, index: num
     return rt < 0 ? [100 + k(Math.abs(rt)), 0] : [k(rt), 0];
   }
   if (et === null) return [WORST, WORST];
-  if (rule === "lowest") return [k(et), 0];
+  if (rule === "lowest") return [k(et), -(passMph(p, quarterMile) ?? 0)];
   if (index === null) return [WORST, et];
   const margin = k(et - index);
   if (rule === "furthest_under") return [margin, 0];
