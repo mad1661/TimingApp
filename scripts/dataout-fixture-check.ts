@@ -388,6 +388,8 @@ const T = (h: string) => `06/19/2026 ${h}`;
   ]);
   check("class numbers: 2Fast2Tasty FC takes the national tower's 21, not FC's 2", nums[1] === 21, JSON.stringify(nums));
   check("class numbers: a pinned C# wins; the rest take free slots", nums[2] === 3 && nums[3] === 1, JSON.stringify(nums));
+  const slot = assignCompulinkClassNumbers([{ className: "STREET JR", classCode: "PRO" }]);
+  check("class numbers: a class carrying the towers' PRO code takes Pro Stock's 3", slot[0] === 3, JSON.stringify(slot));
 }
 
 // ——— 13. Points files ———
@@ -419,6 +421,58 @@ const T = (h: string) => `06/19/2026 ${h}`;
   const pt = buildPointsFileContent(cat, [{ car_number: "1", member_number: "2", name: "A", division: "4", points: 85 }], { portatree: true });
   check("points: Portatree layout", pt.startsWith("Portatree EVENT Points for SUPER STREET w/REG code 1\r\n") && pt.endsWith("\r\nEnd of File " + "\x1a".repeat(106)));
   check("points: none without a race code", buildDataOutArtifacts(rows, [], { pdfs: false }).points.length === 0);
+}
+
+// ——— 13b. Points: a qualifier in the field who didn't race; a junior class on a pro slot's code ———
+{
+  const cat = "STOCK ELIMINATOR";
+  const st = (round: string, ts: string, car: string, et: number, win = false) =>
+    pass(round, ts, car, et, { category: cat, class_index: "B/SA", dial_in: 11.25 }, win);
+  const q = (car: string, i: number) => st("Q1", `06/18/2026 09:0${i}:00 AM`, car, 10.5 + i / 10);
+  const rows: RunRow[] = [
+    ...["1401", "1402", "1403", "1404", "1405", "1406", "1407"].map(q),
+    // 1402, the number two qualifier, never came up for round 1: 1405 runs a single.
+    st("E1", T("10:00:00 AM"), "1401", 10.6, true),
+    st("E1", T("10:00:00 AM"), "1406", 11.0),
+    st("E1", T("10:02:00 AM"), "1403", 10.7, true),
+    st("E1", T("10:02:00 AM"), "1404", 10.9),
+    st("E1", T("10:04:00 AM"), "1405", 10.8, true),
+    st("E2", T("01:00:00 PM"), "1401", 10.6, true),
+    st("E2", T("01:00:00 PM"), "1403", 10.9),
+    st("E2", T("01:02:00 PM"), "1405", 10.8, true),
+    st("E3", T("03:00:00 PM"), "1405", 10.8, true),
+    st("E3", T("03:00:00 PM"), "1401", 10.9),
+  ];
+  const p = buildDataOutArtifacts(rows, [], { pdfs: false, pointsRaceCode: "91" }).points.find((f) => f.category === cat)!;
+  const got = lines(p.content).slice(1, 8).map((x) => x.split(",")[0] + ":" + x.split(",")[4]);
+  check(
+    "points: a qualifier inside the round-1 field who didn't race takes the round-1 loss points; a non-qualifier 10",
+    JSON.stringify(got) === JSON.stringify(["1405:85", "1401:64", "1403:43", "1406:32", "1404:32", "1402:32", "1407:10"]),
+    JSON.stringify(got),
+  );
+
+  const jcat = "ADVANCED JR";
+  const jr = (round: string, ts: string, car: string, rt: number, win = false) =>
+    run({
+      round, timestamp: ts, car_number: car, name: `Driver ${car}`, category: jcat, class_index: "PSM",
+      rt, ft660: 7.95, mph_660: 80, dial_in: 7.9, is_winner: win ? 1 : 0, result: win ? "W" : null,
+    });
+  const jrows: RunRow[] = [
+    ...["1501", "1502", "1503", "1504", "1505"].map((car, i) => jr("Q1", `06/18/2026 09:0${i}:00 AM`, car, 0.01 * (i + 1))),
+    jr("E1", T("10:00:00 AM"), "1501", 0.02, true),
+    jr("E1", T("10:00:00 AM"), "1502", 0.03),
+    jr("E1", T("10:02:00 AM"), "1503", 0.02, true),
+    jr("E1", T("10:02:00 AM"), "1504", 0.03),
+    jr("E2", T("01:00:00 PM"), "1503", 0.02, true),
+    jr("E2", T("01:00:00 PM"), "1501", 0.03),
+  ];
+  const jp = buildDataOutArtifacts(jrows, [], { pdfs: false, pointsRaceCode: "91" }).points.find((f) => f.category === jcat)!;
+  const jgot = lines(jp.content).slice(1, 6).map((x) => x.split(",")[0] + ":" + x.split(",")[4]);
+  check(
+    "points: a junior class whose rows carry a pro slot's code (PSM) is scored on the sportsman brackets",
+    JSON.stringify(jgot) === JSON.stringify(["1503:85", "1501:64", "1502:33", "1504:33", "1505:10"]),
+    JSON.stringify(jgot),
+  );
 }
 
 // ——— 14. Ctrl-Z record padding ———

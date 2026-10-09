@@ -532,8 +532,10 @@ export function deductionsFor(
 // Pro Mod 5 and Factory Stock Showdown 16 — the slots Jr Dragster and
 // Sportsman Motorcycle hold at divisional races; both never share an event,
 // and if they did the second one takes the lowest free number.
+// PRO is Pro Stock's code in the towers' own class tables (IDX); a class the
+// tower files under a pro slot (LO2-4 2026's juniors) carries that slot's code.
 const CLASS_NUMBER_BY_CODE: Record<string, number> = {
-  TF: 1, FC: 2, PS: 3, PSM: 4,
+  TF: 1, FC: 2, PS: 3, PRO: 3, PSM: 4,
   JR: 5, PM: 5, TAD: 6, TAFC: 7,
   SC: 8, SG: 9, SST: 10, COMP: 11, SS: 12, STK: 13, TS: 14, TD: 15,
   SMC: 16, FSS: 16, SPRO: 17, PROET: 21, SPTM: 25, ETM: 29,

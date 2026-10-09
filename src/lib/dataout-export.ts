@@ -23,6 +23,7 @@ import {
 } from "./edata-export";
 import { selectDataOutRuns } from "./dataout-runs";
 import {
+  DEFAULT_POINTS_BRACKETS,
   PRO_CLASS_CODES,
   buildPointsFileContent,
   extractDivisionNumber,
@@ -429,8 +430,11 @@ function buildDataOutPoints(
       mph: e.mph,
       bestSession: null,
     }));
+    // The pro and alcohol structures by class name: a junior class's rows can
+    // carry the tower slot's code (LO2-4 2026 Advanced JR shows PSM).
+    const scoringCode = classCodeForCategory(f.category).code;
     const session: ScoringSession = {
-      classCode: f.classCode,
+      classCode: scoringCode,
       elimRounds: rounds,
       qualifying,
       qualSessionPasses: qualifyingSessions(catRuns),
@@ -444,11 +448,15 @@ function buildDataOutPoints(
     const rows = [...scored.rows];
 
     // Everyone who ran the class but never its eliminations takes the 10
-    // entry points — the sportsman rule; alcohol and pro attempts are scored
-    // off the qualifying sheet above.
-    const alcohol = f.classCode === "TAD" || f.classCode === "TAFC";
-    if (!alcohol && !PRO_CLASS_CODES.has(f.classCode)) {
+    // entry points — the sportsman rule; a qualifier the sheet puts inside
+    // the round-1 field who then didn't race it takes the round-1 loss points.
+    // Alcohol and pro attempts are scored off the qualifying sheet above.
+    const alcohol = scoringCode === "TAD" || scoringCode === "TAFC";
+    if (!alcohol && !PRO_CLASS_CODES.has(scoringCode)) {
       const scoredCars = new Set(rows.map((r) => norm(r.car_number)));
+      const sheetPos = new Map<string, number>();
+      if (q && q.style !== "super") q.qualifiers.forEach((e, i) => sheetPos.set(norm(e.car), q.positions[i] ?? i + 1));
+      const roundOneLoss = DEFAULT_POINTS_BRACKETS.find((b) => fieldSize >= b.minSize && fieldSize <= b.maxSize)?.rounds[1] ?? 10;
       const entrants = new Map<string, RunRow>();
       for (const r of catRuns) {
         const car = norm(r.car_number);
@@ -458,17 +466,20 @@ function buildDataOutPoints(
       }
       for (const r of entrants.values()) {
         const tc = cardFor(r.car_number, r.name);
+        const pos = sheetPos.get(norm(r.car_number));
+        const inField = pos !== undefined && pos <= fieldSize;
         rows.push({
           car_number: (r.car_number || "").trim(),
           member_number: (r.member_number || "").trim() || tc?.member_number || "",
           name: (tc ? fullName(tc) : "") || (r.name || "").trim(),
           division: extractDivisionNumber(tc?.home_division),
-          points: 10,
-          status: "Participated",
+          points: inField ? roundOneLoss : 10,
+          status: inField ? `Qualified #${pos} — did not race round 1` : "Participated",
           isWinner: false,
           isRunnerUp: false,
         });
       }
+      rows.sort((a, b) => b.points - a.points);
     }
     for (const r of rows) {
       if (!r.division) noDivision++;
