@@ -1757,8 +1757,14 @@ export function buildQdatExport(
     // never populated) that rule orders the whole sheet. Equal passes keep the
     // order they were run in, as the tower lists them.
     const byRule = (a: SheetRow, b: SheetRow) => compareKeys(a.key, b.key) || a.runOrder - b.runOrder || a.order - b.order;
+    // A Q Pos column that repeats a position isn't a ladder (BM1 2026's pro
+    // classes after Q4); before eliminations the class rule orders the sheet.
+    const shownPos = rows.map((r) => r.pos).filter((p): p is number => p !== null);
+    const brokenLadder = !elimLadder && new Set(shownPos).size < shownPos.length;
     if (elimLadder) {
       rows.splice(0, rows.length, ...pinnedSheetOrder(rows, byRule));
+    } else if (brokenLadder) {
+      rows.sort(byRule);
     } else {
       rows.sort((a, b) => {
         if (a.pos !== null && b.pos !== null && a.pos !== b.pos) return a.pos - b.pos;
@@ -1769,8 +1775,12 @@ export function buildQdatExport(
     }
 
     const positioned = rows.filter((r) => r.pos !== null).length;
-    const computedOrder = positioned === 0 && rows.length > 0;
-    if (computedOrder && !superClass) {
+    const computedOrder = (positioned === 0 || brokenLadder) && rows.length > 0;
+    if (brokenLadder) {
+      warnings.push(
+        `${category}: getresults repeats qualifying positions — the order is computed from the passes (${QUAL_RULE_LABEL[rule]}).`,
+      );
+    } else if (computedOrder && !superClass) {
       warnings.push(
         `${category}: getresults shows no qualifying positions — the order is computed from the passes (${QUAL_RULE_LABEL[rule]}).`,
       );
