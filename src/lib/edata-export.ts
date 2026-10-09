@@ -209,11 +209,18 @@ export function fmtMph(mph: number | null): string {
 }
 
 /**
- * Portatree cuts its 4-decimal readings to the printed precision instead of
- * rounding them (0.11881 prints 0.118), and getresults sometimes carries the
- * raw reading.
+ * Portatree cuts its 4-decimal readings down to the printed precision instead
+ * of rounding them (0.11881 prints 0.118, a -0.02348 red light -0.024), and
+ * getresults sometimes carries the raw reading.
  */
 export function truncFixed(v: number, decimals: number): string {
+  const scale = 10 ** decimals;
+  const cut = Math.floor(v * scale + 1e-6) / scale;
+  return (cut === 0 ? 0 : cut).toFixed(decimals);
+}
+
+/** Toward zero instead of down — how Portatree cuts the ET-minus-index difference. */
+function truncTowardZero(v: number, decimals: number): string {
   const scale = 10 ** decimals;
   const cut = Math.floor(Math.abs(v) * scale + 1e-6) / scale;
   return (v < 0 && cut > 0 ? "-" : "") + cut.toFixed(decimals);
@@ -553,13 +560,21 @@ interface LineContext {
   timing: TimingSystem;
   /** The class's qualifying-sheet positions by car, for rows getresults left at 0. */
   positions?: Map<string, number>;
+  /**
+   * A Super class, whose sheet is the round-1 winners: a round-1 row's own Q
+   * Pos comes from time trials getresults happened to code Q1, so round 1
+   * prints the sheet position (0 for a round-1 loser); later rounds carry the
+   * round-2 ladder itself.
+   */
+  sheetPositionsOnly?: boolean;
   /** The one dial-in the whole field runs (Super Comp 8.90), filled where a row shows none. */
   sharedIndex: number | null;
 }
 
 /** The racer's qualifying position: getresults' Q Pos, else their line on the class's qualifying sheet. */
 function linePosition(run: RunRow, ctx: LineContext): number | null {
-  if (run.qual_pos !== null && run.qual_pos !== undefined && run.qual_pos > 0) return run.qual_pos;
+  const ownPos = run.qual_pos !== null && run.qual_pos !== undefined && run.qual_pos > 0;
+  if (ownPos && !(ctx.sheetPositionsOnly && run.round === "E1")) return run.qual_pos;
   return ctx.positions?.get(norm(run.car_number)) ?? null;
 }
 
@@ -925,8 +940,11 @@ function isFinalShape(rounds: ElimRound[], fieldSize: number): boolean {
 /**
  * The same recorded pass stored twice in one round under two clock times —
  * the second copy stamped onto another pairing's time, so that pairing reads
- * as four cars (LO1-7 2026 Super Comp round 3). The copy sitting in the
- * crowded pairing goes; equal pairings keep the earlier time.
+ * as four cars (LO1-7 2026 Super Comp round 3) — or an empty copy of a car
+ * that already has its row in the round (LO4-1 2026 Stock round 3, where the
+ * stray copy clusters with the next pair and shifts every pairing after it).
+ * A car races once a round: the fuller row stays, then the one in the less
+ * crowded pairing, then the earlier time.
  */
 function collapseCopiedPasses(elimRuns: RunRow[], category: string, warnings: string[]): RunRow[] {
   const drop = new Set<RunRow>();
@@ -953,10 +971,14 @@ function collapseCopiedPasses(elimRuns: RunRow[], category: string, warnings: st
         for (let j = i + 1; j < copies.length; j++) {
           const a = copies[i];
           const b = copies[j];
-          if (drop.has(a) || drop.has(b) || groupOf.get(a) === groupOf.get(b) || !sameRecordedPass(a, b)) continue;
+          if (drop.has(a) || drop.has(b) || groupOf.get(a) === groupOf.get(b)) continue;
+          const da = dataScore(a);
+          const db = dataScore(b);
+          if (!sameRecordedPass(a, b) && da > 0 && db > 0) continue;
           const sa = new Set(groupOf.get(a)!.map((r) => norm(r.car_number))).size;
           const sb = new Set(groupOf.get(b)!.map((r) => norm(r.car_number))).size;
-          const loser = sa !== sb ? (sa > sb ? a : b) : tsMillis(a.timestamp) > tsMillis(b.timestamp) ? a : b;
+          const loser =
+            da !== db ? (da < db ? a : b) : sa !== sb ? (sa > sb ? a : b) : tsMillis(a.timestamp) > tsMillis(b.timestamp) ? a : b;
           drop.add(loser);
           warnings.push(
             `${category} ${round}: car ${car} is stored twice with the same times (${a.timestamp} and ${b.timestamp}) — the copy at ${loser.timestamp} is left out.`,
@@ -1020,11 +1042,13 @@ export function buildEdataExport(
     const supplied = opts.rounds?.get(norm(category));
     const rounds = supplied?.length ? supplied : elimRoundsForCategory(catRuns, category, warnings, { timing });
     warnings.push(...repeatedCarWarnings(category, rounds));
+    const positions = opts.qualPositions?.get(norm(category));
     const ctx: LineContext = {
       classCode: code,
       quarterMile,
       timing,
-      positions: opts.qualPositions?.get(norm(category)),
+      positions,
+      sheetPositionsOnly: !!positions && qualStyleFor(category, code) === "super",
       sharedIndex: sharedFieldIndex(catRuns),
     };
 
@@ -1145,7 +1169,7 @@ export interface QdatFileOptions {
  * is a 0 a little more often than a 5).
  */
 function portatreeDiff(et: number, index: number): string {
-  return truncFixed(Math.round((et - index) * 1e6) / 1e6, 3);
+  return truncTowardZero(Math.round((et - index) * 1e6) / 1e6, 3);
 }
 
 /** "0.019", "-0.009" — a reaction time with its leading zero, as the qualifying sheet prints it. */
@@ -1458,11 +1482,17 @@ function styleForRule(rule: QualRule, hasIndex: boolean): QualStyle {
   return hasIndex ? "index" : "headsup";
 }
 
-/** A class the tables don't know: its rule off the dial-in column of its qualifying passes. */
+/**
+ * A class the tables don't know: its rule off the dial-in column of its
+ * qualifying passes. Only a field that runs an index on (nearly) every pass
+ * qualifies against one — the national specials (Outlaw Street, the
+ * snowmobiles) show a dial-in on some sessions and still qualify heads-up.
+ */
 function qualRuleFor(qualPasses: RunRow[]): QualRule {
-  const indexes = new Set(qualPasses.map(passIndex).filter((v): v is number => v !== null));
-  if (indexes.size === 0) return "lowest";
-  return indexes.size === 1 ? "closest_over" : "furthest_under";
+  const timed = qualPasses.filter((p) => passEt(p, true) !== null || passEt(p, false) !== null);
+  const dialed = timed.map(passIndex).filter((v): v is number => v !== null);
+  if (dialed.length === 0 || dialed.length < timed.length * 0.9) return "lowest";
+  return new Set(dialed).size === 1 ? "closest_over" : "furthest_under";
 }
 
 const WORST = Number.POSITIVE_INFINITY;
@@ -1609,13 +1639,20 @@ export function buildQdatExport(
           agg.lastPosTs = ts;
           agg.lastPosSeq = seq;
         }
-        if (isElimRound(run.round)) agg.elimPos = run.qual_pos;
+        // A Super class's ladder starts at round 2 (its round-1 rows only carry
+        // whatever getresults ranked time trials by).
+        if (isElimRound(run.round) && !(superClass && run.round === "E1")) agg.elimPos = run.qual_pos;
       }
     });
 
     // Only racers who made a qualifying pass belong on the qualifying sheet —
-    // an elimination-only car (an alternate, a stale roster row) does not.
-    const qualifiers = [...racers.values()].filter((a) => a.qualPasses.length > 0);
+    // an elimination-only car (an alternate, a stale roster row) does not, nor
+    // a car number no row ever names or classes (a number the tower's entry
+    // list doesn't hold, so its sheet doesn't either).
+    const known = new Set(
+      catRuns.filter((r) => (r.name || "").trim() || classDesignation(r)).map((r) => norm(r.car_number)),
+    );
+    const qualifiers = [...racers.values()].filter((a) => a.qualPasses.length > 0 && (!a.car || known.has(norm(a.car))));
     const allQualPasses = qualifiers.flatMap((a) => a.qualPasses);
     const elimLadder = qualifiers.some((a) => a.elimPos !== null);
     const hasIndex = allQualPasses.some((p) => passIndex(p) !== null);
@@ -1630,11 +1667,29 @@ export function buildQdatExport(
         ? styleForRule(rule, hasIndex)
         : classStyle;
 
+    // An index belongs to the class designation (every B/SA car runs 11.25),
+    // so a car getresults shows no dial-in for takes its designation's.
+    const designationIndex = new Map<string, number>();
+    if (style === "index") {
+      const seen = new Map<string, Map<number, number>>();
+      for (const p of allQualPasses) {
+        const d = classDesignation(p);
+        const i = passIndex(p);
+        if (!d || i === null) continue;
+        const counts = seen.get(d) || new Map<number, number>();
+        counts.set(i, (counts.get(i) || 0) + 1);
+        seen.set(d, counts);
+      }
+      for (const [d, counts] of seen) {
+        designationIndex.set(d, [...counts.entries()].reduce((a, b) => (b[1] > a[1] ? b : a))[0]);
+      }
+    }
+
     let enriched = 0;
     const rows = qualifiers.map((agg, order) => {
       const tc = findTechCard(agg.car || null, agg.latest.name, techIndex);
       if (tc) enriched++;
-      const carIndex = carIndexFrom(agg.qualPasses);
+      const carIndex = carIndexFrom(agg.qualPasses) ?? designationIndex.get(classDesignation(agg.latest)) ?? null;
       const best = bestQualPass(agg.qualPasses, rule, quarterMile, carIndex);
       const index = best ? (passIndex(best) ?? carIndex) : null;
       const key: [number, number] = best ? qualSortKey(best, rule, quarterMile, index) : [WORST, WORST];

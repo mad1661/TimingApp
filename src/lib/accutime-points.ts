@@ -533,8 +533,9 @@ const CLASS_NUMBER_BY_CODE: Record<string, number> = {
 
 // The national tower's slots for its special classes (the BM1 and II1 2026
 // packs and IDX tables agree): the 2Fast2Tasty pro challenges take the second
-// TF / FC / PS / PSM slots.
-const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
+// TF / FC / PS / PSM slots. Matched by name before the class code — their cars
+// carry the pro classes' own codes (FC, TF), whose slots the pro classes hold.
+const SPECIAL_CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
   [/2\s*FAST\s*2\s*TASTY\s+TF\b/, 17],
   [/2\s*FAST\s*2\s*TASTY\s+FC\b/, 21],
   [/2\s*FAST\s*2\s*TASTY\s+PS\b/, 25],
@@ -543,6 +544,9 @@ const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
   [/OUTLAW\s+STREET/, 24],
   [/\bJDRL\b/, 27],
   [/SOX\W*MARTIN|HEMI\s+CHALLENGE/, 28],
+];
+
+const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
   [/PRO\s*MOD/, 5],
   [/FACTORY\s*STOCK/, 16],
   [/SUPER\s*COMP/, 8],
@@ -558,9 +562,10 @@ const CLASS_NUMBER_BY_NAME: [RegExp, number][] = [
 
 /** Fixed Compulink class number for a class, or null when it has none. */
 export function compulinkClassNumber(className: string, classCode: string): number | null {
+  const name = (className || "").toUpperCase();
+  for (const [re, n] of SPECIAL_CLASS_NUMBER_BY_NAME) if (re.test(name)) return n;
   const code = (classCode || "").trim().toUpperCase();
   if (code && CLASS_NUMBER_BY_CODE[code] !== undefined) return CLASS_NUMBER_BY_CODE[code];
-  const name = (className || "").toUpperCase();
   for (const [re, n] of CLASS_NUMBER_BY_NAME) if (re.test(name)) return n;
   return null;
 }
