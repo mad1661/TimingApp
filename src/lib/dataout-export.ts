@@ -387,8 +387,10 @@ export function buildDataOutArtifacts(
  * alcohol table plus qualifying and attempt points for TAD / TAFC, the pro
  * national structure for the pros — the scoring the AccuTime export uses),
  * then 10 points for every entrant who ran the class but not its
- * eliminations. Rows run highest points first, ties in round-1 order, as the
- * tower lists them. A class whose final isn't on file gets no points file.
+ * eliminations. The towers list the racers by the round they reached, ties in
+ * round-1 order, then everyone who never raced in one block in their entry
+ * order — which the timing data doesn't carry, so the block is in run order.
+ * A class whose final isn't on file gets no points file.
  *
  * The division column is the racer's home division off the tech card; the
  * timing data doesn't carry it, so a racer with no card on file prints 0.
@@ -479,7 +481,6 @@ function buildDataOutPoints(
           isRunnerUp: false,
         });
       }
-      rows.sort((a, b) => b.points - a.points);
     }
     for (const r of rows) {
       if (!r.division) noDivision++;

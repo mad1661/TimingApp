@@ -430,7 +430,9 @@ const T = (h: string) => `06/19/2026 ${h}`;
     pass(round, ts, car, et, { category: cat, class_index: "B/SA", dial_in: 11.25 }, win);
   const q = (car: string, i: number) => st("Q1", `06/18/2026 09:0${i}:00 AM`, car, 10.5 + i / 10);
   const rows: RunRow[] = [
-    ...["1401", "1402", "1403", "1404", "1405", "1406", "1407"].map(q),
+    // 1407, the slowest qualifier and out of the field, ran first.
+    st("Q1", "06/18/2026 08:59:00 AM", "1407", 11.1),
+    ...["1401", "1402", "1403", "1404", "1405", "1406"].map(q),
     // 1402, the number two qualifier, never came up for round 1: 1405 runs a single.
     st("E1", T("10:00:00 AM"), "1401", 10.6, true),
     st("E1", T("10:00:00 AM"), "1406", 11.0),
@@ -446,8 +448,8 @@ const T = (h: string) => `06/19/2026 ${h}`;
   const p = buildDataOutArtifacts(rows, [], { pdfs: false, pointsRaceCode: "91" }).points.find((f) => f.category === cat)!;
   const got = lines(p.content).slice(1, 8).map((x) => x.split(",")[0] + ":" + x.split(",")[4]);
   check(
-    "points: a qualifier inside the round-1 field who didn't race takes the round-1 loss points; a non-qualifier 10",
-    JSON.stringify(got) === JSON.stringify(["1405:85", "1401:64", "1403:43", "1406:32", "1404:32", "1402:32", "1407:10"]),
+    "points: an in-field qualifier who didn't race takes round-1 loss points, listed with the non-racers in run order",
+    JSON.stringify(got) === JSON.stringify(["1405:85", "1401:64", "1403:43", "1406:32", "1404:32", "1407:10", "1402:32"]),
     JSON.stringify(got),
   );
 
