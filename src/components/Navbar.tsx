@@ -3,9 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
 import { useLiveData } from "./LiveDataProvider";
 import ThemeToggle from "./ThemeToggle";
 import BrandMark from "./BrandMark";
+import { AnimatedBackground } from "./motion/animated-background";
+import { useMotionFeaturesLoaded } from "./motion/MotionProvider";
 import { APP_VERSION } from "@/lib/version";
 
 const NAV_SECTIONS = ["Race Day", "Eliminations", "Insights", "Points & Files", "Racers", "Data"] as const;
@@ -54,6 +58,7 @@ export default function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const live = useLiveData();
+  const animated = useMotionFeaturesLoaded();
   const source = live.config?.dataSource ?? "scraper";
 
   return (
@@ -61,7 +66,7 @@ export default function Navbar() {
       <header className="lg:hidden sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-nhra-border bg-nhra-dark/85 light:bg-white/85 px-3 backdrop-blur-md print:hidden">
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-nhra-border bg-nhra-card text-gray-300"
+          className="btn btn-secondary h-9 w-9 p-0"
           aria-label="Toggle navigation"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -70,10 +75,10 @@ export default function Navbar() {
         </button>
         <Link href="/" className="flex min-w-0 items-center gap-2.5">
           <BrandMark size="sm" />
-          <span className="truncate font-display text-lg font-bold tracking-wide text-white">Timing Data</span>
+          <span className="truncate text-base font-semibold tracking-tight text-white">Timing Data</span>
         </Link>
         {live.config && live.isActive && (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-green-500/25 bg-green-500/10 px-2.5 py-1 text-[0.65rem] font-bold uppercase tracking-wider text-green-400">
+          <span className="chip ml-auto shrink-0 border-green-500/25 bg-green-500/10 font-semibold text-green-400">
             <LiveDot fetching={live.isFetching} />
             Live
           </span>
@@ -81,12 +86,12 @@ export default function Navbar() {
       </header>
 
       <nav className={`fixed top-0 left-0 h-full w-64 bg-nhra-dark border-r border-nhra-border z-40 transition-transform duration-200 ${mobileOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 flex flex-col`}>
-        <div className="flex items-center justify-between gap-2 px-4 pt-5 pb-4">
-          <Link href="/" className="flex min-w-0 items-center gap-3" onClick={() => setMobileOpen(false)}>
+        <div className="flex items-center justify-between gap-2 px-4 pt-4 pb-3.5">
+          <Link href="/" className="flex min-w-0 items-center gap-2.5" onClick={() => setMobileOpen(false)}>
             <BrandMark />
             <div className="min-w-0">
-              <p className="font-display text-[1.3rem] font-bold leading-none tracking-wide text-white">Timing Data</p>
-              <p className="mt-1 truncate text-[0.7rem] font-medium text-gray-500">Rice is Great All Year</p>
+              <p className="text-[1.02rem] font-semibold leading-none tracking-tight text-white">Timing Data</p>
+              <p className="mt-1 truncate text-[0.7rem] text-gray-500">Rice is Great All Year</p>
             </div>
           </Link>
           <ThemeToggle />
@@ -95,7 +100,7 @@ export default function Navbar() {
         {mobileOpen && (
           <button
             onClick={() => setMobileOpen(false)}
-            className="lg:hidden absolute left-full top-3 ml-3 flex h-10 w-10 items-center justify-center rounded-full border border-nhra-border bg-nhra-card text-gray-300 shadow-lg"
+            className="lg:hidden absolute left-full top-3 ml-3 btn btn-secondary h-10 w-10 rounded-full p-0"
             aria-label="Close navigation"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -104,11 +109,14 @@ export default function Navbar() {
           </button>
         )}
 
-        <div className="flex-1 overflow-y-auto border-t border-nhra-border/60 px-3 pb-7 [mask-image:linear-gradient(to_bottom,#000_calc(100%-1.75rem),transparent)]">
+        <m.div
+          layoutScroll
+          className="flex-1 overflow-y-auto border-t border-nhra-border px-2.5 pb-7 [mask-image:linear-gradient(to_bottom,#000_calc(100%-1.75rem),transparent)]"
+        >
           {NAV_SECTIONS.map((section) => (
             <div key={section} className="pt-4">
-              <p className="px-3 pb-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-gray-500">{section}</p>
-              <div className="space-y-0.5">
+              <p className="px-2.5 pb-1 text-[0.68rem] font-medium text-gray-500">{section}</p>
+              <div className="space-y-px">
                 {NAV_ITEMS.filter((item) => item.section === section).map((item) => {
                   const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
                   return (
@@ -117,45 +125,51 @@ export default function Navbar() {
                       href={item.href}
                       onClick={() => setMobileOpen(false)}
                       aria-current={isActive ? "page" : undefined}
-                      className={`group relative flex items-center gap-3 rounded-lg px-3 py-2 lg:py-1.5 text-sm font-medium transition-colors ${
-                        isActive
-                          ? "bg-nhra-red/12 text-white"
-                          : "text-gray-400 hover:bg-nhra-card hover:text-white"
+                      className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 lg:py-[0.3rem] text-[0.8125rem] font-medium transition-colors ${
+                        isActive ? "text-white" : "text-gray-400 hover:bg-[var(--ui-surface-raised)] hover:text-white"
                       }`}
                     >
-                      {isActive && <span className="absolute inset-y-1.5 left-0 w-[3px] rounded-r-full bg-nhra-red" />}
+                      {isActive && (
+                        <m.span
+                          layoutId="nav-active"
+                          transition={{ type: "spring", stiffness: 520, damping: 42 }}
+                          className="absolute inset-0 rounded-md bg-[var(--ui-surface-hover)] shadow-[var(--ui-shadow-raised)]"
+                        >
+                          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-r-full bg-nhra-red" />
+                        </m.span>
+                      )}
                       <svg
-                        className={`h-[1.15rem] w-[1.15rem] shrink-0 transition-opacity ${isActive ? "text-nhra-red" : "opacity-70 group-hover:opacity-100"}`}
+                        className={`relative h-[1.05rem] w-[1.05rem] shrink-0 transition-opacity ${isActive ? "text-nhra-red" : "opacity-70 group-hover:opacity-100"}`}
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d={item.icon} />
                       </svg>
-                      <span className="truncate">{item.label}</span>
+                      <span className="relative truncate">{item.label}</span>
                     </Link>
                   );
                 })}
               </div>
             </div>
           ))}
-        </div>
+        </m.div>
 
         {/* Live Status + Change Event Footer */}
         <div className="border-t border-nhra-border p-3 space-y-2">
           {live.config ? (
-            <div className="rounded-xl border border-nhra-border bg-nhra-card p-2.5 space-y-2">
+            <div className="rounded-lg border border-nhra-border bg-nhra-card p-2.5 space-y-2 shadow-[var(--ui-shadow-panel)]">
               <div className="flex items-center gap-2 px-0.5">
                 {live.isActive ? (
                   <>
                     <LiveDot fetching={live.isFetching} />
-                    <span className="text-[0.68rem] font-bold uppercase tracking-wider text-white">Live</span>
+                    <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-white">Live</span>
                   </>
                 ) : (
-                  <span className="text-[0.68rem] font-bold uppercase tracking-wider text-gray-500">Event</span>
+                  <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-gray-500">Event</span>
                 )}
                 {live.lastFetch && (
-                  <span className="ml-auto truncate text-[0.68rem] text-gray-500">
+                  <span className="ml-auto truncate text-[0.68rem] tabular-nums text-gray-500">
                     Last {live.lastFetch.toLocaleTimeString()}
                     {live.lastResult && live.lastResult.inserted > 0 && (
                       <span className="text-green-400 ml-1">+{live.lastResult.inserted}</span>
@@ -174,27 +188,27 @@ export default function Navbar() {
               )}
               {/* Data source: getresults scraper (default), official API, or
                   EData files. EData turns polling off entirely. */}
-              <div className="flex items-center gap-0.5 rounded-lg bg-nhra-darker border border-nhra-border p-0.5">
+              <div className="segmented flex w-full flex-nowrap">
                 <span className="text-[0.6rem] font-semibold uppercase tracking-wider text-gray-500 px-1.5 shrink-0">Source</span>
-                {(["scraper", "api", "edata"] as const).map((src) => {
-                  const active = source === src;
-                  return (
-                    <button
-                      key={src}
-                      onClick={() => live.setDataSource(src)}
-                      className={`flex-1 px-1.5 py-1 rounded-md text-[0.7rem] font-semibold transition-colors ${
-                        active ? "bg-nhra-red text-white" : "text-gray-400 hover:text-white"
-                      }`}
-                    >
+                <AnimatedBackground
+                  defaultValue={source}
+                  onValueChange={(id) => {
+                    if (id === "scraper" || id === "api" || id === "edata") live.setDataSource(id);
+                  }}
+                  className="segmented-indicator"
+                  transition={{ type: "spring", bounce: 0, duration: 0.25 }}
+                >
+                  {(["scraper", "api", "edata"] as const).map((src) => (
+                    <button key={src} data-id={src} type="button" className="segmented-item h-6 flex-1 justify-center px-1.5 text-[0.7rem]">
                       {src === "api" ? "API" : src === "edata" ? "EData" : "getresults"}
                     </button>
-                  );
-                })}
+                  ))}
+                </AnimatedBackground>
               </div>
               {source === "edata" && (
                 <Link
                   href="/dataout"
-                  className="block text-xs text-yellow-500 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-2 py-1.5 leading-snug hover:bg-yellow-500/20"
+                  className="block text-xs text-yellow-500 bg-yellow-500/10 border border-yellow-500/30 rounded-md px-2 py-1.5 leading-snug hover:bg-yellow-500/20"
                 >
                   getresults polling is off. Runs come from the EData files you
                   upload — open Data Out.
@@ -203,9 +217,9 @@ export default function Navbar() {
               <button
                 onClick={() => live.fetchNow()}
                 disabled={live.isFetching || source === "edata"}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-nhra-red hover:bg-nhra-red/85 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="btn btn-primary btn-sm w-full"
               >
-                <svg className={`w-4 h-4 ${live.isFetching ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className={`w-3.5 h-3.5 ${live.isFetching ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
                 {live.isFetching ? "Fetching..." : "Refresh Data"}
@@ -219,27 +233,34 @@ export default function Navbar() {
             <Link
               href="/setup"
               onClick={() => setMobileOpen(false)}
-              className="flex flex-1 items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-gray-400 hover:text-white bg-nhra-card border border-nhra-border hover:border-nhra-accent/40 transition-colors"
+              className="btn btn-secondary btn-sm flex-1"
             >
-              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               Change Event
             </Link>
-            <span className="shrink-0 rounded-md border border-nhra-border px-1.5 py-1 font-mono text-[0.65rem] text-gray-500" title="App version">
+            <span className="chip shrink-0 rounded-md font-mono" title="App version">
               v{APP_VERSION}
             </span>
           </div>
         </div>
       </nav>
 
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-30 lg:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
+      <AnimatePresence>
+        {mobileOpen && (
+          <m.div
+            key="nav-backdrop"
+            initial={animated ? { opacity: 0 } : false}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-30 lg:hidden"
+            onClick={() => setMobileOpen(false)}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }

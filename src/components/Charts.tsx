@@ -5,13 +5,13 @@ import {
   ScatterChart, Scatter, LineChart, Line, Legend, LabelList, Cell,
 } from "recharts";
 
-const AXIS = "#94a3b8";
-const GRID = "#243044";
+const AXIS = "#9b9ba1";
+const GRID = "#232326";
 const TOOLTIP = {
-  backgroundColor: "#0e131d",
-  border: "1px solid #2a3549",
-  borderRadius: 10,
-  color: "#e8edf5",
+  backgroundColor: "#0d0d0f",
+  border: "1px solid #2f2f33",
+  borderRadius: 8,
+  color: "#ececf1",
   fontSize: 13,
   boxShadow: "0 12px 28px -12px rgb(0 0 0 / 0.8)",
 };
@@ -28,7 +28,7 @@ interface ChartContainerProps {
 export function ChartContainer({ title, subtitle, children, height = 320 }: ChartContainerProps) {
   return (
     <div className="bg-nhra-card border border-nhra-border rounded-xl p-4 sm:p-5">
-      <h3 className="text-sm font-semibold text-white">{title}</h3>
+      <h3 className="text-sm font-semibold tracking-tight text-white">{title}</h3>
       {subtitle && <p className="text-xs text-gray-500 mt-0.5 mb-2">{subtitle}</p>}
       <div className={subtitle ? "" : "mt-3"} style={{ height }}>{children}</div>
     </div>
@@ -70,13 +70,13 @@ export function HorizontalBarChart({
       <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 52, left: 8, bottom: 4 }} barCategoryGap="22%">
         <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false} />
         <XAxis type="number" tick={{ fill: AXIS, fontSize: 12 }} tickFormatter={(v) => `${v}${unit}`} />
-        <YAxis type="category" dataKey="category" tick={{ fill: "#e2e8f0", fontSize: 13 }} width={72} />
+        <YAxis type="category" dataKey="category" tick={{ fill: "#e2e2e6", fontSize: 13 }} width={72} />
         <Tooltip contentStyle={TOOLTIP} formatter={fmtVal} cursor={{ fill: "#ffffff10" }} />
         <Bar dataKey={dataKey} radius={[0, 4, 4, 0]} maxBarSize={26} isAnimationActive={false}>
           {rows.map((r, i) => (
             <Cell key={i} fill={bestVal !== null && Number(r[dataKey]) === bestVal ? GREEN : color} />
           ))}
-          <LabelList dataKey={dataKey} position="right" fill="#cbd5e1" fontSize={12} formatter={fmtVal} />
+          <LabelList dataKey={dataKey} position="right" fill="#c3c3c7" fontSize={12} formatter={fmtVal} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
