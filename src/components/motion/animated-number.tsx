@@ -1,11 +1,14 @@
 "use client";
 
 // Adapted from Motion-Primitives `components/core/animated-number.tsx`
-// (MIT, see ./LICENSE). Changes: the motion element is created once per `as`
-// instead of on every render, and with "reduce motion" on the value jumps
-// straight to its target (useSpring ignores MotionConfig).
+// (MIT, see ./LICENSE). Changes: rendered with `m` (see MotionProvider), the
+// motion element is created once per `as` instead of on every render, the
+// default spring is overdamped so a count never overshoots its real value, and
+// with "reduce motion" on the value jumps straight to its target (useSpring
+// ignores MotionConfig).
 import { cn } from "@/lib/cn";
-import { motion, type SpringOptions, useReducedMotion, useSpring, useTransform } from "motion/react";
+import { type SpringOptions, useReducedMotion, useSpring, useTransform } from "motion/react";
+import * as m from "motion/react-m";
 import { useEffect, useMemo } from "react";
 
 export type AnimatedNumberProps = {
@@ -15,8 +18,10 @@ export type AnimatedNumberProps = {
   as?: React.ElementType;
 };
 
-export function AnimatedNumber({ value, className, springOptions, as = "span" }: AnimatedNumberProps) {
-  const MotionComponent = useMemo(() => motion.create(as as keyof JSX.IntrinsicElements), [as]);
+const DEFAULT_SPRING: SpringOptions = { stiffness: 260, damping: 38, mass: 1 };
+
+export function AnimatedNumber({ value, className, springOptions = DEFAULT_SPRING, as = "span" }: AnimatedNumberProps) {
+  const MotionComponent = useMemo(() => m.create(as as keyof JSX.IntrinsicElements), [as]);
   const reduceMotion = useReducedMotion();
 
   const spring = useSpring(value, springOptions);

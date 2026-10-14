@@ -1,9 +1,11 @@
 "use client";
 
 // Copied from Motion-Primitives `components/core/animated-background.tsx`
-// (MIT, see ./LICENSE). Only the `cn` import differs.
+// (MIT, see ./LICENSE). Only the `cn` import and `m` (see MotionProvider)
+// in place of `motion` differ.
 import { cn } from "@/lib/cn";
-import { AnimatePresence, type Transition, motion } from "motion/react";
+import { AnimatePresence, type Transition } from "motion/react";
+import * as m from "motion/react-m";
 import { Children, cloneElement, type ReactElement, useEffect, useState, useId } from "react";
 
 export type AnimatedBackgroundProps = {
@@ -64,7 +66,7 @@ export function AnimatedBackground({
       <>
         <AnimatePresence initial={false}>
           {activeId === id && (
-            <motion.div
+            <m.div
               layoutId={`background-${uniqueId}`}
               className={cn("absolute inset-0", className)}
               transition={transition}

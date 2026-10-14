@@ -268,7 +268,7 @@ body {
   /* ── Data tables: dense rows, muted sentence-case headers, hairlines ── */
   .data-table {
     width: 100%;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
   }
   .data-table > thead > tr {
     background-color: var(--ui-head-bg);

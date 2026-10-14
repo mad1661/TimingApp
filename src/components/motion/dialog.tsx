@@ -7,11 +7,15 @@
 // app's conditionally rendered modals keep their shape — wrap the condition in
 // <AnimatePresence> to play the exit. The backdrop is an element inside the
 // dialog so it can fade with it, a click only closes when it starts and ends
-// outside the panel, the close icon is inline SVG (no lucide-react), and the
-// default zoom is gentler (0.96 rather than 0.9).
-import { motion, type Transition, type Variants } from "motion/react";
+// outside the panel, the close icon is inline SVG (no lucide-react), the
+// default zoom is gentler (0.96 rather than 0.9), and it renders with `m`
+// (see MotionProvider), opening without the transition if the animation
+// features haven't loaded.
+import { useIsPresent, type Transition, type Variants } from "motion/react";
+import * as m from "motion/react-m";
 import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { useMotionFeaturesLoaded } from "./MotionProvider";
 
 const DialogContext = createContext<{
   close: () => void;
@@ -54,6 +58,8 @@ function Dialog({ onClose, children, className, variants = defaultVariants, tran
   const dialogRef = useRef<HTMLDialogElement>(null);
   const onCloseRef = useRef(onClose);
   const pressStartedOutside = useRef(false);
+  const isPresent = useIsPresent();
+  const animated = useMotionFeaturesLoaded();
   const baseId = useId();
   const ids = {
     title: `motion-ui-dialog-title-${baseId}`,
@@ -63,6 +69,11 @@ function Dialog({ onClose, children, className, variants = defaultVariants, tran
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  // While the exit plays the dialog is still on screen; take no more input.
+  useEffect(() => {
+    if (!isPresent) dialogRef.current?.setAttribute("inert", "");
+  }, [isPresent]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -92,16 +103,16 @@ function Dialog({ onClose, children, className, variants = defaultVariants, tran
 
   return (
     <DialogContext.Provider value={{ close: () => onCloseRef.current(), ids }}>
-      <motion.dialog
+      <m.dialog
         ref={dialogRef}
         aria-labelledby={ids.title}
         aria-describedby={ids.description}
-        initial="initial"
+        initial={animated ? "initial" : false}
         animate="animate"
         exit="exit"
         className="fixed inset-0 m-0 h-full max-h-none w-full max-w-none overflow-y-auto bg-transparent p-0 text-inherit backdrop:bg-transparent"
       >
-        <motion.div
+        <m.div
           aria-hidden="true"
           variants={backdropVariants}
           transition={transition}
@@ -116,7 +127,7 @@ function Dialog({ onClose, children, className, variants = defaultVariants, tran
             if (pressStartedOutside.current && e.target === e.currentTarget) onCloseRef.current();
           }}
         >
-          <motion.div
+          <m.div
             variants={variants}
             transition={transition}
             className={cn(
@@ -125,9 +136,9 @@ function Dialog({ onClose, children, className, variants = defaultVariants, tran
             )}
           >
             {children}
-          </motion.div>
+          </m.div>
         </div>
-      </motion.dialog>
+      </m.dialog>
     </DialogContext.Provider>
   );
 }

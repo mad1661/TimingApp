@@ -25,9 +25,9 @@ export function SkeletonRows({ rows = 8, columns = 6 }: { rows?: number; columns
 }
 
 /** Thin indeterminate bar for a refresh that keeps the current rows on screen. */
-export function RefreshBar({ active }: { active: boolean }) {
+export function RefreshBar({ active, className }: { active: boolean; className?: string }) {
   return (
-    <div aria-hidden="true" className="h-0.5 overflow-hidden">
+    <div aria-hidden="true" className={cn("h-0.5 overflow-hidden", className)}>
       {active && <div className="h-full w-1/3 animate-progress-slide rounded-full bg-nhra-accent/70" />}
     </div>
   );
