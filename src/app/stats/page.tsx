@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { ChartContainer, HorizontalBarChart } from "@/components/Charts";
 import { useLiveData } from "@/components/LiveDataProvider";
 import { classifyCategory } from "@/lib/categories";
+import PageHeader from "@/components/ui/PageHeader";
+import EmptyState, { EmptyIcon, EMPTY_ICONS } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 
 interface HeadsUpStat {
   category: string;
@@ -61,12 +64,12 @@ function superIndex(category: string): string | null {
 function formatBadge(category: string): { label: string; cls: string } {
   const f = classifyCategory(category);
   const idx = superIndex(category);
-  if (idx) return { label: `Index ${idx}`, cls: "bg-amber-500/15 text-amber-300 border-amber-500/30" };
+  if (idx) return { label: `Index ${idx}`, cls: "bg-amber-500/10 text-amber-300 border-amber-500/25" };
   switch (f) {
-    case "index": return { label: "Index", cls: "bg-amber-500/15 text-amber-300 border-amber-500/30" };
-    case "handicap": return { label: "Handicap", cls: "bg-blue-500/15 text-blue-300 border-blue-500/30" };
-    case "bracket": return { label: "Bracket", cls: "bg-purple-500/15 text-purple-300 border-purple-500/30" };
-    default: return { label: "Dial-in", cls: "bg-gray-500/15 text-gray-300 border-gray-500/30" };
+    case "index": return { label: "Index", cls: "bg-amber-500/10 text-amber-300 border-amber-500/25" };
+    case "handicap": return { label: "Handicap", cls: "bg-blue-500/10 text-blue-300 border-blue-500/25" };
+    case "bracket": return { label: "Bracket", cls: "bg-purple-500/10 text-purple-300 border-purple-500/25" };
+    default: return { label: "Dial-in", cls: "bg-gray-500/10 text-gray-300 border-gray-500/25" };
   }
 }
 
@@ -90,8 +93,31 @@ export default function StatsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-12 h-12 border-4 border-nhra-red border-t-transparent rounded-full animate-spin" />
+      <div className="max-w-7xl mx-auto" aria-busy="true">
+        <span className="sr-only">Loading statistics...</span>
+        <PageHeader title="Statistics" description="Performance broken down by what each class actually races for." />
+        <Skeleton className="mb-2 h-5 w-48" />
+        <Skeleton className="mb-5 h-3.5 w-full max-w-2xl" />
+        <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-4">
+          <table className="data-table">
+            <tbody>
+              <SkeletonRows rows={4} columns={11} />
+            </tbody>
+          </table>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {[0, 1].map((i) => (
+            <div key={i} className="bg-nhra-card border border-nhra-border rounded-xl p-4 sm:p-5">
+              <Skeleton className="h-3.5 w-24" />
+              <Skeleton className="mt-2 h-3 w-56" />
+              <div className="mt-5 space-y-3">
+                <Skeleton className="h-5 w-4/5" />
+                <Skeleton className="h-5 w-3/5" />
+                <Skeleton className="h-5 w-2/3" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -109,47 +135,46 @@ export default function StatsPage() {
 
   return (
     <div className="max-w-7xl mx-auto">
-      <div className="mb-6 sm:mb-8">
-        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1 sm:mb-2">Statistics</h1>
-        <p className="text-sm text-gray-400">Performance broken down by what each class actually races for.</p>
-      </div>
+      <PageHeader title="Statistics" description="Performance broken down by what each class actually races for." />
 
       {stats.length === 0 ? (
-        <div className="bg-nhra-card border border-nhra-border rounded-xl p-12 text-center text-gray-500">
-          No data available. Import some runs first.
-        </div>
+        <EmptyState
+          icon={<EmptyIcon d={EMPTY_ICONS.chart} />}
+          title="No data available"
+          description="Import some runs first — every class gets its own breakdown here."
+        />
       ) : (
         <>
           {/* ── HEADS-UP / PRO ── */}
           {headsUp.length > 0 && (
-            <section className="mb-12">
+            <section className="mb-10">
               <SectionHeader color="bg-nhra-red" title="Heads-Up / Pro" count={headsUp.length}
                 blurb="Run flat-out, no dial-in — the quicker car wins. What matters: elapsed time (ET) and top speed, the 60-ft launch and the down-track incrementals (330/660/1000), plus reaction time off the pro tree." />
 
-              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-6">
+              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-4">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm whitespace-nowrap">
+                  <table className="data-table whitespace-nowrap">
                     <thead>
-                      <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
-                        <Th className="text-left pl-5">Class</Th><Th>Runs</Th>
+                      <tr>
+                        <Th align="left">Class</Th><Th>Runs</Th>
                         <Th title="Quickest elapsed time (1320 ft)">Best ET</Th>
                         <Th title="Fastest trap speed">Top Speed</Th>
                         <Th title="Quickest launch — first 60 feet">Best 60ft</Th>
                         <Th>330</Th><Th>660</Th><Th title="Speed at half-track">660 MPH</Th><Th>1000</Th>
-                        <Th title="Quickest reaction time">Best RT</Th><Th title="Average reaction time" className="pr-5">Avg RT</Th>
+                        <Th title="Quickest reaction time">Best RT</Th><Th title="Average reaction time">Avg RT</Th>
                       </tr>
                     </thead>
                     <tbody>
                       {headsUp.map((c) => (
-                        <tr key={c.category} className="border-b border-nhra-border/50 hover:bg-nhra-border/20">
-                          <td className="p-3 pl-5 text-white font-medium">{c.category}</td>
+                        <tr key={c.category}>
+                          <td className="text-white font-medium">{c.category}</td>
                           <Td>{c.count}</Td>
                           <Td className="text-white font-semibold">{fmt(c.bestET)}</Td>
                           <Td className="text-white">{fmt(c.bestSpeed, 2)}</Td>
                           <Td>{fmt(c.best60ft)}</Td><Td>{fmt(c.best330)}</Td><Td>{fmt(c.best660)}</Td>
                           <Td>{fmt(c.best660mph, 2)}</Td><Td>{fmt(c.best1000)}</Td>
                           <Td className="text-green-400">{fmt(c.bestRT)}</Td>
-                          <Td className="text-gray-400 pr-5">{fmt(c.avgRT)}</Td>
+                          <Td className="text-gray-400">{fmt(c.avgRT)}</Td>
                         </tr>
                       ))}
                     </tbody>
@@ -157,7 +182,7 @@ export default function StatsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <ChartContainer title="Best ET" subtitle="Quickest run per class — lower is better (green = quickest)">
                   <HorizontalBarChart data={headsUpChartData} dataKey="bestET" color="#C8102E" unit="s" decimals={3} best="min" />
                 </ChartContainer>
@@ -170,16 +195,16 @@ export default function StatsPage() {
 
           {/* ── BRACKET / INDEX / SUPER ── */}
           {bracket.length > 0 && (
-            <section className="mb-12">
+            <section className="mb-10">
               <SectionHeader color="bg-blue-500" title="Bracket, Index & Super" count={bracket.length}
                 blurb="These run to a number — your own dial-in (bracket / Top Dragster / Top Sportsman) or a fixed class index (Super Comp 8.90, Super Gas 9.90, Super Street 10.90). Running quicker than that number is a breakout (a loss). What matters: the package (reaction time + how close you ran to your number), reaction time, dial-in accuracy, ET consistency, and staying off the breakout." />
 
-              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-6">
+              <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden mb-4">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm whitespace-nowrap">
+                  <table className="data-table whitespace-nowrap">
                     <thead>
-                      <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
-                        <Th className="text-left pl-5">Class</Th><Th>Runs</Th>
+                      <tr>
+                        <Th align="left">Class</Th><Th>Runs</Th>
                         <Th title="Reaction time + how far over the dial/index. Lower is a tighter race.">Avg Pkg</Th>
                         <Th title="Best (lowest) package run">Best Pkg</Th>
                         <Th>Avg RT</Th><Th>Best RT</Th>
@@ -187,7 +212,7 @@ export default function StatsPage() {
                         <Th title="ET standard deviation — lower means a more consistent car">ET Consistency</Th>
                         <Th title="Share of runs quicker than the dial/index (a breakout = loss)">Breakout %</Th>
                         <Th title="Win rate in eliminations">Win %</Th>
-                        <Th>W</Th><Th className="pr-5">L</Th>
+                        <Th>W</Th><Th>L</Th>
                       </tr>
                     </thead>
                     <tbody>
@@ -196,11 +221,11 @@ export default function StatsPage() {
                         const games = c.winCount + c.lossCount;
                         const winRate = games > 0 ? c.winCount / games : null;
                         return (
-                          <tr key={c.category} className="border-b border-nhra-border/50 hover:bg-nhra-border/20">
-                            <td className="p-3 pl-5">
+                          <tr key={c.category}>
+                            <td>
                               <div className="flex items-center gap-2">
                                 <span className="text-white font-medium">{c.category}</span>
-                                <span className={`text-[11px] px-1.5 py-0.5 rounded border ${badge.cls}`}>{badge.label}</span>
+                                <span className={`rounded-full border px-1.5 py-0.5 text-[0.68rem] font-medium ${badge.cls}`}>{badge.label}</span>
                               </div>
                             </td>
                             <Td>{c.count}</Td>
@@ -213,7 +238,7 @@ export default function StatsPage() {
                             <Td className={c.breakoutRate !== null && c.breakoutRate > 0.3 ? "text-red-400" : "text-gray-300"}>{pct(c.breakoutRate)}</Td>
                             <Td className={winRate !== null && winRate >= 0.5 ? "text-green-400" : "text-gray-300"}>{pct(winRate)}</Td>
                             <Td className="text-green-400">{c.winCount}</Td>
-                            <Td className="text-red-400 pr-5">{c.lossCount}</Td>
+                            <Td className="text-red-400">{c.lossCount}</Td>
                           </tr>
                         );
                       })}
@@ -222,7 +247,7 @@ export default function StatsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <ChartContainer title="Avg Package" subtitle="Reaction + closeness to the number — lower is better (green = best)">
                   <HorizontalBarChart data={bracketChartData} dataKey="avgPackage" color="#003DA5" unit="s" decimals={3} best="min" />
                 </ChartContainer>
@@ -243,20 +268,20 @@ export default function StatsPage() {
 
 function SectionHeader({ color, title, count, blurb }: { color: string; title: string; count: number; blurb: string }) {
   return (
-    <div className="mb-5">
-      <div className="flex items-center gap-3 mb-2">
-        <div className={`w-1 h-7 ${color} rounded-full`} />
-        <h2 className="text-xl sm:text-2xl font-bold text-white">{title}</h2>
-        <span className="text-xs text-gray-500 bg-nhra-darker px-2 py-1 rounded-full">{count} {count === 1 ? "class" : "classes"}</span>
+    <div className="mb-4">
+      <div className="flex items-center gap-2.5 mb-1.5">
+        <span className={`h-2 w-2 rounded-full ${color}`} />
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <span className="chip">{count} {count === 1 ? "class" : "classes"}</span>
       </div>
       <p className="text-sm text-gray-400 leading-relaxed max-w-4xl">{blurb}</p>
     </div>
   );
 }
 
-function Th({ children, className = "", title }: { children: React.ReactNode; className?: string; title?: string }) {
-  return <th title={title} className={`p-3 text-right font-medium ${title ? "cursor-help" : ""} ${className}`}>{children}</th>;
+function Th({ children, className = "", title, align = "right" }: { children: React.ReactNode; className?: string; title?: string; align?: "left" | "right" }) {
+  return <th title={title} className={`${align === "left" ? "text-left" : "text-right"} ${title ? "cursor-help" : ""} ${className}`}>{children}</th>;
 }
 function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <td className={`p-3 text-right font-mono text-gray-300 ${className}`}>{children}</td>;
+  return <td className={`text-right font-mono text-gray-300 ${className}`}>{children}</td>;
 }
