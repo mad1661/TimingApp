@@ -1,9 +1,14 @@
 rules_version = '2';
 
+// Locked 2026-10-16 (app-readiness fix #1). All TimingApp data access goes
+// through the Next.js server (src/lib/firebase-admin.ts, Admin SDK), which
+// bypasses these rules. No browser/Pi/announcer client talks to this
+// Firestore directly (announcers use the nhra-timing-api RTDB), so direct
+// client access is denied. Rollback copy: shared/cto/app-readiness/rollback/.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }
