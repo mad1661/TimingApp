@@ -5,6 +5,9 @@ import {
   buildQdatFile,
   buildTechIndex,
   classCodeForCategory,
+  literalIndexClass,
+  printedClassColumn,
+  realDesignation,
   findTechCard,
   fmtRt,
   fmtEt,
@@ -72,8 +75,86 @@ function trimNum(s: string): string {
   return s.trim();
 }
 
+/**
+ * Class column for an AccuTime car. SC / SG / SST / TD / TS match a Compulink
+ * tower, including a literal IndexClass ("8.90"). Stock, Super Stock and Comp
+ * keep D/S, SS/HA, A/SA when the run or the card has it; STK / SS / COMP is
+ * only the fallback. The dial is not this field.
+ */
+function accuClassColumn(
+  className: string,
+  classCode: string,
+  techCategory: string | null | undefined,
+  techClassName: string | null | undefined,
+  runClasses: readonly (string | null | undefined)[],
+  elim: boolean,
+  runClass?: string | null,
+): string {
+  const printed = printedClassColumn({
+    category: className,
+    classCode,
+    runClass,
+    carClasses: runClasses,
+    techCategory,
+    techClassName,
+    honorIndexClassLabel: true,
+  });
+  return printed || (elim ? "" : classCode);
+}
+
 function toEdataCard(tc: EdataTechCard): EdataTechCard {
   return tc;
+}
+
+/** Drivers IndexClass for this car, when the session has a driver row. */
+function driverClassLabel(session: AccuTimeSession, car: string | null | undefined): string | null {
+  const key = (car || "").trim().toUpperCase();
+  if (!key) return null;
+  const driver = session.drivers.find((tc) => (tc.car_number || "").trim().toUpperCase() === key);
+  return driver ? driver.category || "" : null;
+}
+
+/**
+ * Class fields for one car. A real designation on the driver (D/S) wins. A
+ * generic STK/SS/COMP stored in place of a blank IndexClass does not hide a
+ * designation on the run or on another card.
+ */
+function classSources(
+  session: AccuTimeSession,
+  car: string | null | undefined,
+  techCategory: string | null | undefined,
+  techClassName: string | null | undefined,
+  extraClass?: string | null,
+): { techCategory: string | null; techClassName: string | null; runClasses: (string | null)[] } {
+  const key = (car || "").trim().toUpperCase();
+  const driver = key
+    ? session.drivers.find((tc) => (tc.car_number || "").trim().toUpperCase() === key)
+    : undefined;
+  let category: string | null = techCategory ?? null;
+  let className: string | null = techClassName ?? null;
+  if (
+    driver &&
+    (realDesignation(driver.category) ||
+      realDesignation(driver.class_name) ||
+      literalIndexClass(driver.category) ||
+      !realDesignation(techCategory))
+  ) {
+    category = driver.category || "";
+    className = driver.class_name || className;
+  }
+  const runClasses: (string | null)[] = [
+    extraClass ?? null,
+    ...session.runs
+      .filter((r) => key && (r.car_number || "").trim().toUpperCase() === key)
+      .map((r) => r.class_index ?? null),
+  ];
+  return { techCategory: category, techClassName: className, runClasses };
+}
+
+/** EDAT reads class_index. Copy a literal IndexClass onto the run AccuTime exports. */
+function runForEdat(session: AccuTimeSession, run: Omit<RunRow, "id" | "created_at">): RunRow {
+  const label = literalIndexClass(driverClassLabel(session, run.car_number));
+  return (label ? { ...run, class_index: label } : run) as RunRow;
 }
 
 export function buildAccuTimeArtifacts(
@@ -136,16 +217,20 @@ export function buildAccuTimeArtifacts(
         round: rd.round,
         label: rd.label,
         isFinal: rd.round === "F",
-        pairs: rd.pairs.map((p) => ({ runs: p.runs as RunRow[], single: p.single })),
+        pairs: rd.pairs.map((p) => ({
+          runs: p.runs.map((run) => runForEdat(s, run)),
+          single: p.single,
+        })),
       })),
     );
   }
-  const allRuns: RunRow[] = ordered.flatMap((s) => s.runs as RunRow[]);
+  const allRuns: RunRow[] = ordered.flatMap((s) => s.runs.map((run) => runForEdat(s, run)));
   const allDriverCards = ordered.flatMap((s) => s.drivers.map(toEdataCard));
   const mergedCards = [...allDriverCards, ...storedTechCards];
   const edatResult = buildEdataExport(allRuns, mergedCards, {
     classNumbers: numByCategory,
     rounds: sessionRounds,
+    honorIndexClassLabel: true,
     missingRtFix: "the AccuTime file logged no reaction time for it. Check the pass on the timing computer before printing.",
   });
   warnings.push(...edatResult.warnings);
@@ -228,10 +313,18 @@ export function buildAccuTimeArtifacts(
     // ----- QDAT text -----
     const qEntries: QdatEntry[] = session.qualifying.map((q) => {
       const tc = cardFor(q.car_number, q.name);
+      const src = classSources(session, q.car_number, tc?.category, tc?.class_name, q.class_index);
       return {
         car: q.car_number,
         member: tc?.member_number || "",
-        classOrIndex: (tc && tc.category) || session.classCode,
+        classOrIndex: accuClassColumn(
+          session.className,
+          session.classCode,
+          src.techCategory,
+          src.techClassName,
+          src.runClasses,
+          false,
+        ),
         body: tc ? bodyString(tc) : "",
         bodyYear: bodyYearFull(tc),
         engine: tc ? engineString(tc) : "",
@@ -263,10 +356,18 @@ export function buildAccuTimeArtifacts(
           : "",
         entries: session.qualifying.map((q, qi) => {
           const tc = cardFor(q.car_number, q.name);
+          const src = classSources(session, q.car_number, tc?.category, tc?.class_name, q.class_index);
           return {
             pos: String(qi + 1),
             num: q.car_number,
-            cls: (tc && tc.category) || session.classCode,
+            cls: accuClassColumn(
+              session.className,
+              session.classCode,
+              src.techCategory,
+              src.techClassName,
+              src.runClasses,
+              false,
+            ),
             driver: (tc ? fullName(tc) : "") || q.name,
             hometown: tc ? cityState(tc) : "",
             car: tc ? bodyString(tc) : "",
@@ -290,9 +391,18 @@ export function buildAccuTimeArtifacts(
           single: p.single,
           rows: p.runs.map((run): PdfRoundRow => {
             const tc = cardFor(run.car_number, run.name);
+            const src = classSources(session, run.car_number, tc?.category, tc?.class_name, run.class_index);
             return {
               num: run.car_number || "",
-              cls: (tc && tc.category) || "",
+              cls: accuClassColumn(
+                session.className,
+                session.classCode,
+                src.techCategory,
+                src.techClassName,
+                src.runClasses,
+                true,
+                run.class_index,
+              ),
               qfy: run.qual_pos != null ? String(run.qual_pos) : "",
               driver: (tc ? fullName(tc) : "") || run.name || "",
               home: tc ? cityState(tc) : "",

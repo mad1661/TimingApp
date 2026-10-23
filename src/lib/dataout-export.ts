@@ -3,6 +3,8 @@ import {
   buildDataOutExport,
   buildTechIndex,
   classCodeForCategory,
+  printedClassColumn,
+  carClassLists,
   detectTimingSystem,
   elimRoundsForCategory,
   findTechCard,
@@ -282,6 +284,7 @@ export function buildDataOutArtifacts(
         }
       }
 
+      const carClasses = carClassLists(catRuns);
       const pdfRounds = rounds.map((rd) => ({
         name: rd.label,
         pairs: rd.pairs.map((p) => ({
@@ -290,7 +293,14 @@ export function buildDataOutArtifacts(
             const tc = cardFor(run.car_number, run.name);
             return {
               num: run.car_number || "",
-              cls: (run.class_index || "").trim() || (tc && tc.category) || "",
+              cls: printedClassColumn({
+                category,
+                classCode: code,
+                runClass: run.class_index,
+                carClasses: carClasses.get((run.car_number || "").trim().toUpperCase().replace(/\s+/g, " ")),
+                techCategory: tc?.category,
+                techClassName: tc?.class_name,
+              }),
               qfy: qfy(run),
               driver: (tc ? fullName(tc) : "") || run.name || "",
               home: tc ? cityState(tc) : "",

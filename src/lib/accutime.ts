@@ -3,6 +3,7 @@ import MDBReader from "mdb-reader";
 import Papa from "papaparse";
 import type { RunRow } from "./db";
 import type { EdataTechCard } from "./edata-export";
+import { isGenericElimCode, realDesignation } from "./edata-export";
 import { parseEdataFile } from "./edata-parse";
 import { RACE_CLASSES } from "./schedule-classes";
 
@@ -83,6 +84,8 @@ export interface AccuTimeQualifier {
   mph: number | null;
   /** Which qualifying session the best ET came from (1-based), when stated. */
   bestSession: number | null;
+  /** Per-car class from the log or the QDAT row (D/S, SS/HA). Not the dial. */
+  class_index?: string | null;
 }
 
 export interface AccuTimePair {
@@ -463,6 +466,8 @@ interface LogRow {
   car: string;
   name: string;
   dial: number | null;
+  /** Drivers-style IndexClass on the logging row (D/S, SS/HA, 8.90). Not the dial. */
+  indexClass: string;
   rtRaw: number | null;
   ft60: number | null;
   ft330: number | null;
@@ -474,6 +479,12 @@ interface LogRow {
   mph1320: number | null;
   margin: number | null;
   ts: Date | null;
+}
+
+function loggedClass(indexClass: string): string | null {
+  const raw = indexClass.trim();
+  if (!raw || isGenericElimCode(raw)) return null;
+  return raw;
 }
 
 /** Logging rows from the Jet race.dat or the text export's …dat.txt CSV. */
@@ -490,6 +501,7 @@ function readLogging(data: Uint8Array): LogRow[] {
       // Despite the column name, AccuTime puts the whole driver name here.
       name: str(r["lastname"]),
       dial: posOrNull(num(r["dialin"])),
+      indexClass: str(r["indexclass"]),
       rtRaw: posOrNull(num(r["reactiontime"])),
       ft60: posOrNull(num(r["ft60"])),
       ft330: posOrNull(num(r["ft330"])),
@@ -518,7 +530,7 @@ function isByeRow(r: LogRow): boolean {
 // ——— Drivers table ———
 
 /** Entry records from the Jet Drivers.dbf or the text export's Driversdbf.txt CSV. */
-function readDrivers(data: Uint8Array, classCode: string, className: string): EdataTechCard[] {
+function readDrivers(data: Uint8Array, _classCode: string, className: string): EdataTechCard[] {
   const records: Record<string, unknown>[] = isDriversCsv(data) ? readCsvRecords(data) : readJetTable(data, "drivers");
   return records
     .map((d) => {
@@ -532,7 +544,11 @@ function readDrivers(data: Uint8Array, classCode: string, className: string): Ed
         last_name: str(d["lastname"]),
         city: str(d["city"]),
         state: str(d["state"]),
-        category: str(d["indexclass"]) || classCode,
+        // IndexClass is the car's class (D/S, SS/HA, or 8.90). A blank stays
+        // blank — the export fills SC/SG/SST/TD/TS, or STK/SS/COMP, only when
+        // no designation turns up. Copying the session code here made every
+        // Stock car read as STK.
+        category: str(d["indexclass"]),
         class_name: className,
         engine_make: str(d["enginemake"]),
         body_type: [yearish ? "" : make, str(d["modelofcar"])].filter(Boolean).join(" "),
@@ -1337,6 +1353,7 @@ function buildCompulinkSessions(
       et: e.et,
       mph: null,
       bestSession: null,
+      class_index: loggedClass(e.cls),
     }));
 
     const drivers: EdataTechCard[] = [];
@@ -1344,9 +1361,15 @@ function buildCompulinkSessions(
     const addCard = (card: EdataTechCard) => {
       const key = `${card.car_number}|${card.last_name}`.toUpperCase();
       if (!card.car_number && !card.last_name) return;
-      if (seenCards.has(key)) return;
-      seenCards.add(key);
-      drivers.push(card);
+      const prev = drivers.find((d) => `${d.car_number}|${d.last_name}`.toUpperCase() === key);
+      if (!prev) {
+        if (seenCards.has(key)) return;
+        seenCards.add(key);
+        drivers.push(card);
+        return;
+      }
+      // A later row's D/S replaces a blank or STK/SS/COMP left by the first file.
+      if (!realDesignation(prev.category) && realDesignation(card.category)) prev.category = card.category;
     };
     for (const e of qdat?.entries || []) {
       addCard(compulinkCard({ ...e, className }));
@@ -1591,6 +1614,13 @@ export function parseAccuTimePack(
     const finishMph = (r: LogRow) =>
       finish === 1320 ? r.mph1320 : finish === 1000 ? r.mph1000 : r.mph660;
 
+    const classByCar = new Map<string, string>();
+    for (const row of logRows) {
+      if (isByeRow(row)) continue;
+      const label = loggedClass(row.indexClass);
+      if (label) classByCar.set(row.car.toUpperCase(), label);
+    }
+
     // Qualifying order from .qly (row order = position).
     const qualifying: AccuTimeQualifier[] = qlyRows.map((f, i) => ({
       pos: i + 1,
@@ -1600,6 +1630,7 @@ export function parseAccuTimePack(
       et: posOrNull(num(f[16])),
       mph: posOrNull(num(f[17])),
       bestSession: posOrNull(num(f[4])),
+      class_index: classByCar.get(str(f[12]).toUpperCase()) || null,
     }));
     const seedByCar = new Map(qualifying.map((q) => [q.car_number.toUpperCase(), q.pos]));
 
@@ -1688,7 +1719,7 @@ export function parseAccuTimePack(
           car_number: r.car || null,
           name: r.name || null,
           member_number: null,
-          class_index: null,
+          class_index: loggedClass(r.indexClass),
           rt: adjRt(r.rtRaw),
           ft60: r.ft60,
           ft330: r.ft330,

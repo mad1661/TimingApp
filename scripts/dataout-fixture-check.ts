@@ -11,16 +11,20 @@
  * 99.999 no-time stand-ins, an eighth-mile class with stray 1320 readings,
  * another event's week filed under a divisional, and so on.
  */
+import { inflateSync } from "zlib";
 import type { RunRow } from "../src/lib/db";
 import {
   buildDataOutExport,
   buildQdatExport,
   detectTimingSystem,
+  fixedIndexClass,
+  literalIndexClass,
   qualRunKey,
   elimRoundsForCategory,
   fmtRt,
   racedataFileText,
   truncFixed,
+  type EdataTechCard,
 } from "../src/lib/edata-export";
 import { buildDataOutArtifacts } from "../src/lib/dataout-export";
 import { selectDataOutRuns } from "../src/lib/dataout-runs";
@@ -781,6 +785,216 @@ const T = (h: string) => `06/19/2026 ${h}`;
   check(
     "SUPER COMP: round-1 winners are not qualifying-run checkboxes",
     !superOut.qualCandidates.some((c) => c.category === "SUPER COMP"),
+  );
+}
+
+// ——— 17. SC / SG / SST / TD / TS class column, dial column left alone ———
+// Compulink towers print the code in the class column and the index in its
+// own column (LO35: SC beside 8.90). A blank or numeric class_index, and a
+// tech card whose category is that number, do not replace the code and do
+// not clear the dial. Stock designations stay on the class column.
+{
+  const pdfStrings = (pdf: Uint8Array | null): string[] => {
+    if (!pdf) return [];
+    const raw = Buffer.from(pdf).toString("latin1");
+    const out: string[] = [];
+    for (const [, dict, body] of raw.matchAll(/<<([^>]*?)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+      let content = body;
+      if (/FlateDecode/.test(dict)) {
+        try {
+          content = inflateSync(Buffer.from(body, "latin1")).toString("latin1");
+        } catch {
+          continue;
+        }
+      }
+      for (const m of content.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)) out.push(m[1].replace(/\\(.)/g, "$1"));
+    }
+    return out;
+  };
+  const field = (content: string, car: string, n = 2) =>
+    content.split("\r\n").find((l) => l.startsWith(`${car},`))?.split(",")[n];
+
+  check(
+    "fixed class codes name the five index classes and leave designations alone",
+    fixedIndexClass("SUPER COMP") === "SC" &&
+      fixedIndexClass("JEGS Super Gas") === "SG" &&
+      fixedIndexClass("SUPER STREET") === "SST" &&
+      fixedIndexClass("Top Dragster") === "TD" &&
+      fixedIndexClass("TOP SPORTSMAN") === "TS" &&
+      fixedIndexClass("SUPER STOCK") === null &&
+      fixedIndexClass("STOCK ELIMINATOR") === null &&
+      fixedIndexClass("COMPETITION ELIMINATOR") === null &&
+      literalIndexClass("8.90") === "8.90" &&
+      literalIndexClass("10.90") === "10.90" &&
+      literalIndexClass("") === null &&
+      literalIndexClass("SC") === null &&
+      literalIndexClass("8.91") === "8.91",
+  );
+
+  const classes: [string, string, string][] = [
+    ["SUPER COMP", "SC", "8.90"],
+    ["SUPER GAS", "SG", "9.90"],
+    ["SUPER STREET", "SST", "10.90"],
+    ["TOP DRAGSTER", "TD", "6.50"],
+    ["TOP SPORTSMAN", "TS", "7.50"],
+  ];
+  for (const [category, code, dial] of classes) {
+    const card: EdataTechCard = {
+      car_number: "11",
+      first_name: "Driver",
+      last_name: "11",
+      city: "",
+      state: "",
+      category: dial,
+      class_name: category,
+      engine_make: "",
+      body_type: "",
+      body_year: "",
+      cu_cc: "",
+      member_number: "",
+    };
+    const rows: RunRow[] = [
+      pass("Q1", "06/18/2026 09:00:00 AM", "11", 8.91, { category, class_index: null, dial_in: 8.91 }),
+      pass("E1", T("10:00:00 AM"), "11", 8.95, { category, class_index: null, dial_in: 8.91 }, true),
+      pass("E1", T("10:00:00 AM"), "12", 9.1, { category, class_index: dial, dial_in: 8.91 }),
+    ];
+    const out = buildDataOutExport(rows, [card], {});
+    const q = out.qdat.find((f) => f.category === category);
+    const e = out.edat.find((f) => f.category === category);
+    check(
+      `${code}: QDAT class column is ${code} when the row and the tech card carry ${dial}`,
+      !!q && q.qualifiers.every((row) => row.classOrIndex === code) && field(q.content, "11") === code,
+      q?.qualifiers.map((row) => `${row.car}:${row.classOrIndex}`).join(" ") || out.warnings.join(" | "),
+    );
+    const qLine = q?.content.split("\r\n").find((l) => l.startsWith("11,"));
+    const qFields = qLine?.split(",") || [];
+    const superSheet = code === "SC" || code === "SG" || code === "SST";
+    check(
+      `${code}: QDAT index column keeps the dial 8.91 and the class column does not take ${dial}`,
+      qFields[2] === code &&
+        (superSheet ? qFields[qFields.length - 2] === "8.91" : true) &&
+        !qLine?.includes(dial),
+      qLine,
+    );
+    check(
+      `${code}: EDAT class column is ${code} for a blank class and for ${dial}; dial column stays 8.91`,
+      field(e?.content || "", "11") === code &&
+        field(e?.content || "", "12") === code &&
+        field(e?.content || "", "11", 9) === "8.91" &&
+        field(e?.content || "", "12", 9) === "8.91",
+      e?.content,
+    );
+    const pdf = buildDataOutArtifacts(rows, [card], { pdfs: true, categories: [category] });
+    const shown = [...pdfStrings(pdf.qualifyingPdf), ...pdfStrings(pdf.finalsPdf)];
+    check(
+      `${code}: PDFs print ${code} in the class column and 8.91 in the dial column, not ${dial}`,
+      shown.includes(code) && shown.includes("8.91") && !shown.includes(dial),
+      shown.filter((s) => s === code || s === dial || s === "8.91" || s === "11" || s === "12").join(" | "),
+    );
+  }
+
+  const sg = [
+    pass("E1", T("10:00:00 AM"), "21", 9.95, { category: "SUPER GAS", class_index: null, dial_in: 9.9 }, true),
+    pass("E1", T("10:00:00 AM"), "22", 9.99, { category: "SUPER GAS", class_index: "9.90", dial_in: 9.9 }),
+  ];
+  const pt = buildDataOutExport(sg, [], { timing: "portatree" });
+  check(
+    "SG: a Portatree EDAT prints SG in the class column and 9.90 in the dial column",
+    field(pt.edat[0]?.content || "", "21") === "SG" &&
+      field(pt.edat[0]?.content || "", "22") === "SG" &&
+      field(pt.edat[0]?.content || "", "21", 9) === "9.90" &&
+      field(pt.edat[0]?.content || "", "22", 9) === "9.90",
+    pt.edat[0]?.content,
+  );
+
+  const stk = buildDataOutExport(
+    [
+      pass("Q1", "06/18/2026 09:00:00 AM", "51", 10.4, { category: "STOCK ELIMINATOR", class_index: "B/SA", dial_in: 11.25 }),
+      pass("E1", T("10:00:00 AM"), "51", 10.5, { category: "STOCK ELIMINATOR", class_index: "B/SA", dial_in: 11.25 }, true),
+      pass("E1", T("10:00:00 AM"), "52", 10.8, { category: "STOCK ELIMINATOR", class_index: "E/SA", dial_in: 12 }),
+    ],
+    [],
+    {},
+  );
+  check(
+    "STOCK: designations stay on the QDAT and the EDAT",
+    stk.qdat.find((f) => f.category === "STOCK ELIMINATOR")?.qualifiers.map((e) => e.classOrIndex).join(" ") === "B/SA" &&
+      field(stk.edat.find((f) => f.category === "STOCK ELIMINATOR")?.content || "", "51") === "B/SA" &&
+      field(stk.edat.find((f) => f.category === "STOCK ELIMINATOR")?.content || "", "52") === "E/SA",
+  );
+
+  const cardFor = (car: string, category: string, className: string): EdataTechCard => ({
+    car_number: car,
+    first_name: "Driver",
+    last_name: car,
+    city: "",
+    state: "",
+    category,
+    class_name: className,
+    engine_make: "",
+    body_type: "",
+    body_year: "",
+    cu_cc: "",
+    member_number: "",
+  });
+  const designated = buildDataOutExport(
+    [
+      pass("Q1", "06/18/2026 09:00:00 AM", "61", 10.5, { category: "STOCK ELIMINATOR", class_index: "D/S", dial_in: 11.5, name: "Driver 61" }),
+      pass("E1", T("10:00:00 AM"), "61", 10.6, { category: "STOCK ELIMINATOR", class_index: null, dial_in: 11.5, name: "Driver 61" }, true),
+      pass("E1", T("10:00:00 AM"), "62", 9.4, { category: "SUPER STOCK", class_index: null, dial_in: 10.9, name: "Driver 62" }, true),
+      pass("Q1", "06/18/2026 09:05:00 AM", "63", 8.7, { category: "COMPETITION ELIMINATOR", class_index: null, dial_in: 8.73, name: "Driver 63" }),
+      pass("E1", T("10:05:00 AM"), "63", 8.8, { category: "COMPETITION ELIMINATOR", class_index: "GT/K", dial_in: 8.73, name: "Driver 63" }, true),
+      pass("Q1", "06/18/2026 09:10:00 AM", "64", 11.2, { category: "STOCK ELIMINATOR", class_index: null, dial_in: 12, name: "Driver 64" }),
+      pass("E1", T("10:10:00 AM"), "64", 11.3, { category: "STOCK ELIMINATOR", class_index: null, dial_in: 12, name: "Driver 64" }, true),
+    ],
+    [
+      cardFor("61", "STK", "STOCK ELIMINATOR"),
+      cardFor("62", "SS", "SS/HA"),
+      cardFor("63", "COMP", "COMPETITION ELIMINATOR"),
+      cardFor("64", "STK", "STOCK ELIMINATOR"),
+    ],
+    {},
+  );
+  const dstk = designated.edat.find((f) => f.category === "STOCK ELIMINATOR");
+  const dss = designated.edat.find((f) => f.category === "SUPER STOCK");
+  const dcomp = designated.edat.find((f) => f.category === "COMPETITION ELIMINATOR");
+  check(
+    "STOCK: D/S stays in the class column when a later pass is blank and the tech card says STK",
+    field(dstk?.content || "", "61") === "D/S" &&
+      field(dstk?.content || "", "61", 9) === "11.50" &&
+      designated.qdat.find((f) => f.category === "STOCK ELIMINATOR")?.qualifiers.find((q) => q.car === "61")?.classOrIndex === "D/S",
+    dstk?.content,
+  );
+  check(
+    "STOCK: a car with no designation still falls back to STK, dial unchanged",
+    field(dstk?.content || "", "64") === "STK" && field(dstk?.content || "", "64", 9) === "12.00",
+    dstk?.content,
+  );
+  check(
+    "SUPER STOCK: SS/HA on the tech card beats a generic SS",
+    field(dss?.content || "", "62") === "SS/HA" && field(dss?.content || "", "62", 9) === "10.90",
+    dss?.content,
+  );
+  check(
+    "COMP: GT/K beats a blank class field and a COMP tech card",
+    field(dcomp?.content || "", "63") === "GT/K" &&
+      field(dcomp?.content || "", "63", 9) === "8.73" &&
+      designated.qdat.find((f) => f.category === "COMPETITION ELIMINATOR")?.qualifiers.find((q) => q.car === "63")?.classOrIndex === "GT/K",
+    dcomp?.content,
+  );
+  const desPdf = buildDataOutArtifacts(
+    [
+      pass("Q1", "06/18/2026 09:00:00 AM", "61", 10.5, { category: "STOCK ELIMINATOR", class_index: "D/S", dial_in: 11.5, name: "Driver 61" }),
+      pass("E1", T("11:00:00 AM"), "61", 10.6, { category: "STOCK ELIMINATOR", class_index: null, dial_in: 11.5, name: "Driver 61" }, true),
+    ],
+    [cardFor("61", "STK", "STOCK ELIMINATOR")],
+    { pdfs: true, categories: ["STOCK ELIMINATOR"] },
+  );
+  const desShown = [...pdfStrings(desPdf.qualifyingPdf), ...pdfStrings(desPdf.finalsPdf)];
+  check(
+    "STOCK: PDFs print D/S in the class column and 11.50 in the dial column",
+    desShown.includes("D/S") && desShown.includes("11.50") && !desShown.includes("STK"),
+    desShown.filter((s) => s === "D/S" || s === "STK" || s === "11.50").join(" | "),
   );
 }
 
