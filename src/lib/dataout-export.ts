@@ -18,6 +18,8 @@ import {
   type EdataTechCard,
   type EdataExportFile,
   type QdatExportFile,
+  type QualCandidateRun,
+  type QualLadderCheck,
   type QualRule,
   type TimingSystem,
 } from "./edata-export";
@@ -80,6 +82,10 @@ export interface DataOutArtifacts {
   warnings: string[];
   /** The tower dialect the text files were written in. */
   timing: TimingSystem;
+  /** T/Q passes that can be left out of the QDAT. */
+  qualCandidates: QualCandidateRun[];
+  /** Round 1 vs the sportsman ladder of the QDAT, when time trials count. */
+  ladderChecks: QualLadderCheck[];
 }
 
 export interface DataOutBuildOptions {
@@ -117,6 +123,11 @@ export interface DataOutBuildOptions {
    * qualifying sheet. On: T1, T2, … count as Q and QDAT is each car's best run.
    */
   timeTrialsAsQualifying?: boolean;
+  /**
+   * Qualifying passes left out of the QDAT (`qualRunKey`). Eliminations are
+   * not affected. Absent keys stay in.
+   */
+  excludedQualKeys?: readonly string[];
 }
 
 /** getresults suffixes the event name with its date ("… Nationals 09/18/2026"); the sheets carry the date separately. */
@@ -156,6 +167,7 @@ export function buildDataOutArtifacts(
     timing,
     classNumberPresets,
     timeTrialsAsQualifying: opts.timeTrialsAsQualifying === true,
+    excludedQualKeys: opts.excludedQualKeys,
   });
   const warnings = [...selection.warnings, ...text.warnings];
 
@@ -166,6 +178,8 @@ export function buildDataOutArtifacts(
 
   const edat = text.edat.filter((f) => keep(f.category));
   const qdat = text.qdat.filter((f) => keep(f.category));
+  const qualCandidates = text.qualCandidates.filter((c) => keep(c.category));
+  const ladderChecks = text.ladderChecks.filter((c) => keep(c.category));
   const raceCode = (opts.pointsRaceCode || "").trim().replace(/-/g, "");
   const points = raceCode
     ? buildDataOutPoints(runs, edat, qdat, techCards, {
@@ -179,7 +193,7 @@ export function buildDataOutArtifacts(
     : [];
 
   if (opts.pdfs === false) {
-    return { edat, qdat, points, finalsPdf: null, qualifyingPdf: null, warnings, timing };
+    return { edat, qdat, points, finalsPdf: null, qualifyingPdf: null, warnings, timing, qualCandidates, ladderChecks };
   }
 
   // Every class with either file, in the same class order the text uses.
@@ -389,6 +403,8 @@ export function buildDataOutArtifacts(
     qualifyingPdf: qualCats.length ? buildQualifyingPdf(pdfEvent, qualCats) : null,
     warnings,
     timing,
+    qualCandidates,
+    ladderChecks,
   };
 }
 

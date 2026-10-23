@@ -34,13 +34,15 @@ interface DataOutRequest {
   timing?: string;
   /** AccuTime grids stored as T rounds: build QDAT from each car's best T run. Default off. */
   time_trials_as_qualifying?: boolean;
+  /** qualRunKey values left out of the QDAT. Eliminations are not affected. */
+  excluded_qual_runs?: unknown;
 }
 
 /**
  * POST /api/dataout-export
  * { event_code, season, event_name?, series_header?, logos?, categories?, pdfs?, brand?,
  *   class_numbers?, points_race_code?, pro_scale?, incomplete_race?, timing?,
- *   time_trials_as_qualifying? }
+ *   time_trials_as_qualifying?, excluded_qual_runs? }
  *
  * Builds the tower's RACEDATA package from the event's STORED runs: EDAT
  * elimination files and QDAT qualifying files (one per class, one class
@@ -128,6 +130,12 @@ export async function POST(request: NextRequest) {
       body.timing === "compulink" || body.timing === "portatree" ? body.timing : undefined;
     const proScale = PRO_EVENT_SCALES.find((s) => s.value === body.pro_scale)?.value as ProEventScale | undefined;
 
+    const excludedQualRuns = Array.isArray(body.excluded_qual_runs)
+      ? body.excluded_qual_runs
+          .filter((k): k is string => typeof k === "string" && k.trim() !== "")
+          .slice(0, 5000)
+      : undefined;
+
     const artifacts = buildDataOutArtifacts(runs, techCards as unknown as EdataTechCard[], {
       eventName: body.event_name || "",
       seriesHeader: body.series_header || "",
@@ -142,6 +150,7 @@ export async function POST(request: NextRequest) {
       proScale,
       incompleteRace: body.incomplete_race === true,
       timeTrialsAsQualifying: body.time_trials_as_qualifying === true,
+      excludedQualKeys: excludedQualRuns,
     });
 
     const toB64 = (bytes: Uint8Array | null) => (bytes ? Buffer.from(bytes).toString("base64") : null);
@@ -172,6 +181,8 @@ export async function POST(request: NextRequest) {
           content: f.content,
         })),
         timing: artifacts.timing,
+        qualCandidates: artifacts.qualCandidates,
+        ladderChecks: artifacts.ladderChecks,
         finalsPdfBase64: toB64(artifacts.finalsPdf),
         qualifyingPdfBase64: toB64(artifacts.qualifyingPdf),
         warnings: [...artifacts.warnings, ...logoWarnings],
