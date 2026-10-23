@@ -112,6 +112,11 @@ export interface DataOutBuildOptions {
   proScale?: ProEventScale;
   /** Racers who won their last round of an unfinished race get the next round's loss points. */
   incompleteRace?: boolean;
+  /**
+   * AccuTime grids stored as time trials. Off (default): T rounds are not a
+   * qualifying sheet. On: T1, T2, … count as Q and QDAT is each car's best run.
+   */
+  timeTrialsAsQualifying?: boolean;
 }
 
 /** getresults suffixes the event name with its date ("… Nationals 09/18/2026"); the sheets carry the date separately. */
@@ -146,7 +151,12 @@ export function buildDataOutArtifacts(
   for (const [category, n] of Object.entries(opts.classNumbers || {})) {
     if (Number.isInteger(n) && n > 0) classNumberPresets.set(norm(category), n);
   }
-  const text = buildDataOutExport(runs, techCards, { qualRules: opts.qualRules, timing, classNumberPresets });
+  const text = buildDataOutExport(runs, techCards, {
+    qualRules: opts.qualRules,
+    timing,
+    classNumberPresets,
+    timeTrialsAsQualifying: opts.timeTrialsAsQualifying === true,
+  });
   const warnings = [...selection.warnings, ...text.warnings];
 
   const wanted = opts.categories && opts.categories.length > 0
@@ -163,6 +173,7 @@ export function buildDataOutArtifacts(
         timing,
         proScale: opts.proScale,
         incompleteRace: opts.incompleteRace,
+        timeTrialsAsQualifying: opts.timeTrialsAsQualifying === true,
         warnings,
       })
     : [];
@@ -405,6 +416,8 @@ function buildDataOutPoints(
     timing: TimingSystem;
     proScale?: ProEventScale;
     incompleteRace?: boolean;
+    /** When set, T sessions count as qualifying sessions for the pro low-ET bonuses. */
+    timeTrialsAsQualifying?: boolean;
     warnings: string[];
   },
 ): DataOutPointsFile[] {
@@ -439,7 +452,7 @@ function buildDataOutPoints(
       classCode: scoringCode,
       elimRounds: rounds,
       qualifying,
-      qualSessionPasses: qualifyingSessions(catRuns),
+      qualSessionPasses: qualifyingSessions(catRuns, opts.timeTrialsAsQualifying === true),
     };
     const fieldSize = new Set(rounds[0].pairs.flatMap((p) => p.runs.map((r) => norm(r.car_number)))).size;
     const scored = scoreAccuTimeSession(session, cardFor, {
@@ -512,11 +525,11 @@ function buildDataOutPoints(
 }
 
 /** Each qualifying session's best ET per car, in session order — the pro low-ET bonuses read these. */
-function qualifyingSessions(catRuns: RunRow[]): ScoringSession["qualSessionPasses"] {
+function qualifyingSessions(catRuns: RunRow[], timeTrialsAsQualifying = false): ScoringSession["qualSessionPasses"] {
   const bySession = new Map<string, Map<string, { car_number: string; name: string; et: number | null }>>();
   for (const r of catRuns) {
     const round = norm(r.round);
-    if (!/^Q\d+$/.test(round)) continue;
+    if (!/^Q\d+$/.test(round) && !(timeTrialsAsQualifying && /^T\d+$/.test(round))) continue;
     const car = norm(r.car_number);
     if (!car || car === "BYE") continue;
     const et = r.ft1320 && r.ft1320 > 0 && r.ft1320 < 64.99 ? r.ft1320 : null;
@@ -528,6 +541,9 @@ function qualifyingSessions(catRuns: RunRow[]): ScoringSession["qualSessionPasse
     bySession.set(round, passes);
   }
   return [...bySession.entries()]
-    .sort(([a], [b]) => parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10))
+    .sort(([a], [b]) => {
+      const n = (round: string) => (round.startsWith("T") ? 1000 : 0) + parseInt(round.slice(1), 10);
+      return n(a) - n(b);
+    })
     .map(([round, passes]) => ({ session: parseInt(round.slice(1), 10), passes: [...passes.values()] }));
 }

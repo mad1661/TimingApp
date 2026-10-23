@@ -145,6 +145,8 @@ const DATAOUT_PREFS_KEY = "timindata_dataout_prefs";
 interface DataOutPrefs {
   classNumbers: Record<string, number>;
   pointsRaceCode: string;
+  /** AccuTime grids stored as T rounds — build QDAT from each car's best run. */
+  timeTrialsAsQualifying: boolean;
 }
 
 function loadDataOutPrefs(eventCode: string, season: string): DataOutPrefs | null {
@@ -152,7 +154,11 @@ function loadDataOutPrefs(eventCode: string, season: string): DataOutPrefs | nul
     const all = JSON.parse(localStorage.getItem(DATAOUT_PREFS_KEY) || "{}");
     const p = all[`${eventCode}_${season}`];
     return p && typeof p === "object"
-      ? { classNumbers: p.classNumbers || {}, pointsRaceCode: typeof p.pointsRaceCode === "string" ? p.pointsRaceCode : "" }
+      ? {
+          classNumbers: p.classNumbers || {},
+          pointsRaceCode: typeof p.pointsRaceCode === "string" ? p.pointsRaceCode : "",
+          timeTrialsAsQualifying: p.timeTrialsAsQualifying === true,
+        }
       : null;
   } catch {
     return null;
@@ -509,6 +515,9 @@ export default function DataOutPage() {
   const [pointsProScale, setPointsProScale] = useState<ProEventScale>("regular");
   // "auto" reads the tower dialect off the stored rows; the response says which it used.
   const [timingChoice, setTimingChoice] = useState<"auto" | TimingSystem>("auto");
+  // AccuTime sessions scraped from getresults land as T rounds. Off, those
+  // classes warn and emit no QDAT; on, T1/T2/… are the qualifying sheet.
+  const [timeTrialsAsQualifying, setTimeTrialsAsQualifying] = useState(false);
   const [exportTiming, setExportTiming] = useState<TimingSystem>("compulink");
   const [detectedTiming, setDetectedTiming] = useState<TimingSystem>("compulink");
   // The PDFs build server-side for the picked classes on demand (they carry
@@ -791,6 +800,7 @@ export default function DataOutPage() {
         points_race_code: pointsRaceCode.trim(),
         pro_scale: pointsProScale,
         timing: timingChoice === "auto" ? undefined : timingChoice,
+        time_trials_as_qualifying: timeTrialsAsQualifying,
       }),
     });
     const body = await res.json();
@@ -842,6 +852,7 @@ export default function DataOutPage() {
     const prefs = ec && s ? loadDataOutPrefs(ec, s) : null;
     setClassPins(prefs?.classNumbers || {});
     setPointsRaceCode(prefs ? prefs.pointsRaceCode : /^\d+$/.test(ec) ? ec : "");
+    setTimeTrialsAsQualifying(prefs?.timeTrialsAsQualifying === true);
   }, [eventCode, season]);
 
   // The class checklist loads itself whenever the event/season fields or the
@@ -856,7 +867,7 @@ export default function DataOutPage() {
     const t = setTimeout(() => loadExportClasses(ec, s), 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventCode, season, classPins, pointsRaceCode, pointsProScale, timingChoice]);
+  }, [eventCode, season, classPins, pointsRaceCode, pointsProScale, timingChoice, timeTrialsAsQualifying]);
 
   /** Pin a class to the tower's C# (blank or 0 unpins it). */
   function pinClassNumber(category: string, value: string) {
@@ -865,12 +876,32 @@ export default function DataOutPage() {
     if (Number.isInteger(n) && n > 0 && n < 100) next[category] = n;
     else delete next[category];
     setClassPins(next);
-    saveDataOutPrefs(eventCode.trim(), season.trim(), { classNumbers: next, pointsRaceCode: pointsRaceCode.trim() });
+    saveDataOutPrefs(eventCode.trim(), season.trim(), {
+      classNumbers: next,
+      pointsRaceCode: pointsRaceCode.trim(),
+      timeTrialsAsQualifying,
+    });
   }
 
   function changePointsRaceCode(value: string) {
     setPointsRaceCode(value);
-    saveDataOutPrefs(eventCode.trim(), season.trim(), { classNumbers: classPins, pointsRaceCode: value.trim() });
+    saveDataOutPrefs(eventCode.trim(), season.trim(), {
+      classNumbers: classPins,
+      pointsRaceCode: value.trim(),
+      timeTrialsAsQualifying,
+    });
+  }
+
+  function changeTimeTrials(on: boolean) {
+    setTimeTrialsAsQualifying(on);
+    const ec = eventCode.trim();
+    const s = season.trim();
+    if (!ec || !s) return;
+    saveDataOutPrefs(ec, s, {
+      classNumbers: classPins,
+      pointsRaceCode: pointsRaceCode.trim(),
+      timeTrialsAsQualifying: on,
+    });
   }
 
   function toggleClass(category: string) {
@@ -1440,6 +1471,23 @@ export default function DataOutPage() {
               Full names, member numbers, city, body and engine merge in from the tech cards; only
               rounds already on file are written, nothing is invented.
             </p>
+            <label
+              className="mt-3 flex items-start gap-2 cursor-pointer max-w-2xl"
+              title="Use T rounds as Q and build QDAT from each car's best run."
+            >
+              <input
+                type="checkbox"
+                checked={timeTrialsAsQualifying}
+                onChange={(e) => changeTimeTrials(e.target.checked)}
+                className="accent-nhra-red cursor-pointer mt-0.5"
+              />
+              <span className="text-xs text-gray-300">
+                <span className="text-white font-semibold">Treat Time Trials as Qualifying (AccuTime)</span>
+                <span className="block text-gray-500 mt-0.5">
+                  Use T rounds as Q and build QDAT from each car&apos;s best run.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
 
