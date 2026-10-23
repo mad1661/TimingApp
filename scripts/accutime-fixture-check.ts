@@ -1278,6 +1278,223 @@ function pdfStrings(pdf: Uint8Array | null): string[] {
   );
 }
 
+// ——— Index classes: Compulink codes, IndexClass only when the tower named it ———
+// A blank Drivers IndexClass prints SC / SG / SST / TD / TS. A literal
+// IndexClass ("8.90") stays in the class column. The dial (8.91 here) stays
+// in the dial column either way, and a missing IndexClass does not invent 8.90.
+{
+  const cases: { className: string; classCode: string; indexClass: string; expect: string }[] = [
+    { className: "Super Comp", classCode: "SC", indexClass: "", expect: "SC" },
+    { className: "Super Gas", classCode: "SG", indexClass: "9.90", expect: "9.90" },
+    { className: "Super Street", classCode: "SST", indexClass: "10.90", expect: "10.90" },
+    { className: "Top Dragster", classCode: "TD", indexClass: "8.90", expect: "8.90" },
+    { className: "Top Sportsman", classCode: "TS", indexClass: "", expect: "TS" },
+  ];
+  for (const { className, classCode, indexClass, expect } of cases) {
+    const mk = (car: string, win: boolean): Omit<RunRow, "id" | "created_at"> => ({
+      timestamp: "06/19/2026 10:00:00 AM",
+      round: "E1",
+      qual_pos: 1,
+      car_number: car,
+      name: `Driver ${car}`,
+      member_number: null,
+      class_index: null,
+      rt: 0.05,
+      ft60: null,
+      ft330: null,
+      ft660: null,
+      mph_660: null,
+      ft1000: null,
+      mph_1000: null,
+      ft1320: 8.95,
+      mph_1320: 170,
+      mov: null,
+      is_winner: win ? 1 : 0,
+      is_dq: 0,
+      result: win ? "W" : "L",
+      place: null,
+      category: className,
+      lane: win ? "L" : "R",
+      dial_in: 8.91,
+      event_code: null,
+      event_name: null,
+      event_type: null,
+      season: "2026",
+      start_date: "20260618",
+    });
+    const session: AccuTimeSession = {
+      classCode,
+      className,
+      raceDate: "2026-06-18",
+      seriesName: null,
+      treeBase: 0.5,
+      qualifying: [{ pos: 1, car_number: "401", name: "Driver 401", rt: 0.05, et: 8.92, mph: 180, bestSession: 1 }],
+      qualSessions: 1,
+      qualSessionPasses: [],
+      runs: [mk("401", true), mk("402", false)],
+      elimRounds: [{ round: "E1", label: "ROUND 1", pairs: [{ runs: [mk("401", true), mk("402", false)], single: false }] }],
+      lowEt: null,
+      topSpeed: null,
+      drivers: [
+        {
+          car_number: "401",
+          first_name: "Driver",
+          last_name: "401",
+          city: "Town",
+          state: "IN",
+          category: indexClass,
+          class_name: className,
+          engine_make: "",
+          body_type: "",
+          body_year: "",
+          cu_cc: "",
+          member_number: "1",
+        },
+      ],
+      warnings: [],
+    };
+    const arts = buildAccuTimeArtifacts([session], []);
+    const col = (content: string | undefined, car: string, n = 2) =>
+      content?.split("\r\n").find((l) => l.startsWith(`${car},`))?.split(",")[n];
+    const q = arts.qdat[0];
+    const e = arts.edat[0];
+    check(
+      `AccuTime ${classCode}: QDAT class column is ${expect} when IndexClass is ${indexClass || "blank"}`,
+      col(q?.content, "401") === expect,
+      q?.content,
+    );
+    check(
+      `AccuTime ${classCode}: EDAT class column is ${expect} for the labeled car and ${classCode} with no IndexClass; dial stays 8.91`,
+      col(e?.content, "401") === expect &&
+        col(e?.content, "402") === classCode &&
+        col(e?.content, "401", 9) === "8.91" &&
+        col(e?.content, "402", 9) === "8.91",
+      e?.content,
+    );
+    const shown = [...pdfStrings(arts.qualifyingPdf), ...pdfStrings(arts.finalsPdf)];
+    const classOk = shown.includes(expect) && shown.includes(classCode);
+    const dialOk = shown.includes("8.91");
+    const invented = indexClass === "" && shown.includes("8.90");
+    check(
+      `AccuTime ${classCode}: PDFs print class ${expect} and dial 8.91`,
+      classOk && dialOk && !invented,
+      shown.filter((s) => s === classCode || s === expect || s === "8.90" || s === "8.91" || s === indexClass).join(" | "),
+    );
+  }
+}
+
+// ——— Stock / Super Stock / Comp keep D/S, SS/HA, A/SA ———
+// A generic STK/SS/COMP on the driver card must not replace the designation.
+{
+  const mk = (
+    car: string,
+    win: boolean,
+    classIndex: string | null,
+  ): Omit<RunRow, "id" | "created_at"> => ({
+    timestamp: "06/19/2026 10:00:00 AM",
+    round: "E1",
+    qual_pos: 1,
+    car_number: car,
+    name: `Driver ${car}`,
+    member_number: null,
+    class_index: classIndex,
+    rt: 0.05,
+    ft60: null,
+    ft330: null,
+    ft660: null,
+    mph_660: null,
+    ft1000: null,
+    mph_1000: null,
+    ft1320: 10.4,
+    mph_1320: 120,
+    mov: null,
+    is_winner: win ? 1 : 0,
+    is_dq: 0,
+    result: win ? "W" : "L",
+    place: null,
+    category: "Stock Eliminator",
+    lane: win ? "L" : "R",
+    dial_in: 11.5,
+    event_code: null,
+    event_name: null,
+    event_type: null,
+    season: "2026",
+    start_date: "20260618",
+  });
+  const session: AccuTimeSession = {
+    classCode: "STK",
+    className: "Stock Eliminator",
+    raceDate: "2026-06-18",
+    seriesName: null,
+    treeBase: 0.5,
+    qualifying: [
+      { pos: 1, car_number: "501", name: "Driver 501", rt: 0.05, et: 10.4, mph: 120, bestSession: 1, class_index: "D/S" },
+      { pos: 2, car_number: "502", name: "Driver 502", rt: 0.06, et: 10.5, mph: 118, bestSession: 1, class_index: null },
+    ],
+    qualSessions: 1,
+    qualSessionPasses: [],
+    runs: [mk("501", true, "D/S"), mk("502", false, null)],
+    elimRounds: [
+      { round: "E1", label: "ROUND 1", pairs: [{ runs: [mk("501", true, "D/S"), mk("502", false, null)], single: false }] },
+    ],
+    lowEt: null,
+    topSpeed: null,
+    drivers: [
+      {
+        car_number: "501",
+        first_name: "Driver",
+        last_name: "501",
+        city: "Town",
+        state: "IN",
+        category: "STK",
+        class_name: "Stock Eliminator",
+        engine_make: "",
+        body_type: "",
+        body_year: "",
+        cu_cc: "",
+        member_number: "1",
+      },
+      {
+        car_number: "502",
+        first_name: "Driver",
+        last_name: "502",
+        city: "Town",
+        state: "IN",
+        category: "A/SA",
+        class_name: "Stock Eliminator",
+        engine_make: "",
+        body_type: "",
+        body_year: "",
+        cu_cc: "",
+        member_number: "2",
+      },
+    ],
+    warnings: [],
+  };
+  const arts = buildAccuTimeArtifacts([session], []);
+  const col = (content: string | undefined, car: string, n = 2) =>
+    content?.split("\r\n").find((l) => l.startsWith(`${car},`))?.split(",")[n];
+  check(
+    "AccuTime STOCK: QDAT class column is D/S and A/SA, not STK",
+    col(arts.qdat[0]?.content, "501") === "D/S" && col(arts.qdat[0]?.content, "502") === "A/SA",
+    arts.qdat[0]?.content,
+  );
+  check(
+    "AccuTime STOCK: EDAT class column keeps the designation; dial stays 11.50",
+    col(arts.edat[0]?.content, "501") === "D/S" &&
+      col(arts.edat[0]?.content, "502") === "A/SA" &&
+      col(arts.edat[0]?.content, "501", 9) === "11.50" &&
+      col(arts.edat[0]?.content, "502", 9) === "11.50",
+    arts.edat[0]?.content,
+  );
+  const shown = [...pdfStrings(arts.qualifyingPdf), ...pdfStrings(arts.finalsPdf)];
+  check(
+    "AccuTime STOCK: PDFs print D/S and A/SA, not the generic STK",
+    shown.includes("D/S") && shown.includes("A/SA") && shown.includes("11.50") && !shown.includes("STK"),
+    shown.filter((s) => s === "D/S" || s === "A/SA" || s === "STK" || s === "11.50").join(" | "),
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

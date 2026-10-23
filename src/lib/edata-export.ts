@@ -169,6 +169,13 @@ export interface DataOutExportOptions {
    * Absent keys stay in. Used when an AccuTime T pass is still a real time trial.
    */
   excludedQualKeys?: readonly string[];
+  /**
+   * AccuTime only. Drivers IndexClass is the class the tower named. A numeric
+   * one ("8.90") stays in the class column. getresults leaves this off: a
+   * blank or numeric class_index is not the class, and the dial stays in the
+   * dial column. Compulink towers print SC / SG / SST / TD / TS.
+   */
+  honorIndexClassLabel?: boolean;
 }
 
 const EOL = "\r\n";
@@ -613,6 +620,10 @@ interface LineContext {
   sheetPositionsOnly?: boolean;
   /** The one dial-in the whole field runs (Super Comp 8.90), filled where a row shows none. */
   sharedIndex: number | null;
+  /** AccuTime: a numeric Drivers IndexClass is the class label. getresults leaves this off. */
+  honorIndexClassLabel?: boolean;
+  /** Oldest-first class fields per car, so a blank row can keep D/S from another pass. */
+  carClasses?: Map<string, (string | null)[]>;
 }
 
 /** The racer's qualifying position: getresults' Q Pos, else their line on the class's qualifying sheet. */
@@ -641,8 +652,19 @@ function runLine(run: RunRow, tc: EdataTechCard | null, ctx: LineContext): strin
   const fields = [
     csvSafe(run.car_number || ""),
     csvSafe(run.member_number || "") || (tc ? csvSafe(tc.member_number || "") : "") || "0",
-    // A Portatree tower leaves the class blank where its entry has none.
-    classDesignation(run) || (portatree ? "" : ctx.classCode),
+    // Class column. SC/SG/SST/TD/TS print that code. Stock/SS/Comp print the
+    // car's designation (D/S, SS/HA) ahead of STK/SS/COMP. The dial is the
+    // column after the engine, not this one.
+    printedClassColumn({
+      category: run.category,
+      classCode: ctx.classCode,
+      runClass: run.class_index,
+      carClasses: ctx.carClasses?.get(norm(run.car_number)),
+      techCategory: tc?.category,
+      techClassName: tc?.class_name,
+      honorIndexClassLabel: ctx.honorIndexClassLabel,
+      portatree,
+    }),
     pos !== null ? String(pos) : portatree ? "" : "0",
     (tc ? fullName(tc) : "") || csvSafe(run.name || ""),
     tc ? cityState(tc) : "",
@@ -1095,6 +1117,8 @@ export function buildEdataExport(
       positions,
       sheetPositionsOnly: !!positions && qualStyleFor(category, code) === "super",
       sharedIndex: sharedFieldIndex(catRuns),
+      honorIndexClassLabel: opts.honorIndexClassLabel === true,
+      carClasses: carClassLists(current.filter((r) => (r.category || "").trim() === category)),
     };
 
     const lines: string[] = [`${timingHeader(timing)} ${category.toUpperCase()} Elimination Results`];
@@ -1705,6 +1729,160 @@ function bestQualPass(passes: RunRow[], rule: QualRule, quarterMile: boolean, ca
   return judged.reduce((a, b) => (compareKeys(key(b), key(a)) < 0 ? b : a));
 }
 
+/**
+ * Super Comp, Super Gas, Super Street, Top Dragster, and Top Sportsman have
+ * one class code for every car. Compulink towers (Indy LO35 and the rest)
+ * print that code in the class column and the index (8.90, 9.90, 10.90) in
+ * the index column. Anything else (Stock B/SA, Super Stock, Comp) returns
+ * null so the caller keeps the car's designation.
+ */
+export function fixedIndexClass(category: string | null | undefined): string | null {
+  const name = norm(category).replace(/^JEGS\s+/, "");
+  switch (name) {
+    case "SC":
+    case "SUPER COMP":
+      return "SC";
+    case "SG":
+    case "SUPER GAS":
+      return "SG";
+    case "SST":
+    case "SUPER STREET":
+      return "SST";
+    case "TD":
+    case "TOP DRAGSTER":
+      return "TD";
+    case "TS":
+    case "TOP SPORTSMAN":
+      return "TS";
+    default:
+      return null;
+  }
+}
+
+/**
+ * A tower that named the class by its index ("8.90", "9.90", "10.90").
+ * A blank is not that, and neither is the car's dial-in — that number has
+ * its own column. Returns the label as stored.
+ */
+export function literalIndexClass(value: string | null | undefined): string | null {
+  const raw = (value || "").trim();
+  return /^\d{1,2}\.\d{2,4}$/.test(raw) ? raw : null;
+}
+
+/**
+ * Class column for one of the five index classes. A literal index-class
+ * label wins when the caller passes one (AccuTime IndexClass). A blank
+ * becomes SC / SG / SST / TD / TS. Other categories return null.
+ */
+export function indexClassColumn(
+  category: string | null | undefined,
+  explicitClass: string | null | undefined,
+): string | null {
+  const fixed = fixedIndexClass(category);
+  if (!fixed) return null;
+  return literalIndexClass(explicitClass) || fixed;
+}
+
+/**
+ * STK / SS / COMP name the eliminator, not the car. A Compulink sheet prints
+ * the car's own class (D/S, SS/HA, A/SA, K/SA, GT/K) in that column.
+ */
+export function isGenericElimCode(value: string | null | undefined): boolean {
+  const name = norm(value).replace(/^JEGS\s+/, "");
+  return (
+    name === "STK" ||
+    name === "SS" ||
+    name === "COMP" ||
+    name === "STOCK" ||
+    name === "STOCK ELIM" ||
+    name === "STOCK ELIMINATOR" ||
+    name === "SUPER STOCK" ||
+    name === "SUPERSTOCK" ||
+    name === "COMPETITION" ||
+    name === "COMP ELIM" ||
+    name === "COMP ELIMINATOR" ||
+    name === "COMPETITION ELIMINATOR"
+  );
+}
+
+/** D/S, SS/HA, A/SA — not a blank, a dial, or the eliminator's own code. */
+export function realDesignation(value: string | null | undefined): string | null {
+  const raw = (value || "").trim();
+  if (!raw || /^[\d.]+$/.test(raw) || isGenericElimCode(raw)) return null;
+  return raw;
+}
+
+function newestDesignation(values: readonly (string | null | undefined)[]): string | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const d = realDesignation(values[i]);
+    if (d) return d;
+  }
+  return null;
+}
+
+function letterClass(value: string | null | undefined): string {
+  const raw = (value || "").trim();
+  if (!raw || /^[\d.]+$/.test(raw)) return "";
+  return raw;
+}
+
+/**
+ * Class column for one car. The five index classes print their code (or a
+ * literal IndexClass when AccuTime stored one). Stock, Super Stock and Comp
+ * print the car's designation when any pass or tech card has it; STK / SS /
+ * COMP is only the fallback. The dial is not read here.
+ */
+export function printedClassColumn(args: {
+  category: string | null | undefined;
+  classCode?: string | null;
+  /** This row's class field. Wins when it is a real designation. */
+  runClass?: string | null;
+  /** The car's other class fields, oldest first. */
+  carClasses?: readonly (string | null | undefined)[];
+  techCategory?: string | null;
+  techClassName?: string | null;
+  /** AccuTime: a numeric IndexClass ("8.90") is the class label for SC/SG/SST/TD/TS. */
+  honorIndexClassLabel?: boolean;
+  portatree?: boolean;
+}): string {
+  const explicit = args.honorIndexClassLabel
+    ? literalIndexClass(args.techCategory) || literalIndexClass(args.runClass)
+    : null;
+  const fixed =
+    indexClassColumn(args.category, explicit) || indexClassColumn(args.classCode, explicit);
+  if (fixed) return fixed;
+
+  const own = realDesignation(args.runClass);
+  if (own) return own;
+  const remembered = newestDesignation(args.carClasses || []);
+  if (remembered) return remembered;
+  const fromCard = realDesignation(args.techCategory) || realDesignation(args.techClassName);
+  if (fromCard) return fromCard;
+
+  const raw =
+    letterClass(args.runClass) ||
+    letterClass([...(args.carClasses || [])].reverse().find((v) => letterClass(v)) || "") ||
+    letterClass(args.techCategory);
+  if (raw) return raw;
+  return args.portatree ? "" : (args.classCode || "").trim();
+}
+
+/** Oldest-first class fields per car, for a blank row to borrow a designation. */
+export function carClassLists(runs: RunRow[]): Map<string, (string | null)[]> {
+  const ordered = [...runs].sort(
+    (a, b) => tsMillis(a.timestamp) - tsMillis(b.timestamp) || (a._scrape_seq ?? 0) - (b._scrape_seq ?? 0),
+  );
+  const out = new Map<string, (string | null)[]>();
+  for (const run of ordered) {
+    const key = norm(run.car_number);
+    if (!key) continue;
+    const list = out.get(key);
+    if (list) list.push(run.class_index ?? null);
+    else out.set(key, [run.class_index ?? null]);
+  }
+  return out;
+}
+
 /** A class designation as the timing system prints it ("E/SA", "TF", "SC") — not a dial-in or a blank. */
 function classDesignation(run: RunRow): string {
   const v = (run.class_index || "").trim();
@@ -1889,6 +2067,7 @@ export function buildQdatExport(
     }
 
     let enriched = 0;
+    const classesByCar = carClassLists(catRuns);
     const rows = qualifiers.map((agg, order) => {
       const tc = findTechCard(agg.car || null, agg.latest.name, techIndex);
       if (tc) enriched++;
@@ -1906,7 +2085,17 @@ export function buildQdatExport(
       const entry: QdatEntry = {
         car: agg.car,
         member: csvSafe(agg.latest.member_number || "") || (tc ? csvSafe(tc.member_number || "") : ""),
-        classOrIndex: classDesignation(agg.latest) || (tc ? tc.category || "" : "") || code,
+        // Class and index are different columns. These five print the code.
+        // Stock / Super Stock / Comp print the car's designation. entry.index
+        // below is still the dial.
+        classOrIndex: printedClassColumn({
+          category,
+          classCode: code,
+          runClass: agg.latest.class_index,
+          carClasses: classesByCar.get(norm(agg.car)) || [],
+          techCategory: tc?.category,
+          techClassName: tc?.class_name,
+        }),
         body: tc ? bodyString(tc) : "",
         bodyYear: bodyYearFull(tc),
         engine: tc ? engineString(tc) : "",
