@@ -32,12 +32,15 @@ interface DataOutRequest {
   incomplete_race?: boolean;
   /** Tower dialect: "compulink" / "portatree", or omitted to read it off the stored rows. */
   timing?: string;
+  /** AccuTime grids stored as T rounds: build QDAT from each car's best T run. Default off. */
+  time_trials_as_qualifying?: boolean;
 }
 
 /**
  * POST /api/dataout-export
  * { event_code, season, event_name?, series_header?, logos?, categories?, pdfs?, brand?,
- *   class_numbers?, points_race_code?, pro_scale?, incomplete_race?, timing? }
+ *   class_numbers?, points_race_code?, pro_scale?, incomplete_race?, timing?,
+ *   time_trials_as_qualifying? }
  *
  * Builds the tower's RACEDATA package from the event's STORED runs: EDAT
  * elimination files and QDAT qualifying files (one per class, one class
@@ -138,6 +141,7 @@ export async function POST(request: NextRequest) {
       pointsRaceCode: typeof body.points_race_code === "string" ? body.points_race_code : "",
       proScale,
       incompleteRace: body.incomplete_race === true,
+      timeTrialsAsQualifying: body.time_trials_as_qualifying === true,
     });
 
     const toB64 = (bytes: Uint8Array | null) => (bytes ? Buffer.from(bytes).toString("base64") : null);

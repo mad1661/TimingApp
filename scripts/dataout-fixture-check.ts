@@ -14,6 +14,7 @@
 import type { RunRow } from "../src/lib/db";
 import {
   buildDataOutExport,
+  buildQdatExport,
   detectTimingSystem,
   elimRoundsForCategory,
   fmtRt,
@@ -537,6 +538,64 @@ const T = (h: string) => `06/19/2026 ${h}`;
     "points: a junior class whose rows carry a pro slot's code (PSM) is scored on the sportsman brackets",
     JSON.stringify(jgot) === JSON.stringify(["1503:85", "1501:64", "1502:33", "1504:33", "1505:10"]),
     JSON.stringify(jgot),
+  );
+}
+
+// ——— 15. Time trials (AccuTime grids stored as T) become a QDAT only when asked ———
+{
+  const cat = "PRO STOCK";
+  const tt = (round: string, h: string, car: string, et: number) =>
+    pass(round, `06/18/2026 ${h}`, car, et, { category: cat, class_index: "PS" });
+  const onlyT: RunRow[] = [
+    tt("T1", "09:00:00 AM", "2101", 6.8),
+    tt("T2", "11:00:00 AM", "2101", 6.5),
+    tt("T1", "09:01:00 AM", "2102", 6.6),
+    tt("T2", "11:01:00 AM", "2102", 6.7),
+  ];
+  const qdatOff = buildQdatExport(onlyT, [], {});
+  check(
+    "time trials off: no QDAT, the current no-qualifying warning",
+    qdatOff.files.length === 0 && qdatOff.warnings.some((w) => w.startsWith("No qualifying rounds")),
+    qdatOff.warnings.join(" | "),
+  );
+  const off = buildDataOutExport(onlyT, [], {});
+  check("time trials off: the combined export emits no QDAT", off.qdat.length === 0 && off.warnings.some((w) => w.startsWith("No qualifying")));
+  const on = buildDataOutExport(onlyT, [], { timeTrialsAsQualifying: true });
+  const q = on.qdat.find((f) => f.category === cat);
+  check("time trials on: a QDAT is built from T1 and T2", !!q && q.rounds.join(" ") === "T1 T2" && q.entries === 2, q ? `${q.rounds.join(" ")} / ${q.entries}` : on.warnings.join(" | "));
+  check(
+    "time trials on: each car's best run, quickest first",
+    q?.qualifiers.map((e) => `${e.car}:${e.et}`).join(" ") === "2101:6.5 2102:6.6",
+    q?.qualifiers.map((e) => `${e.car}:${e.et}`).join(" "),
+  );
+  check(
+    "time trials on: the QDAT text lists those rows",
+    !!q && lines(q.content).some((l) => l.startsWith("2101,")) && lines(q.content).some((l) => l.startsWith("2102,")),
+    q?.content,
+  );
+  const via = buildDataOutArtifacts(onlyT, [], { pdfs: false, timeTrialsAsQualifying: true });
+  check(
+    "time trials on: buildDataOutArtifacts emits the same QDAT rows",
+    via.qdat.find((f) => f.category === cat)?.qualifiers.map((e) => `${e.car}:${e.et}`).join(" ") === "2101:6.5 2102:6.6",
+  );
+
+  // A real Q session still wins when the option is off; with it on, the T pass joins the best-run ranking.
+  const mixed: RunRow[] = [
+    tt("Q1", "08:00:00 AM", "2101", 6.9),
+    tt("T2", "11:00:00 AM", "2101", 6.4),
+    tt("Q1", "08:01:00 AM", "2102", 6.55),
+  ];
+  const mixedOff = buildDataOutExport(mixed, [], {}).qdat.find((f) => f.category === cat)!;
+  check(
+    "time trials off: a T pass does not replace the Q run",
+    mixedOff.qualifiers.map((e) => `${e.car}:${e.et}`).join(" ") === "2102:6.55 2101:6.9",
+    mixedOff.qualifiers.map((e) => `${e.car}:${e.et}`).join(" "),
+  );
+  const mixedOn = buildDataOutExport(mixed, [], { timeTrialsAsQualifying: true }).qdat.find((f) => f.category === cat)!;
+  check(
+    "time trials on: the best run may be the T pass",
+    mixedOn.qualifiers.map((e) => `${e.car}:${e.et}`).join(" ") === "2101:6.4 2102:6.55",
+    mixedOn.qualifiers.map((e) => `${e.car}:${e.et}`).join(" "),
   );
 }
 

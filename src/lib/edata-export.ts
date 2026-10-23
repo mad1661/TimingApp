@@ -155,6 +155,13 @@ export interface DataOutExportOptions {
    * at 0 — the tower prints the position off its own qualifying sheet.
    */
   qualPositions?: Map<string, Map<string, number>>;
+  /**
+   * AccuTime grids that getresults stored as time trials (T1, T2, …). Off by
+   * default: a class with only T rounds warns and emits no QDAT. On, `T\d+`
+   * counts as a qualifying round and the sheet is each car's best run under
+   * the class's usual rule. Super Comp / Gas / Street stay round-1 winners.
+   */
+  timeTrialsAsQualifying?: boolean;
 }
 
 const EOL = "\r\n";
@@ -167,9 +174,13 @@ function isElimRound(round: string | null | undefined): boolean {
  * A pass that counts toward the qualifying sheet: the Q sessions, QC, and C1 —
  * the first round of Stock / Super Stock class eliminations at nationals, which
  * the tower ranks as a qualifying session (its later C rounds it doesn't).
+ * Time trials (`T1`, `T2`, …) count only when `timeTrials` is set.
  */
-function isQualRound(round: string | null | undefined): boolean {
-  return !!round && /^(Q\d*|QC|C1)$/i.test(round.trim());
+function isQualRound(round: string | null | undefined, timeTrials = false): boolean {
+  if (!round) return false;
+  const r = round.trim();
+  if (/^(Q\d*|QC|C1)$/i.test(r)) return true;
+  return timeTrials && /^T\d+$/i.test(r);
 }
 
 function roundOrder(round: string): number {
@@ -1413,6 +1424,8 @@ function qualRoundOrder(round: string): number {
   const r = round.trim().toUpperCase();
   const m = r.match(/^Q(\d*)$/);
   if (m) return m[1] ? parseInt(m[1], 10) : 0;
+  const t = r.match(/^T(\d+)$/);
+  if (t) return 20 + parseInt(t[1], 10);
   if (r === "QC") return 50;
   const c = r.match(/^C(\d+)$/);
   if (c) return 100 + parseInt(c[1], 10);
@@ -1600,10 +1613,12 @@ function carIndexFrom(passes: RunRow[]): number | null {
 
 /**
  * Build one QDAT file per category from the event's stored runs. Written for
- * every class with qualifying passes (Q sessions, QC, C rounds), and for the
- * Super classes once round 1 has a winner; a racer's position is the Q Pos on
- * their most recent pass of any round, so an event whose eliminations are on
- * file gets the final ladder order.
+ * every class with qualifying passes (Q sessions, QC, C rounds — plus T rounds
+ * when `timeTrialsAsQualifying` is set), and for the Super classes once round
+ * 1 has a winner; a racer's position is the Q Pos on their most recent pass of
+ * any round, so an event whose eliminations are on file gets the final ladder
+ * order. A time-trial sheet has no tower ladder, so the class rule orders it
+ * from each car's best counting pass.
  */
 export function buildQdatExport(
   runs: RunRow[],
@@ -1612,8 +1627,10 @@ export function buildQdatExport(
 ): QdatExportResult {
   const warnings: string[] = [];
   const timing = opts.timing || "compulink";
+  const timeTrials = opts.timeTrialsAsQualifying === true;
+  const countsAsQual = (round: string | null | undefined) => isQualRound(round, timeTrials);
   const { runs: current, superseded } = findSupersededCopies(runs);
-  warnings.push(...supersededWarnings(superseded.filter((c) => isQualRound(c.run.round)), "QDAT"));
+  warnings.push(...supersededWarnings(superseded.filter((c) => countsAsQual(c.run.round)), "QDAT"));
 
   const byCategory = new Map<string, RunRow[]>();
   for (const run of current) {
@@ -1632,7 +1649,7 @@ export function buildQdatExport(
     .filter(({ catRuns, classStyle }) =>
       classStyle === "super"
         ? catRuns.some((r) => r.round === "E1" && isRunWinner(r))
-        : catRuns.some((r) => isQualRound(r.round)),
+        : catRuns.some((r) => countsAsQual(r.round)),
     )
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
   const ownNumbers = compulinkNumbers(categories);
@@ -1648,7 +1665,7 @@ export function buildQdatExport(
     const code = techIndex.code || fallbackCode;
     const quarterMile = isQuarterMileClass(catRuns);
     const superClass = classStyle === "super";
-    const counts = (r: RunRow) => (superClass ? r.round === "E1" && isRunWinner(r) : isQualRound(r.round));
+    const counts = (r: RunRow) => (superClass ? r.round === "E1" && isRunWinner(r) : countsAsQual(r.round));
 
     // One aggregate per racer — car number first, name for the rare bare row.
     const racers = new Map<string, QualifierAgg>();
@@ -1877,7 +1894,7 @@ export interface DataOutExportResult {
   warnings: string[];
 }
 
-export interface DataOutTextOptions extends Pick<DataOutExportOptions, "qualRules" | "timing"> {
+export interface DataOutTextOptions extends Pick<DataOutExportOptions, "qualRules" | "timing" | "timeTrialsAsQualifying"> {
   /** C# the user pinned per normalized category — the tower's slot for a class it numbers its own way. */
   classNumberPresets?: Map<string, number>;
 }
@@ -1898,9 +1915,10 @@ export function buildDataOutExport(
   techCards: EdataTechCard[] = [],
   opts: DataOutTextOptions = {},
 ): DataOutExportResult {
+  const timeTrials = opts.timeTrialsAsQualifying === true;
   const byCategory = new Map<string, RunRow[]>();
   for (const run of findSupersededCopies(runs).runs) {
-    if (!isElimRound(run.round) && !isQualRound(run.round)) continue;
+    if (!isElimRound(run.round) && !isQualRound(run.round, timeTrials)) continue;
     const cat = (run.category || "").trim();
     if (!cat) continue;
     const list = byCategory.get(cat);
@@ -1912,7 +1930,12 @@ export function buildDataOutExport(
     .sort((a, b) => a.order - b.order || a.category.localeCompare(b.category));
   const classNumbers = compulinkNumbers(ordered, opts.classNumberPresets);
 
-  const qdat = buildQdatExport(runs, techCards, { classNumbers, qualRules: opts.qualRules, timing: opts.timing });
+  const qdat = buildQdatExport(runs, techCards, {
+    classNumbers,
+    qualRules: opts.qualRules,
+    timing: opts.timing,
+    timeTrialsAsQualifying: timeTrials,
+  });
   const qualPositions = new Map<string, Map<string, number>>();
   for (const f of qdat.files) {
     const byCar = new Map<string, number>();
