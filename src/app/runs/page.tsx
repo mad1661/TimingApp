@@ -7,6 +7,12 @@ import { useLiveData } from "@/components/LiveDataProvider";
 import { buildTimestampGroups } from "@/lib/timestamp-utils";
 import EditRunModal, { type EditableRun } from "@/components/EditRunModal";
 import AddPairModal from "@/components/AddPairModal";
+import { AnimatePresence } from "motion/react";
+import { Dialog, DialogDescription, DialogTitle } from "@/components/motion/dialog";
+import { AnimatedNumber } from "@/components/motion/animated-number";
+import PageHeader from "@/components/ui/PageHeader";
+import EmptyState, { EmptyIcon, EMPTY_ICONS } from "@/components/ui/EmptyState";
+import { RefreshBar, SkeletonRows } from "@/components/ui/Skeleton";
 
 interface RunRow {
   id?: string;
@@ -71,35 +77,33 @@ export default function RunsPage() {
 
 function IgnoreConfirmModal({ run, onConfirm, onCancel }: { run: RunRow; onConfirm: () => void; onCancel: () => void }) {
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-nhra-dark border border-nhra-border rounded-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+    <Dialog onClose={onCancel} className="max-w-md">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center shrink-0">
-            <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-9 h-9 rounded-full bg-yellow-500/15 ring-1 ring-inset ring-yellow-500/30 flex items-center justify-center shrink-0">
+            <svg className="w-[1.1rem] h-[1.1rem] text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
             </svg>
           </div>
-          <h2 className="text-lg font-bold text-white">Ignore Test Run?</h2>
+          <DialogTitle>Ignore Test Run?</DialogTitle>
         </div>
-        <div className="bg-nhra-darker rounded-lg p-4 mb-5 space-y-1">
+        <div className="rounded-lg border border-nhra-border bg-nhra-darker p-3.5 mb-4 space-y-1">
           <p className="text-white font-medium">{run.name} <span className="text-nhra-accent font-bold">#{run.car_number}</span></p>
           <p className="text-gray-400 text-sm">{run.category} &middot; {run.round}</p>
           {run.ft1320 != null && <p className="text-gray-400 text-sm">ET: {run.ft1320.toFixed(3)} &middot; MPH: {run.mph_1320?.toFixed(2) ?? "-"}</p>}
           <p className="text-gray-500 text-xs mt-1">{run.timestamp}</p>
         </div>
-        <p className="text-gray-400 text-sm mb-5">
+        <DialogDescription className="mt-0 mb-5 text-sm leading-relaxed text-gray-400">
           This run will be hidden everywhere in the app — every page, stat, report, ladder, schedule and export. You can restore it later from Show Ignored.
-        </p>
-        <div className="flex justify-end gap-3">
-          <button onClick={onCancel} className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white transition-colors">
+        </DialogDescription>
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="btn btn-secondary">
             Cancel
           </button>
-          <button onClick={onConfirm} className="px-4 py-2 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 transition-colors">
+          <button onClick={onConfirm} className="btn bg-yellow-600 text-white hover:bg-yellow-700">
             Yes, Ignore Run
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -273,7 +277,7 @@ function RunsPageInner() {
   const SortHeader = ({ col, label, align = "left" }: { col: string; label: string; align?: string }) => (
     <th
       onClick={() => handleSort(col)}
-      className={`p-3 cursor-pointer hover:text-white transition-colors whitespace-nowrap ${align === "right" ? "text-right" : "text-left"} ${sortBy === col ? "text-nhra-accent" : ""}`}
+      className={`cursor-pointer select-none hover:text-white transition-colors ${align === "right" ? "text-right" : "text-left"} ${sortBy === col ? "text-nhra-accent" : ""}`}
     >
       {label}
       {sortBy === col && <span className="ml-1">{sortDir === "ASC" ? "\u2191" : "\u2193"}</span>}
@@ -282,54 +286,63 @@ function RunsPageInner() {
 
   return (
     <div className="max-w-[1600px] mx-auto">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Runs</h1>
-          <p className="text-gray-400">{total.toLocaleString()} total runs{ignoredKeys.size > 0 && <span className="text-yellow-500 ml-2">({ignoredKeys.size} ignored)</span>}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {ignoredKeys.size > 0 && (
+      <PageHeader
+        title="Runs"
+        description={
+          loading && runs.length === 0 ? (
+            "Loading runs..."
+          ) : (
+            <>
+              <AnimatedNumber value={total} /> total runs
+              {ignoredKeys.size > 0 && <span className="text-yellow-500 ml-2">({ignoredKeys.size} ignored)</span>}
+            </>
+          )
+        }
+        actions={
+          <>
+            {ignoredKeys.size > 0 && (
+              <button
+                onClick={() => {
+                  setShowIgnored(!showIgnored);
+                  setPage(0);
+                }}
+                className={`btn ${showIgnored ? "border-yellow-500/50 bg-yellow-500/15 text-yellow-400" : "btn-secondary"}`}
+              >
+                {showIgnored ? "Showing Ignored" : "Show Ignored"} ({ignoredKeys.size})
+              </button>
+            )}
             <button
-              onClick={() => {
-                setShowIgnored(!showIgnored);
-                setPage(0);
-              }}
-              className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showIgnored ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-400" : "bg-nhra-darker border-nhra-border text-gray-500 hover:text-white"}`}
+              onClick={() => setShowAddPair(true)}
+              disabled={!eventCode || !season}
+              className="btn btn-primary"
             >
-              {showIgnored ? "Showing Ignored" : "Show Ignored"} ({ignoredKeys.size})
+              + Add Pair
             </button>
-          )}
-          <button
-            onClick={() => setShowAddPair(true)}
-            disabled={!eventCode || !season}
-            className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40"
-          >
-            + Add Pair
-          </button>
-          <button
-            onClick={handleExportCsv}
-            disabled={runs.length === 0}
-            className="px-4 py-2 bg-nhra-card border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white hover:border-gray-500 transition-colors disabled:opacity-50"
-          >
-            Export CSV
-          </button>
-        </div>
-      </div>
+            <button
+              onClick={handleExportCsv}
+              disabled={runs.length === 0}
+              className="btn btn-secondary"
+            >
+              Export CSV
+            </button>
+          </>
+        }
+      />
 
       {/* Filters */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl p-4 mb-6">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl p-3 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <input
             type="text"
             value={nameFilter}
             onChange={(e) => { setNameFilter(e.target.value); setPage(0); }}
             placeholder="Search racer..."
-            className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm placeholder-gray-600 focus:outline-none focus:border-nhra-accent"
+            className="input"
           />
           <select
             value={categoryFilter}
             onChange={(e) => { setCategoryFilter(e.target.value); setPage(0); }}
-            className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm focus:outline-none focus:border-nhra-accent"
+            className="input"
           >
             <option value="">All Categories</option>
             {filters?.categories.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -337,7 +350,7 @@ function RunsPageInner() {
           <select
             value={seasonFilter}
             onChange={(e) => { setSeasonFilter(e.target.value); setPage(0); }}
-            className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm focus:outline-none focus:border-nhra-accent"
+            className="input"
           >
             <option value="">All Seasons</option>
             {filters?.seasons.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -345,7 +358,7 @@ function RunsPageInner() {
           <select
             value={roundFilter}
             onChange={(e) => { setRoundFilter(e.target.value); setPage(0); }}
-            className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm focus:outline-none focus:border-nhra-accent"
+            className="input"
           >
             <option value="">All Rounds</option>
             {filters?.rounds.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -353,7 +366,7 @@ function RunsPageInner() {
           <select
             value={classFilter}
             onChange={(e) => { setClassFilter(e.target.value); setPage(0); }}
-            className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-white text-sm focus:outline-none focus:border-nhra-accent"
+            className="input"
           >
             <option value="">All Classes</option>
             {filters?.classes.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -362,11 +375,12 @@ function RunsPageInner() {
       </div>
 
       {/* Table */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+      <div className="relative bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+        <RefreshBar active={loading && runs.length > 0} className="absolute inset-x-0 top-0 z-10" />
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table" aria-busy={loading}>
             <thead>
-              <tr className="border-b border-nhra-border text-gray-400 text-xs uppercase tracking-wider">
+              <tr>
                 <SortHeader col="timestamp" label="Time" />
                 <SortHeader col="name" label="Racer" />
                 <SortHeader col="category" label="Category" />
@@ -379,17 +393,30 @@ function RunsPageInner() {
                 <SortHeader col="mph_660" label="660mph" align="right" />
                 <SortHeader col="ft1320" label="ET" align="right" />
                 <SortHeader col="mph_1320" label="MPH" align="right" />
-                <th className="p-3 text-center">W</th>
+                <th className="text-center">W</th>
                 <SortHeader col="dial_in" label="Dial" align="right" />
                 <SortHeader col="lane" label="Ln" />
-                <th className="p-3 w-10"></th>
+                <th className="w-10"></th>
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                <tr><td colSpan={16} className="p-8 text-center text-gray-500">Loading...</td></tr>
+              {loading && runs.length === 0 ? (
+                <SkeletonRows rows={10} columns={16} />
               ) : displayRuns.length === 0 ? (
-                <tr><td colSpan={16} className="p-8 text-center text-gray-500">No runs found</td></tr>
+                <tr>
+                  <td colSpan={16}>
+                    <EmptyState
+                      variant="inline"
+                      icon={<EmptyIcon d={EMPTY_ICONS.runs} />}
+                      title="No runs found"
+                      description={
+                        nameFilter || categoryFilter || seasonFilter || roundFilter || classFilter
+                          ? "Nothing matches these filters. Clear one to see more runs."
+                          : "Runs show up here as soon as the timing data comes in."
+                      }
+                    />
+                  </td>
+                </tr>
               ) : (() => {
                 const rows: React.ReactNode[] = [];
                 let pairIdx = 0;
@@ -422,10 +449,10 @@ function RunsPageInner() {
 
                   rows.push(
                     <tr key={run.id || `${run._dedup_key || i}`} className={`${borderClass} hover:bg-nhra-border/20 transition-colors ${pairBg} ${resultBg}`}>
-                      <td className={`p-3 whitespace-nowrap font-mono text-xs text-gray-500 ${ignoredStyle}`}>
+                      <td className={`whitespace-nowrap font-mono text-xs text-gray-500 ${ignoredStyle}`}>
                         {isFirstInPair ? fmtRunTime(run.timestamp) : ""}
                       </td>
-                      <td className={`p-3 whitespace-nowrap ${ignoredStyle}`}>
+                      <td className={`whitespace-nowrap ${ignoredStyle}`}>
                         <div className="flex items-center gap-2">
                           {isInPair && (
                             <span className={`w-1 h-6 rounded-full shrink-0 ${(res === "W" || (!res && run.is_winner)) ? "bg-green-500" : res === "R" ? "bg-blue-500" : "bg-gray-700"}`} />
@@ -438,22 +465,22 @@ function RunsPageInner() {
                             ) : (
                               <span className="text-gray-500 italic text-xs">No Name</span>
                             )}
-                            <span className="text-nhra-accent font-bold text-sm ml-2">#{run.car_number}</span>
+                            <span className="text-nhra-accent font-semibold ml-2">#{run.car_number}</span>
                             {isIgnored && <span className="ml-2 text-yellow-500 text-xs font-medium no-underline" style={{ textDecoration: "none" }}>IGNORED</span>}
                           </div>
                         </div>
                       </td>
-                      <td className={`p-3 text-gray-300 whitespace-nowrap text-xs ${ignoredStyle}`}>{run.category}</td>
-                      <td className={`p-3 text-gray-300 ${ignoredStyle}`}>{run.round}</td>
-                      <td className={`p-3 text-gray-400 ${ignoredStyle}`}>{run.class_index}</td>
-                      <td className={`p-3 text-right font-mono text-gray-300 ${ignoredStyle}`}>{run.rt?.toFixed(3) ?? "-"}</td>
-                      <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.ft60?.toFixed(3) ?? "-"}</td>
-                      <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.ft330?.toFixed(3) ?? "-"}</td>
-                      <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.ft660?.toFixed(3) ?? "-"}</td>
-                      <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.mph_660?.toFixed(2) ?? "-"}</td>
-                      <td className={`p-3 text-right font-mono text-white font-medium ${ignoredStyle}`}>{run.ft1320?.toFixed(3) ?? "-"}</td>
-                      <td className={`p-3 text-right font-mono text-gray-300 ${ignoredStyle}`}>{run.mph_1320?.toFixed(2) ?? "-"}</td>
-                      <td className={`p-3 text-center ${ignoredStyle}`}>
+                      <td className={`text-gray-300 whitespace-nowrap text-xs ${ignoredStyle}`}>{run.category}</td>
+                      <td className={`text-gray-300 ${ignoredStyle}`}>{run.round}</td>
+                      <td className={`text-gray-400 ${ignoredStyle}`}>{run.class_index}</td>
+                      <td className={`text-right font-mono text-gray-300 ${ignoredStyle}`}>{run.rt?.toFixed(3) ?? "-"}</td>
+                      <td className={`text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.ft60?.toFixed(3) ?? "-"}</td>
+                      <td className={`text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.ft330?.toFixed(3) ?? "-"}</td>
+                      <td className={`text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.ft660?.toFixed(3) ?? "-"}</td>
+                      <td className={`text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.mph_660?.toFixed(2) ?? "-"}</td>
+                      <td className={`text-right font-mono text-white font-medium ${ignoredStyle}`}>{run.ft1320?.toFixed(3) ?? "-"}</td>
+                      <td className={`text-right font-mono text-gray-300 ${ignoredStyle}`}>{run.mph_1320?.toFixed(2) ?? "-"}</td>
+                      <td className={`text-center ${ignoredStyle}`}>
                         {(() => {
                           const r = run.result?.trim().toUpperCase();
                           if (r === "W" || (!r && run.is_winner)) return <span className="text-green-400 font-bold text-xs">W</span>;
@@ -463,9 +490,9 @@ function RunsPageInner() {
                           return <span className="text-gray-600">-</span>;
                         })()}
                       </td>
-                      <td className={`p-3 text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.dial_in?.toFixed(2) ?? "-"}</td>
-                      <td className={`p-3 text-gray-400 ${ignoredStyle}`}>{run.lane}</td>
-                      <td className="p-3 text-center whitespace-nowrap">
+                      <td className={`text-right font-mono text-gray-400 ${ignoredStyle}`}>{run.dial_in?.toFixed(2) ?? "-"}</td>
+                      <td className={`text-gray-400 ${ignoredStyle}`}>{run.lane}</td>
+                      <td className="text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-2">
                           {run._dedup_key && !isIgnored && (
                             <button
@@ -530,47 +557,56 @@ function RunsPageInner() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between p-4 border-t border-nhra-border">
-            <p className="text-sm text-gray-400">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-t border-nhra-border">
+            <p className="text-xs tabular-nums text-gray-500">
               Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
             </p>
-            <div className="flex gap-2">
-              <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} className="px-3 py-1.5 bg-nhra-darker border border-nhra-border rounded text-sm text-gray-300 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
-              <span className="px-3 py-1.5 text-sm text-gray-400">Page {page + 1} of {totalPages}</span>
-              <button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1} className="px-3 py-1.5 bg-nhra-darker border border-nhra-border rounded text-sm text-gray-300 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} className="btn btn-secondary btn-sm">Prev</button>
+              <span className="px-1 text-xs tabular-nums text-gray-400">Page {page + 1} of {totalPages}</span>
+              <button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1} className="btn btn-secondary btn-sm">Next</button>
             </div>
           </div>
         )}
       </div>
 
-      {confirmRun && (
-        <IgnoreConfirmModal
-          run={confirmRun}
-          onConfirm={() => handleIgnore(confirmRun)}
-          onCancel={() => setConfirmRun(null)}
-        />
-      )}
+      <AnimatePresence>
+        {confirmRun && (
+          <IgnoreConfirmModal
+            key="ignore-run"
+            run={confirmRun}
+            onConfirm={() => handleIgnore(confirmRun)}
+            onCancel={() => setConfirmRun(null)}
+          />
+        )}
+      </AnimatePresence>
 
-      {editingRun && eventCode && season && (
-        <EditRunModal
-          run={editingRun}
-          eventCode={eventCode}
-          season={season}
-          onClose={() => setEditingRun(null)}
-          onSaved={() => { setEditingRun(null); fetchRuns(); }}
-        />
-      )}
+      <AnimatePresence>
+        {editingRun && eventCode && season && (
+          <EditRunModal
+            key="edit-run"
+            run={editingRun}
+            eventCode={eventCode}
+            season={season}
+            onClose={() => setEditingRun(null)}
+            onSaved={() => { setEditingRun(null); fetchRuns(); }}
+          />
+        )}
+      </AnimatePresence>
 
-      {showAddPair && eventCode && season && (
-        <AddPairModal
-          eventCode={eventCode}
-          season={season}
-          rounds={filters?.rounds || []}
-          categories={filters?.categories || []}
-          onClose={() => setShowAddPair(false)}
-          onSaved={() => { setShowAddPair(false); fetchRuns(); }}
-        />
-      )}
+      <AnimatePresence>
+        {showAddPair && eventCode && season && (
+          <AddPairModal
+            key="add-pair"
+            eventCode={eventCode}
+            season={season}
+            rounds={filters?.rounds || []}
+            categories={filters?.categories || []}
+            onClose={() => setShowAddPair(false)}
+            onSaved={() => { setShowAddPair(false); fetchRuns(); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

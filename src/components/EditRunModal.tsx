@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Dialog, DialogClose, DialogDescription, DialogHeader, DialogTitle } from "@/components/motion/dialog";
 
 export interface EditableRun {
   _dedup_key?: string;
@@ -37,8 +38,8 @@ interface Props {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-wider text-gray-500">{label}</span>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-gray-400">{label}</span>
       {children}
     </label>
   );
@@ -104,94 +105,88 @@ export default function EditRunModal({ run, eventCode, season, onClose, onSaved 
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-nhra-dark border border-nhra-border rounded-xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-5">
+    <Dialog onClose={onClose} className="max-w-3xl">
+        <DialogHeader>
           <div>
-            <h2 className="text-xl font-bold text-white">Edit Run</h2>
-            <p className="text-xs text-gray-500 mt-0.5">{run.timestamp} &middot; {run.category || "—"} &middot; {run.round || "—"} &middot; Lane {run.lane || "—"}</p>
+            <DialogTitle>Edit Run</DialogTitle>
+            <DialogDescription>{run.timestamp} &middot; {run.category || "—"} &middot; {run.round || "—"} &middot; Lane {run.lane || "—"}</DialogDescription>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+          <DialogClose />
+        </DialogHeader>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Field label="Car #">
-            <input value={form.car_number ?? ""} onChange={(e) => set("car_number", e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.car_number ?? ""} onChange={(e) => set("car_number", e.target.value)} className="input" />
           </Field>
           <Field label="Name">
-            <input value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} className="input" />
           </Field>
           <Field label="Class">
-            <input value={form.class_index ?? ""} onChange={(e) => set("class_index", e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.class_index ?? ""} onChange={(e) => set("class_index", e.target.value)} className="input" />
           </Field>
           <Field label="Lane">
-            <input value={form.lane ?? ""} onChange={(e) => set("lane", e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.lane ?? ""} onChange={(e) => set("lane", e.target.value)} className="input" />
           </Field>
 
           <Field label="Category">
-            <input value={form.category ?? ""} onChange={(e) => set("category", e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.category ?? ""} onChange={(e) => set("category", e.target.value)} className="input" />
           </Field>
           <Field label="Round">
-            <input value={form.round ?? ""} onChange={(e) => set("round", e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.round ?? ""} onChange={(e) => set("round", e.target.value)} className="input" />
           </Field>
           <Field label="Dial-In">
-            <input type="number" step="0.001" value={form.dial_in ?? ""} onChange={(e) => set("dial_in", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.dial_in ?? ""} onChange={(e) => set("dial_in", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="R/T">
-            <input type="number" step="0.001" value={form.rt ?? ""} onChange={(e) => set("rt", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.rt ?? ""} onChange={(e) => set("rt", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
 
           <Field label="60'">
-            <input type="number" step="0.001" value={form.ft60 ?? ""} onChange={(e) => set("ft60", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.ft60 ?? ""} onChange={(e) => set("ft60", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="330'">
-            <input type="number" step="0.001" value={form.ft330 ?? ""} onChange={(e) => set("ft330", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.ft330 ?? ""} onChange={(e) => set("ft330", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="660' (1/8)">
-            <input type="number" step="0.001" value={form.ft660 ?? ""} onChange={(e) => set("ft660", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.ft660 ?? ""} onChange={(e) => set("ft660", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="660 MPH">
-            <input type="number" step="0.01" value={form.mph_660 ?? ""} onChange={(e) => set("mph_660", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.01" value={form.mph_660 ?? ""} onChange={(e) => set("mph_660", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
 
           <Field label="1000'">
-            <input type="number" step="0.001" value={form.ft1000 ?? ""} onChange={(e) => set("ft1000", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.ft1000 ?? ""} onChange={(e) => set("ft1000", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="1000 MPH">
-            <input type="number" step="0.01" value={form.mph_1000 ?? ""} onChange={(e) => set("mph_1000", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.01" value={form.mph_1000 ?? ""} onChange={(e) => set("mph_1000", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="ET (1320)">
-            <input type="number" step="0.001" value={form.ft1320 ?? ""} onChange={(e) => set("ft1320", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.001" value={form.ft1320 ?? ""} onChange={(e) => set("ft1320", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
           <Field label="1320 MPH">
-            <input type="number" step="0.01" value={form.mph_1320 ?? ""} onChange={(e) => set("mph_1320", numOrNull(e.target.value))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step="0.01" value={form.mph_1320 ?? ""} onChange={(e) => set("mph_1320", numOrNull(e.target.value))} className="input font-mono" />
           </Field>
 
           <Field label="Winner (0/1)">
-            <input type="number" min={0} max={1} step={1} value={form.is_winner} onChange={(e) => set("is_winner", parseInt(e.target.value || "0", 10))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" min={0} max={1} step={1} value={form.is_winner} onChange={(e) => set("is_winner", parseInt(e.target.value || "0", 10))} className="input font-mono" />
           </Field>
           <Field label="DQ (0/1)">
-            <input type="number" min={0} max={1} step={1} value={form.is_dq} onChange={(e) => set("is_dq", parseInt(e.target.value || "0", 10))} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" min={0} max={1} step={1} value={form.is_dq} onChange={(e) => set("is_dq", parseInt(e.target.value || "0", 10))} className="input font-mono" />
           </Field>
           <Field label="Result (W/R/3/4)">
-            <input value={form.result ?? ""} onChange={(e) => set("result", e.target.value.toUpperCase())} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={form.result ?? ""} onChange={(e) => set("result", e.target.value.toUpperCase())} className="input" />
           </Field>
           <Field label="Run # override">
-            <input type="number" step={1} value={form.manual_run_number ?? ""} onChange={(e) => set("manual_run_number", e.target.value === "" ? null : parseInt(e.target.value, 10))} placeholder="auto" className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input type="number" step={1} value={form.manual_run_number ?? ""} onChange={(e) => set("manual_run_number", e.target.value === "" ? null : parseInt(e.target.value, 10))} placeholder="auto" className="input font-mono" />
           </Field>
         </div>
 
         {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
 
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onClose} className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
+        <div className="flex justify-end gap-2 mt-6">
+          <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn btn-primary">{saving ? "Saving…" : "Save"}</button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

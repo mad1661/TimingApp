@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Dialog, DialogClose, DialogDescription, DialogHeader, DialogTitle } from "@/components/motion/dialog";
 
 interface Props {
   eventCode: string;
@@ -53,8 +54,8 @@ function emptyLane(lane: string): LaneEntry {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-wider text-gray-500">{label}</span>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-gray-400">{label}</span>
       {children}
     </label>
   );
@@ -148,32 +149,27 @@ export default function AddPairModal({ eventCode, season, rounds, categories, on
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-nhra-dark border border-nhra-border rounded-xl w-full max-w-4xl p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-5">
+    <Dialog onClose={onClose} className="max-w-4xl">
+        <DialogHeader>
           <div>
-            <h2 className="text-xl font-bold text-white">Add Pair</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Manually insert a race that wasn&apos;t captured by the timing system.</p>
+            <DialogTitle>Add Pair</DialogTitle>
+            <DialogDescription>Manually insert a race that wasn&apos;t captured by the timing system.</DialogDescription>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+          <DialogClose />
+        </DialogHeader>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
           <Field label="Timestamp (MM/DD/YYYY h:mm:ss AM/PM)">
-            <input value={timestamp} onChange={(e) => setTimestamp(e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm font-mono" />
+            <input value={timestamp} onChange={(e) => setTimestamp(e.target.value)} className="input font-mono" />
           </Field>
           <Field label="Round">
-            <input value={round} list="add-pair-rounds" onChange={(e) => setRound(e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={round} list="add-pair-rounds" onChange={(e) => setRound(e.target.value)} className="input" />
             <datalist id="add-pair-rounds">
               {rounds.map((r) => <option key={r} value={r} />)}
             </datalist>
           </Field>
           <Field label="Category">
-            <input value={category} list="add-pair-cats" onChange={(e) => setCategory(e.target.value)} className="px-3 py-2 bg-nhra-darker border border-nhra-border rounded text-white text-sm" />
+            <input value={category} list="add-pair-cats" onChange={(e) => setCategory(e.target.value)} className="input" />
             <datalist id="add-pair-cats">
               {categories.map((c) => <option key={c} value={c} />)}
             </datalist>
@@ -182,9 +178,9 @@ export default function AddPairModal({ eventCode, season, rounds, categories, on
 
         <div className="space-y-4">
           {lanes.map((lane, idx) => (
-            <div key={idx} className="bg-nhra-darker rounded-lg border border-nhra-border p-4">
+            <div key={idx} className="rounded-lg border border-nhra-border bg-[var(--ui-head-bg)] p-4">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-bold text-white">Lane {lane.lane}</h3>
+                <h3 className="text-sm font-semibold text-white">Lane {lane.lane}</h3>
                 <div className="flex items-center gap-2">
                   <label className="flex items-center gap-1.5 text-xs text-gray-400">
                     <input type="checkbox" checked={lane.is_winner} onChange={(e) => updateLane(idx, { is_winner: e.target.checked })} />
@@ -195,55 +191,55 @@ export default function AddPairModal({ eventCode, season, rounds, categories, on
                     DQ
                   </label>
                   {lanes.length > 1 && (
-                    <button onClick={() => removeLane(idx)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+                    <button onClick={() => removeLane(idx)} className="btn btn-ghost btn-sm text-red-400">Remove</button>
                   )}
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <Field label="Lane">
-                  <input value={lane.lane} onChange={(e) => updateLane(idx, { lane: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm" />
+                  <input value={lane.lane} onChange={(e) => updateLane(idx, { lane: e.target.value })} className="input h-8 px-2" />
                 </Field>
                 <Field label="Car #">
-                  <input value={lane.car_number} onChange={(e) => updateLane(idx, { car_number: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm" />
+                  <input value={lane.car_number} onChange={(e) => updateLane(idx, { car_number: e.target.value })} className="input h-8 px-2" />
                 </Field>
                 <Field label="Name">
-                  <input value={lane.name} onChange={(e) => updateLane(idx, { name: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm" />
+                  <input value={lane.name} onChange={(e) => updateLane(idx, { name: e.target.value })} className="input h-8 px-2" />
                 </Field>
                 <Field label="Class">
-                  <input value={lane.class_index} onChange={(e) => updateLane(idx, { class_index: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm" />
+                  <input value={lane.class_index} onChange={(e) => updateLane(idx, { class_index: e.target.value })} className="input h-8 px-2" />
                 </Field>
 
                 <Field label="Dial">
-                  <input type="number" step="0.001" value={lane.dial_in} onChange={(e) => updateLane(idx, { dial_in: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.dial_in} onChange={(e) => updateLane(idx, { dial_in: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="R/T">
-                  <input type="number" step="0.001" value={lane.rt} onChange={(e) => updateLane(idx, { rt: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.rt} onChange={(e) => updateLane(idx, { rt: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="60'">
-                  <input type="number" step="0.001" value={lane.ft60} onChange={(e) => updateLane(idx, { ft60: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.ft60} onChange={(e) => updateLane(idx, { ft60: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="330'">
-                  <input type="number" step="0.001" value={lane.ft330} onChange={(e) => updateLane(idx, { ft330: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.ft330} onChange={(e) => updateLane(idx, { ft330: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
 
                 <Field label="660' (1/8)">
-                  <input type="number" step="0.001" value={lane.ft660} onChange={(e) => updateLane(idx, { ft660: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.ft660} onChange={(e) => updateLane(idx, { ft660: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="660 MPH">
-                  <input type="number" step="0.01" value={lane.mph_660} onChange={(e) => updateLane(idx, { mph_660: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.01" value={lane.mph_660} onChange={(e) => updateLane(idx, { mph_660: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="1000'">
-                  <input type="number" step="0.001" value={lane.ft1000} onChange={(e) => updateLane(idx, { ft1000: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.ft1000} onChange={(e) => updateLane(idx, { ft1000: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="1000 MPH">
-                  <input type="number" step="0.01" value={lane.mph_1000} onChange={(e) => updateLane(idx, { mph_1000: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.01" value={lane.mph_1000} onChange={(e) => updateLane(idx, { mph_1000: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
 
                 <Field label="ET (1320)">
-                  <input type="number" step="0.001" value={lane.ft1320} onChange={(e) => updateLane(idx, { ft1320: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.001" value={lane.ft1320} onChange={(e) => updateLane(idx, { ft1320: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
                 <Field label="1320 MPH">
-                  <input type="number" step="0.01" value={lane.mph_1320} onChange={(e) => updateLane(idx, { mph_1320: e.target.value })} className="px-2 py-1.5 bg-nhra-dark border border-nhra-border rounded text-white text-sm font-mono" />
+                  <input type="number" step="0.01" value={lane.mph_1320} onChange={(e) => updateLane(idx, { mph_1320: e.target.value })} className="input h-8 px-2 font-mono" />
                 </Field>
               </div>
             </div>
@@ -251,16 +247,15 @@ export default function AddPairModal({ eventCode, season, rounds, categories, on
         </div>
 
         {lanes.length < 4 && (
-          <button onClick={addLane} className="mt-3 px-3 py-1.5 text-xs text-nhra-accent hover:underline">+ Add lane (up to 4)</button>
+          <button onClick={addLane} className="btn btn-ghost btn-sm mt-3 text-nhra-accent">+ Add lane (up to 4)</button>
         )}
 
         {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
 
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onClose} className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-50">{saving ? "Saving…" : "Add Pair"}</button>
+        <div className="flex justify-end gap-2 mt-6">
+          <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn btn-primary">{saving ? "Saving…" : "Add Pair"}</button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

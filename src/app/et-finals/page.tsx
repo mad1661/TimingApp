@@ -2,6 +2,11 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveData } from "@/components/LiveDataProvider";
+import { AnimatedNumber } from "@/components/motion/animated-number";
+import { AnimatedBackground } from "@/components/motion/animated-background";
+import PageHeader from "@/components/ui/PageHeader";
+import EmptyState, { EmptyIcon, EMPTY_ICONS } from "@/components/ui/EmptyState";
+import { SkeletonRows } from "@/components/ui/Skeleton";
 import {
   elimRoundOrder,
   inDayWindow,
@@ -178,7 +183,7 @@ function RoundsDetail({
 
   return (
     <table className="w-full text-xs">
-      <thead className="text-gray-600 uppercase tracking-wider">
+      <thead className="text-gray-500">
         <tr>
           <th className="text-left pl-10 pr-2 py-1 font-medium">Round</th>
           <th className="text-left px-2 py-1 font-medium">Class</th>
@@ -442,7 +447,7 @@ function RacerTable({
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
-        <thead className="text-gray-500 uppercase tracking-wider">
+        <thead className="text-gray-500">
           <tr>
             <th className="w-8 py-2" />
             <th className="text-left px-2 py-2 font-medium">Car #</th>
@@ -792,20 +797,20 @@ function PairingHelper({
   const plan = useMemo(() => buildPairingPlan(pairingGroups), [pairingGroups]);
 
   return (
-    <div className="mt-8 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+    <div className="mt-3 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
       >
         <div>
-          <h2 className="text-white font-bold">Pairing Helper</h2>
+          <h2 className="text-sm font-semibold text-white">Pairing Helper</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             Best pairings for the next round — out of what&apos;s left, how many of each team should run each other so
             teammates meet as little as possible, plus who is owed the bye on reaction time. Buy-back cars and
             non-points entries count as their own group: they can&apos;t earn, so they&apos;re free opponents.
           </p>
         </div>
-        <span className="text-gray-400 text-sm">{open ? "Hide" : "Open"}</span>
+        <span className="chip shrink-0">{open ? "Hide" : "Open"}</span>
       </button>
 
       {open && (
@@ -872,7 +877,7 @@ function PairingHelper({
                 {order.length > 0 && (
                   <div className="mt-2 overflow-x-auto">
                     <table className="w-full text-xs">
-                      <thead className="text-gray-500 uppercase tracking-wider">
+                      <thead className="text-gray-500">
                         <tr>
                           <th className="text-left pr-3 py-1 font-medium">Bye order</th>
                           <th className="text-left px-2 py-1 font-medium">Car</th>
@@ -1113,18 +1118,18 @@ function RoundReview({
   let stripe = false;
 
   return (
-    <div className="mt-8 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
+    <div className="mt-3 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+        className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
       >
         <div>
-          <h2 className="text-white font-bold">Round Review</h2>
+          <h2 className="text-sm font-semibold text-white">Round Review</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             Pull up a class and a round, pass by pass — fix a wrong car number or throw out a rerun right here
           </p>
         </div>
-        <span className="text-gray-400 text-sm">{open ? "Hide" : "Open"}</span>
+        <span className="chip shrink-0">{open ? "Hide" : "Open"}</span>
       </button>
 
       {open && (
@@ -1172,7 +1177,7 @@ function RoundReview({
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead className="text-gray-500 uppercase tracking-wider bg-nhra-darker">
+                <thead className="text-gray-500 bg-nhra-darker">
                   <tr>
                     <th className="text-left px-6 py-2 font-medium">Time</th>
                     <th className="text-left px-2 py-2 font-medium">Lane</th>
@@ -1367,7 +1372,7 @@ function TeamPanel({
       <div className="bg-nhra-card border border-nhra-border rounded-xl px-5 py-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <div className="text-white font-bold text-lg">
+            <div className="text-white font-semibold text-lg tracking-tight">
               <span className="text-gray-500 mr-2">#{rank}</span>
               {team.team_name}
             </div>
@@ -1379,8 +1384,10 @@ function TeamPanel({
           </div>
           <div className="flex gap-6 text-right">
             <div>
-              <div className="text-xs uppercase tracking-wider text-gray-500">Big Cars</div>
-              <div className="text-xl font-bold text-white">{team.bigPoints}</div>
+              <div className="text-xs font-medium text-gray-500">Big Cars</div>
+              <div className="text-xl font-semibold tracking-tight text-white">
+                <AnimatedNumber value={team.bigPoints} />
+              </div>
               {team.bigAdjustment !== 0 && (
                 <div className="text-[11px] text-yellow-500">
                   incl. {team.bigAdjustment > 0 ? "+" : ""}
@@ -1389,8 +1396,10 @@ function TeamPanel({
               )}
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wider text-gray-500">Jrs</div>
-              <div className="text-xl font-bold text-white">{team.jrPoints}</div>
+              <div className="text-xs font-medium text-gray-500">Jrs</div>
+              <div className="text-xl font-semibold tracking-tight text-white">
+                <AnimatedNumber value={team.jrPoints} />
+              </div>
               {team.jrAdjustment !== 0 && (
                 <div className="text-[11px] text-yellow-500">
                   incl. {team.jrAdjustment > 0 ? "+" : ""}
@@ -1399,8 +1408,10 @@ function TeamPanel({
               )}
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wider text-gray-500">Total</div>
-              <div className="text-xl font-bold text-nhra-red">{team.totalPoints}</div>
+              <div className="text-xs font-medium text-gray-500">Total</div>
+              <div className="text-xl font-semibold tracking-tight text-nhra-red">
+                <AnimatedNumber value={team.totalPoints} />
+              </div>
             </div>
             <div className="self-start flex flex-col items-end gap-1.5">
               <button
@@ -1494,7 +1505,7 @@ function TeamPanel({
             {team.byCategory.map((c) => (
               <span
                 key={c.category}
-                className="px-2.5 py-1 rounded-full text-xs font-semibold bg-nhra-darker border border-nhra-border text-gray-300"
+                className="chip h-6 px-2.5 text-xs text-gray-300"
               >
                 {c.category}
                 <span className="ml-1.5 text-nhra-red font-bold">{c.points}</span>
@@ -1506,7 +1517,7 @@ function TeamPanel({
 
       <div className="bg-nhra-card border border-green-500/30 rounded-xl overflow-hidden">
         <div className="px-4 py-2.5 bg-green-500/10 border-b border-green-500/30">
-          <span className="text-green-400 font-bold text-sm">Gaining Points</span>
+          <span className="text-green-400 font-semibold text-sm">Gaining Points</span>
           <span className="ml-2 text-xs text-gray-400">
             {earning.length} racer{earning.length === 1 ? "" : "s"} — still in, every round win adds to the board
           </span>
@@ -1516,7 +1527,7 @@ function TeamPanel({
 
       <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
         <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border">
-          <span className="text-gray-300 font-bold text-sm">Not Gaining Points</span>
+          <span className="text-gray-300 font-semibold text-sm">Not Gaining Points</span>
           <span className="ml-2 text-xs text-gray-500">
             {notEarning.length} racer{notEarning.length === 1 ? "" : "s"} — out, bought back, or a non-points entry
             (points already earned still count)
@@ -1528,7 +1539,7 @@ function TeamPanel({
       {notEntered.length > 0 && (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
           <div className="px-4 py-2.5 bg-nhra-darker border-b border-nhra-border">
-            <span className="text-gray-400 font-bold text-sm">No Passes Yet</span>
+            <span className="text-gray-400 font-semibold text-sm">No Passes Yet</span>
             <span className="ml-2 text-xs text-gray-600">
               {notEntered.length} roster entr{notEntered.length === 1 ? "y" : "ies"} without a run in a scoring class
             </span>
@@ -2629,34 +2640,32 @@ export default function EtFinalsPage() {
   if (!eventCode || !season) {
     return (
       <div className="max-w-3xl mx-auto">
-        <h1 className="text-3xl font-bold text-white mb-2">ET Finals Points D1</h1>
-        <p className="text-gray-400 mb-6">Team points for the Summit E.T. Finals and JDRL / Jr Street championship.</p>
-        <div className="bg-nhra-card border border-nhra-border rounded-xl px-6 py-10 text-center">
-          <p className="text-gray-400">Load an event first — set it up on the Dashboard, then come back.</p>
-        </div>
+        <PageHeader title="ET Finals Points D1" description="Team points for the Summit E.T. Finals and JDRL / Jr Street championship." />
+        <EmptyState
+          icon={<EmptyIcon d={EMPTY_ICONS.flag} />}
+          title="No event loaded"
+          description="Load an event first — set it up on the Dashboard, then come back."
+        />
       </div>
     );
   }
 
   return (
     <div className="max-w-6xl mx-auto pb-16">
-      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-1">ET Finals Points D1</h1>
-          <p className="text-gray-400">
-            {eventName || eventCode} · 1 point per main-race round win, per points-earning racer
-          </p>
-        </div>
-        <div className="flex gap-2">
+      <PageHeader
+        title="ET Finals Points D1"
+        description={<>{eventName || eventCode} · 1 point per main-race round win, per points-earning racer</>}
+        actions={
+          <>
           <button
             onClick={loadStandings}
             disabled={loading}
-            className="px-4 py-2 bg-nhra-red text-white rounded-lg text-sm font-semibold hover:bg-red-600 disabled:opacity-40"
+            className="btn btn-primary btn-sm"
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
           <label
-            className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
+            className="btn btn-secondary btn-sm cursor-pointer"
             title="Off: the sheet is standings only, which doesn't spell out how many cars each team has in the race"
           >
             <input
@@ -2668,7 +2677,7 @@ export default function EtFinalsPage() {
             List drivers
           </label>
           <label
-            className="flex items-center gap-2 px-3 py-2 bg-nhra-darker border border-nhra-border rounded-lg text-xs text-gray-400 cursor-pointer select-none"
+            className="btn btn-secondary btn-sm cursor-pointer"
             title="Off by default. Adds a 'Still In' column counting only cars that can still earn — bought-back and non-points cars aren't counted"
           >
             <input
@@ -2682,7 +2691,7 @@ export default function EtFinalsPage() {
           <button
             onClick={printPublication}
             disabled={!data}
-            className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white disabled:opacity-40"
+            className="btn btn-secondary btn-sm"
           >
             Print for Publication
           </button>
@@ -2690,10 +2699,8 @@ export default function EtFinalsPage() {
             onClick={copyShareLink}
             disabled={!eventCode}
             title="A public, read-only page with just the standings — no team breakdowns"
-            className={`px-4 py-2 rounded-lg text-sm disabled:opacity-40 border ${
-              copiedLink
-                ? "bg-green-500/15 border-green-500/40 text-green-400"
-                : "bg-nhra-darker border-nhra-border text-gray-300 hover:text-white"
+            className={`btn btn-sm ${
+              copiedLink ? "bg-green-500/15 border-green-500/40 text-green-400" : "btn-secondary"
             }`}
           >
             {copiedLink ? "Link copied" : "Share Points Link"}
@@ -2701,10 +2708,8 @@ export default function EtFinalsPage() {
           <button
             onClick={copyPublication}
             disabled={!data}
-            className={`px-4 py-2 rounded-lg text-sm disabled:opacity-40 border ${
-              copiedPub
-                ? "bg-green-500/15 border-green-500/40 text-green-400"
-                : "bg-nhra-darker border-nhra-border text-gray-300 hover:text-white"
+            className={`btn btn-sm ${
+              copiedPub ? "bg-green-500/15 border-green-500/40 text-green-400" : "btn-secondary"
             }`}
           >
             {copiedPub ? "Copied — paste into an email" : "Copy for Email"}
@@ -2712,19 +2717,20 @@ export default function EtFinalsPage() {
           <button
             onClick={exportStandings}
             disabled={!data}
-            className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white disabled:opacity-40"
+            className="btn btn-secondary btn-sm"
           >
             Export Standings
           </button>
           <button
             onClick={exportRacers}
             disabled={!data}
-            className="px-4 py-2 bg-nhra-darker border border-nhra-border text-gray-300 rounded-lg text-sm hover:text-white disabled:opacity-40"
+            className="btn btn-secondary btn-sm"
           >
             Export Racers
           </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {error && (
         <div className="mb-6 bg-red-500/10 border border-red-500/40 text-red-400 rounded-xl px-4 py-3 text-sm">
@@ -2734,7 +2740,7 @@ export default function EtFinalsPage() {
 
       {/* ── Totals ─────────────────────────────────────────────────────── */}
       {data && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           {[
             { label: "Big Cars", value: data.totals.bigPoints, accent: "text-white" },
             { label: "Jrs", value: data.totals.jrPoints, accent: "text-white" },
@@ -2746,8 +2752,10 @@ export default function EtFinalsPage() {
             },
           ].map((s) => (
             <div key={s.label} className="bg-nhra-card border border-nhra-border rounded-xl px-4 py-3">
-              <div className="text-xs uppercase tracking-wider text-gray-500 mb-1">{s.label}</div>
-              <div className={`text-2xl font-bold ${s.accent}`}>{s.value}</div>
+              <div className="text-xs font-medium text-gray-400 mb-1">{s.label}</div>
+              <div className={`text-2xl font-semibold tracking-tight ${s.accent}`}>
+                <AnimatedNumber value={s.value} />
+              </div>
             </div>
           ))}
         </div>
@@ -2787,20 +2795,20 @@ export default function EtFinalsPage() {
       )}
 
       {/* ── Track names ────────────────────────────────────────────────── */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-3 overflow-hidden">
         <button
           onClick={() => setShowTracks((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+          className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
         >
           <div>
-            <h2 className="text-white font-bold">Track Names</h2>
+            <h2 className="text-sm font-semibold text-white">Track Names</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {(data?.trackCodes || []).length} team code
               {(data?.trackCodes || []).length === 1 ? "" : "s"} in play ·{" "}
               {Object.keys(data?.trackNames || {}).length} named
             </p>
           </div>
-          <span className="text-gray-400 text-sm">{showTracks ? "Hide" : "Edit"}</span>
+          <span className="chip shrink-0">{showTracks ? "Hide" : "Edit"}</span>
         </button>
 
         {showTracks && (
@@ -2813,7 +2821,7 @@ export default function EtFinalsPage() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
+                <thead className="bg-nhra-darker text-gray-400 text-xs">
                   <tr>
                     <th className="text-left px-6 py-2 font-medium w-20">Code</th>
                     <th className="text-left px-3 py-2 font-medium">Track Name</th>
@@ -2891,19 +2899,19 @@ export default function EtFinalsPage() {
       </div>
 
       {/* ── Class setup ────────────────────────────────────────────────── */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-3 overflow-hidden">
         <button
           onClick={() => setShowSetup((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+          className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
         >
           <div>
-            <h2 className="text-white font-bold">Class Setup</h2>
+            <h2 className="text-sm font-semibold text-white">Class Setup</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {mainCategories.length} main race · {buybackCategories.length} buy-back ·{" "}
               {(data?.categories.length || 0) - mainCategories.length - buybackCategories.length} not scored
             </p>
           </div>
-          <span className="text-gray-400 text-sm">{showSetup ? "Hide" : "Edit"}</span>
+          <span className="chip shrink-0">{showSetup ? "Hide" : "Edit"}</span>
         </button>
 
         {showSetup && (
@@ -2926,7 +2934,7 @@ export default function EtFinalsPage() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
+                <thead className="bg-nhra-darker text-gray-400 text-xs">
                   <tr>
                     <th className="text-left px-6 py-2 font-medium">Class</th>
                     <th className="text-left px-3 py-2 font-medium">Role</th>
@@ -3055,20 +3063,20 @@ export default function EtFinalsPage() {
       </div>
 
       {/* ── Saved settings ─────────────────────────────────────────────── */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-3 overflow-hidden">
         <button
           onClick={() => setShowSetups((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+          className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
         >
           <div>
-            <h2 className="text-white font-bold">Saved Settings</h2>
+            <h2 className="text-sm font-semibold text-white">Saved Settings</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {setups.length === 0
                 ? "Name and save the whole points setup so a reload can't lose it"
                 : `${setups.length} saved — load one to restore the points setup after a reload`}
             </p>
           </div>
-          <span className="text-gray-400 text-sm">{showSetups ? "Hide" : "Open"}</span>
+          <span className="chip shrink-0">{showSetups ? "Hide" : "Open"}</span>
         </button>
 
         {showSetups && (
@@ -3103,7 +3111,7 @@ export default function EtFinalsPage() {
             {setups.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="text-gray-400 text-xs uppercase tracking-wider">
+                  <thead className="text-gray-400 text-xs">
                     <tr>
                       <th className="text-left py-2 font-medium">Name</th>
                       <th className="text-left py-2 font-medium">Season</th>
@@ -3152,20 +3160,20 @@ export default function EtFinalsPage() {
       </div>
 
       {/* ── Rosters ────────────────────────────────────────────────────── */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-3 overflow-hidden">
         <button
           onClick={() => setShowRosters((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+          className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
         >
           <div>
-            <h2 className="text-white font-bold">Team Rosters</h2>
+            <h2 className="text-sm font-semibold text-white">Team Rosters</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {rosters.length} uploaded ·{" "}
               {rosters.reduce((s, r) => s + r.bigEntries, 0)} big cars ·{" "}
               {rosters.reduce((s, r) => s + r.jrPointsEntries, 0)} scoring jrs
             </p>
           </div>
-          <span className="text-gray-400 text-sm">{showRosters ? "Hide" : "Manage"}</span>
+          <span className="chip shrink-0">{showRosters ? "Hide" : "Manage"}</span>
         </button>
 
         {showRosters && (
@@ -3237,7 +3245,7 @@ export default function EtFinalsPage() {
             {rosters.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="text-gray-400 text-xs uppercase tracking-wider">
+                  <thead className="text-gray-400 text-xs">
                     <tr>
                       <th className="text-left py-2 font-medium">Team</th>
                       <th className="text-left py-2 font-medium">Code</th>
@@ -3287,20 +3295,20 @@ export default function EtFinalsPage() {
       </div>
 
       {/* ── Tech cards ─────────────────────────────────────────────────── */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-3 overflow-hidden">
         <button
           onClick={() => setShowTechCards((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+          className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
         >
           <div>
-            <h2 className="text-white font-bold">Tech Cards</h2>
+            <h2 className="text-sm font-semibold text-white">Tech Cards</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {techPlaced > 0
                 ? `${techPlaced} racer${techPlaced === 1 ? "" : "s"} placed on a team from their tech card`
                 : "Member numbers and team codes — how racers in the timing system are identified"}
             </p>
           </div>
-          <span className="text-gray-400 text-sm">{showTechCards ? "Hide" : "Upload"}</span>
+          <span className="chip shrink-0">{showTechCards ? "Hide" : "Upload"}</span>
         </button>
 
         {showTechCards && (
@@ -3347,20 +3355,20 @@ export default function EtFinalsPage() {
       </div>
 
       {/* ── EData ──────────────────────────────────────────────────────── */}
-      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-6 overflow-hidden">
+      <div className="bg-nhra-card border border-nhra-border rounded-xl mb-3 overflow-hidden">
         <button
           onClick={() => setShowEdata((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-nhra-darker/50"
+          className="w-full px-5 py-3.5 flex items-center justify-between gap-4 text-left transition-colors hover:bg-[var(--ui-row-hover)]"
         >
           <div>
-            <h2 className="text-white font-bold">EData Import</h2>
+            <h2 className="text-sm font-semibold text-white">EData Import</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {dataSource === "edata"
                 ? "EData is the active source — getresults polling is off"
                 : "Load rounds from the timing system's own files when getresults is down"}
             </p>
           </div>
-          <span className="text-gray-400 text-sm">{showEdata ? "Hide" : "Open"}</span>
+          <span className="chip shrink-0">{showEdata ? "Hide" : "Open"}</span>
         </button>
 
         {showEdata && (
@@ -3443,26 +3451,27 @@ export default function EtFinalsPage() {
       </div>
 
       {/* ── Points ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <h2 className="text-xl font-bold text-white">Points</h2>
-        <div className="flex gap-1">
-          {([
-            ["combined", "Combined"],
-            ["big", "Big Cars"],
-            ["jr", "Jrs"],
-          ] as [ViewMode, string][]).map(([m, label]) => (
-            <button
-              key={m}
-              onClick={() => setView(m)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                view === m
-                  ? "bg-nhra-red text-white border-nhra-red"
-                  : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+      <div className="mt-8 flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h2 className="text-lg font-semibold text-white">Points</h2>
+        <div className="segmented">
+          <AnimatedBackground
+            defaultValue={view}
+            onValueChange={(id) => {
+              if (id === "combined" || id === "big" || id === "jr") setView(id);
+            }}
+            className="segmented-indicator"
+            transition={{ type: "spring", bounce: 0, duration: 0.25 }}
+          >
+            {([
+              ["combined", "Combined"],
+              ["big", "Big Cars"],
+              ["jr", "Jrs"],
+            ] as [ViewMode, string][]).map(([m, label]) => (
+              <button key={m} data-id={m} type="button" className="segmented-item">
+                {label}
+              </button>
+            ))}
+          </AnimatedBackground>
         </div>
       </div>
 
@@ -3658,44 +3667,47 @@ export default function EtFinalsPage() {
 
       {/* Team tabs */}
       {sortedTeams.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          <button
-            onClick={() => setTeamTab("all")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-              teamTab === "all"
-                ? "bg-white/10 text-white border-gray-400"
-                : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
-            }`}
+        <div className="segmented flex w-full mb-3">
+          <AnimatedBackground
+            defaultValue={teamTab}
+            onValueChange={(id) => {
+              if (id) setTeamTab(id);
+            }}
+            className="segmented-indicator"
+            transition={{ type: "spring", bounce: 0, duration: 0.25 }}
           >
-            Standings
-          </button>
-          {sortedTeams.map((team) => (
-            <button
-              key={team.track_code}
-              onClick={() => setTeamTab(team.track_code)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                teamTab === team.track_code
-                  ? "bg-white/10 text-white border-gray-400"
-                  : "bg-nhra-darker border-nhra-border text-gray-400 hover:text-white"
-              }`}
-            >
-              {team.team_name}
-              <span className="ml-1.5 text-nhra-red font-bold">
-                {view === "big" ? team.bigPoints : view === "jr" ? team.jrPoints : team.totalPoints}
-              </span>
-            </button>
-          ))}
+            {[
+              <button key="all" data-id="all" type="button" className="segmented-item">
+                Standings
+              </button>,
+              ...sortedTeams.map((team) => (
+                <button key={team.track_code} data-id={team.track_code} type="button" className="segmented-item">
+                  {team.team_name}
+                  <span className="ml-1.5 text-nhra-red font-semibold tabular-nums">
+                    {view === "big" ? team.bigPoints : view === "jr" ? team.jrPoints : team.totalPoints}
+                  </span>
+                </button>
+              )),
+            ]}
+          </AnimatedBackground>
         </div>
       )}
 
       {loading && !data ? (
-        <div className="flex justify-center py-12">
-          <div className="w-10 h-10 border-4 border-nhra-red border-t-transparent rounded-full animate-spin" />
+        <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden" aria-busy="true">
+          <span className="sr-only">Loading standings…</span>
+          <table className="data-table">
+            <tbody>
+              <SkeletonRows rows={6} columns={7} />
+            </tbody>
+          </table>
         </div>
       ) : sortedTeams.length === 0 ? (
-        <div className="bg-nhra-card border border-nhra-border rounded-xl px-6 py-10 text-center text-gray-500">
-          No teams to show yet.
-        </div>
+        <EmptyState
+          icon={<EmptyIcon d={EMPTY_ICONS.users} />}
+          title="No teams to show yet"
+          description="Teams appear here once a roster is uploaded or a racer's tech card names their team."
+        />
       ) : activeTeam ? (
         <TeamPanel
           key={activeTeam.track_code}
@@ -3716,16 +3728,16 @@ export default function EtFinalsPage() {
       ) : (
         <div className="bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <th className="text-left px-4 py-3 font-medium w-12">#</th>
-                  <th className="text-left px-4 py-3 font-medium">Team</th>
-                  <th className="text-right px-4 py-3 font-medium">Big Cars</th>
-                  <th className="text-right px-4 py-3 font-medium">Jrs</th>
-                  <th className="text-right px-4 py-3 font-medium">Total</th>
-                  <th className="text-right px-4 py-3 font-medium">Earning</th>
-                  <th className="text-right px-4 py-3 font-medium">Alive</th>
+                  <th className="w-12">#</th>
+                  <th>Team</th>
+                  <th className="text-right">Big Cars</th>
+                  <th className="text-right">Jrs</th>
+                  <th className="text-right">Total</th>
+                  <th className="text-right">Earning</th>
+                  <th className="text-right">Alive</th>
                 </tr>
               </thead>
               <tbody>
@@ -3733,10 +3745,10 @@ export default function EtFinalsPage() {
                   <tr
                     key={team.track_code}
                     onClick={() => setTeamTab(team.track_code)}
-                    className="border-t border-nhra-border/60 hover:bg-nhra-darker/40 cursor-pointer"
+                    className="cursor-pointer"
                   >
-                    <td className="px-4 py-3 text-gray-500 font-semibold">{i + 1}</td>
-                    <td className="px-4 py-3">
+                    <td className="text-gray-500 font-semibold tabular-nums">{i + 1}</td>
+                    <td>
                       <div className="text-white font-semibold">{team.team_name}</div>
                       <div className="text-xs text-gray-500">
                         {team.track_code}
@@ -3752,20 +3764,20 @@ export default function EtFinalsPage() {
                       </div>
                     </td>
                     <td
-                      className={`px-4 py-3 text-right font-semibold ${
+                      className={`text-right font-semibold ${
                         view === "jr" ? "text-gray-600" : "text-white"
                       }`}
                     >
                       {team.bigPoints}
                     </td>
                     <td
-                      className={`px-4 py-3 text-right font-semibold ${
+                      className={`text-right font-semibold ${
                         view === "big" ? "text-gray-600" : "text-white"
                       }`}
                     >
                       {team.jrPoints}
                     </td>
-                    <td className="px-4 py-3 text-right text-lg font-bold text-nhra-red">
+                    <td className="text-right text-lg font-bold text-nhra-red">
                       {team.totalPoints}
                       {(team.bigAdjustment !== 0 || team.jrAdjustment !== 0) && (
                         <span
@@ -3781,10 +3793,10 @@ export default function EtFinalsPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right text-green-400">
+                    <td className="text-right text-green-400">
                       {team.racers.filter((r) => r.points_eligible && (r.status === "racing" || r.status === "winner")).length}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-400">{team.racersStillAlive}</td>
+                    <td className="text-right text-gray-400">{team.racersStillAlive}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3838,7 +3850,7 @@ export default function EtFinalsPage() {
       {!activeTeam && sortedTeams.length > 1 && data && (
         <div className="mt-4 bg-nhra-card border border-nhra-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-nhra-border">
-            <h3 className="text-white font-bold text-sm">Points Outlook</h3>
+            <h3 className="text-white font-semibold text-sm">Points Outlook</h3>
             <p className="text-xs text-gray-500 mt-0.5">
               What each team can still add if every alive racer wins out — who&apos;s mathematically out of the next
               spot, and whose spot can still be taken. Rounds left are estimated from cars still standing (each round
@@ -3846,8 +3858,8 @@ export default function EtFinalsPage() {
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-nhra-darker text-gray-400 text-xs uppercase tracking-wider">
+            <table className="data-table text-xs">
+              <thead>
                 <tr>
                   <th className="text-left px-4 py-2 font-medium w-10">#</th>
                   <th className="text-left px-2 py-2 font-medium">Team</th>
@@ -3861,7 +3873,7 @@ export default function EtFinalsPage() {
                 {[...data.teams]
                   .sort((a, b) => a.rank - b.rank || b.totalPoints - a.totalPoints)
                   .map((t) => (
-                    <tr key={t.track_code} className="border-t border-nhra-border/50">
+                    <tr key={t.track_code}>
                       <td className="px-4 py-2 text-gray-500 font-semibold">{t.rank}</td>
                       <td className="px-2 py-2 text-white font-medium">{t.team_name}</td>
                       <td className="px-2 py-2 text-right font-bold text-white">{t.totalPoints}</td>
@@ -3928,7 +3940,7 @@ export default function EtFinalsPage() {
               combinedSuspect > 0 ? "bg-nhra-red/10 border-nhra-red/30" : "bg-nhra-darker/50 border-nhra-border"
             }`}
           >
-            <h2 className={combinedSuspect > 0 ? "text-red-400 font-bold" : "text-white font-bold"}>
+            <h2 className={combinedSuspect > 0 ? "text-sm text-red-400 font-semibold" : "text-sm text-white font-semibold"}>
               {combinedSuspect > 0
                 ? `${combinedSuspect} row${combinedSuspect === 1 ? "" : "s"} may be two people scored as one`
                 : `${combinedRows.length} row${combinedRows.length === 1 ? "" : "s"} holding more than one car`}
@@ -3973,7 +3985,7 @@ export default function EtFinalsPage() {
       {data && data.unmatched.length > 0 && (
         <div className="mt-8 bg-nhra-card border border-yellow-500/30 rounded-xl overflow-hidden">
           <div className="px-6 py-3 bg-yellow-500/10 border-b border-yellow-500/30">
-            <h2 className="text-yellow-500 font-bold">
+            <h2 className="text-sm text-yellow-500 font-semibold">
               {data.unmatched.length} racer{data.unmatched.length === 1 ? "" : "s"} not on any roster
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
@@ -3985,7 +3997,7 @@ export default function EtFinalsPage() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-gray-400 text-xs uppercase tracking-wider">
+              <thead className="text-gray-400 text-xs">
                 <tr>
                   <th className="w-8 py-2" />
                   <th className="text-left px-2 py-2 font-medium">Car #</th>
