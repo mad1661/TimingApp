@@ -82,7 +82,7 @@ const QUAL_RULE_LABELS: Record<string, string> = {
   lowest: "quickest ET",
   closest_over: "closest to index, no breakout",
   closest_any: "closest to index, breakout OK",
-  furthest_under: "furthest under index",
+  furthest_under: "furthest under dial",
   best_rt: "best reaction time",
 };
 
@@ -96,11 +96,33 @@ interface PointsOutFile {
   content: string;
 }
 
+/** One T/Q pass the QDAT can leave out. `under` is ET − dial. */
+interface QualCandidateRun {
+  key: string;
+  category: string;
+  car: string;
+  name: string;
+  round: string;
+  timestamp: string;
+  et: number | null;
+  dial: number | null;
+  under: number | null;
+}
+
+/** Round 1 compared with the sportsman ladder of the QDAT. */
+interface QualLadderCheck {
+  category: string;
+  ok: boolean;
+  summary: string;
+}
+
 interface DataOutResult {
   edat: ExportFile[];
   qdat: QdatFile[];
   points?: PointsOutFile[];
   timing?: TimingSystem;
+  qualCandidates?: QualCandidateRun[];
+  ladderChecks?: QualLadderCheck[];
   finalsPdfBase64: string | null;
   qualifyingPdfBase64: string | null;
   warnings: string[];
@@ -147,6 +169,8 @@ interface DataOutPrefs {
   pointsRaceCode: string;
   /** AccuTime grids stored as T rounds — build QDAT from each car's best run. */
   timeTrialsAsQualifying: boolean;
+  /** qualRunKey values left out of the QDAT. Missing keys stay in. */
+  excludedQualRuns: string[];
 }
 
 function loadDataOutPrefs(eventCode: string, season: string): DataOutPrefs | null {
@@ -158,6 +182,9 @@ function loadDataOutPrefs(eventCode: string, season: string): DataOutPrefs | nul
           classNumbers: p.classNumbers || {},
           pointsRaceCode: typeof p.pointsRaceCode === "string" ? p.pointsRaceCode : "",
           timeTrialsAsQualifying: p.timeTrialsAsQualifying === true,
+          excludedQualRuns: Array.isArray(p.excludedQualRuns)
+            ? p.excludedQualRuns.filter((k: unknown) => typeof k === "string" && k.trim() !== "")
+            : [],
         }
       : null;
   } catch {
@@ -518,6 +545,10 @@ export default function DataOutPage() {
   // AccuTime sessions scraped from getresults land as T rounds. Off, those
   // classes warn and emit no QDAT; on, T1/T2/… are the qualifying sheet.
   const [timeTrialsAsQualifying, setTimeTrialsAsQualifying] = useState(false);
+  // Passes left out of the QDAT while time trials count. Eliminations keep them.
+  const [excludedQualRuns, setExcludedQualRuns] = useState<string[]>([]);
+  const [qualCandidates, setQualCandidates] = useState<QualCandidateRun[]>([]);
+  const [ladderChecks, setLadderChecks] = useState<QualLadderCheck[]>([]);
   const [exportTiming, setExportTiming] = useState<TimingSystem>("compulink");
   const [detectedTiming, setDetectedTiming] = useState<TimingSystem>("compulink");
   // The PDFs build server-side for the picked classes on demand (they carry
@@ -801,6 +832,7 @@ export default function DataOutPage() {
         pro_scale: pointsProScale,
         timing: timingChoice === "auto" ? undefined : timingChoice,
         time_trials_as_qualifying: timeTrialsAsQualifying,
+        excluded_qual_runs: excludedQualRuns,
       }),
     });
     const body = await res.json();
@@ -818,6 +850,8 @@ export default function DataOutPage() {
       const classes = mergeExportClasses(result.edat, result.qdat, result.points || []);
       setExportClasses(classes);
       setExportWarnings(result.warnings);
+      setQualCandidates(result.qualCandidates || []);
+      setLadderChecks(result.ladderChecks || []);
       setExportTiming(result.timing || "compulink");
       if (timingChoice === "auto") setDetectedTiming(result.timing || "compulink");
       // Everything starts checked — the common case is "give me the event" —
@@ -831,6 +865,8 @@ export default function DataOutPage() {
       if (seq !== exportFetchSeq.current) return;
       setExportClasses(null);
       setExportWarnings([]);
+      setQualCandidates([]);
+      setLadderChecks([]);
       setExportError(err instanceof Error ? err.message : "Export failed");
     } finally {
       if (seq === exportFetchSeq.current) setExportLoading(false);
@@ -853,6 +889,9 @@ export default function DataOutPage() {
     setClassPins(prefs?.classNumbers || {});
     setPointsRaceCode(prefs ? prefs.pointsRaceCode : /^\d+$/.test(ec) ? ec : "");
     setTimeTrialsAsQualifying(prefs?.timeTrialsAsQualifying === true);
+    setExcludedQualRuns(prefs?.excludedQualRuns || []);
+    setQualCandidates([]);
+    setLadderChecks([]);
   }, [eventCode, season]);
 
   // The class checklist loads itself whenever the event/season fields or the
@@ -867,7 +906,7 @@ export default function DataOutPage() {
     const t = setTimeout(() => loadExportClasses(ec, s), 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventCode, season, classPins, pointsRaceCode, pointsProScale, timingChoice, timeTrialsAsQualifying]);
+  }, [eventCode, season, classPins, pointsRaceCode, pointsProScale, timingChoice, timeTrialsAsQualifying, excludedQualRuns.join("\u0001")]);
 
   /** Pin a class to the tower's C# (blank or 0 unpins it). */
   function pinClassNumber(category: string, value: string) {
@@ -880,6 +919,7 @@ export default function DataOutPage() {
       classNumbers: next,
       pointsRaceCode: pointsRaceCode.trim(),
       timeTrialsAsQualifying,
+      excludedQualRuns,
     });
   }
 
@@ -889,6 +929,7 @@ export default function DataOutPage() {
       classNumbers: classPins,
       pointsRaceCode: value.trim(),
       timeTrialsAsQualifying,
+      excludedQualRuns,
     });
   }
 
@@ -901,6 +942,22 @@ export default function DataOutPage() {
       classNumbers: classPins,
       pointsRaceCode: pointsRaceCode.trim(),
       timeTrialsAsQualifying: on,
+      excludedQualRuns,
+    });
+  }
+
+  /** Leave one qualifying pass out of the QDAT, or count it again. */
+  function toggleQualRun(key: string, include: boolean) {
+    const next = include ? excludedQualRuns.filter((k) => k !== key) : [...excludedQualRuns, key];
+    setExcludedQualRuns(next);
+    const ec = eventCode.trim();
+    const s = season.trim();
+    if (!ec || !s) return;
+    saveDataOutPrefs(ec, s, {
+      classNumbers: classPins,
+      pointsRaceCode: pointsRaceCode.trim(),
+      timeTrialsAsQualifying,
+      excludedQualRuns: next,
     });
   }
 
@@ -1473,7 +1530,7 @@ export default function DataOutPage() {
             </p>
             <label
               className="mt-3 flex items-start gap-2 cursor-pointer max-w-2xl"
-              title="Use T rounds as Q and build QDAT from each car's best run."
+              title="Use T rounds as Q and build QDAT from each car's best run. Round 1 pairings check that order."
             >
               <input
                 type="checkbox"
@@ -1484,10 +1541,80 @@ export default function DataOutPage() {
               <span className="text-xs text-gray-300">
                 <span className="text-white font-semibold">Treat Time Trials as Qualifying (AccuTime)</span>
                 <span className="block text-gray-500 mt-0.5">
-                  Use T rounds as Q and build QDAT from each car&apos;s best run.
+                  Use T rounds as Q and build QDAT from each car&apos;s best run. Stock, Super Stock and Comp
+                  take that best run by under-dial (ET − dial; −1.00 beats −0.50) across every T and Q round,
+                  then order the sheet the same way. Uncheck a run below to leave a real time trial out of the
+                  QDAT — eliminations still count it. Round 1 pairings are how you verify the order: they
+                  should be the ladder this sheet would draw (better qualifier against worse, byes included).
                 </span>
               </span>
             </label>
+            {timeTrialsAsQualifying && (qualCandidates.length > 0 || ladderChecks.length > 0) && (
+              <div className="mt-3 max-w-2xl border border-nhra-border rounded-lg px-3 py-2 bg-nhra-darker/40">
+                {ladderChecks.length > 0 && (
+                  <ul className="text-xs space-y-0.5 mb-2">
+                    {ladderChecks.map((c) => (
+                      <li key={c.category} className={c.ok ? "text-green-400" : "text-yellow-300"}>
+                        {c.summary}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {qualCandidates.length > 0 && (
+                  <div className="max-h-72 overflow-y-auto space-y-2">
+                    {(() => {
+                      const groups = new Map<string, QualCandidateRun[]>();
+                      for (const run of qualCandidates) {
+                        const list = groups.get(run.category);
+                        if (list) list.push(run);
+                        else groups.set(run.category, [run]);
+                      }
+                      return [...groups.entries()].map(([category, runs]) => (
+                        <details key={category} open={qualCandidates.length <= 40} className="text-xs">
+                          <summary className="cursor-pointer text-gray-300 font-semibold">
+                            {category}
+                            <span className="text-gray-500 font-normal">
+                              {" "}
+                              · {runs.length} run{runs.length === 1 ? "" : "s"}
+                              {runs.some((r) => excludedQualRuns.includes(r.key))
+                                ? ` · ${runs.filter((r) => excludedQualRuns.includes(r.key)).length} left out`
+                                : ""}
+                            </span>
+                          </summary>
+                          <ul className="mt-1 space-y-0.5 pl-1">
+                            {runs.map((run) => {
+                              const included = !excludedQualRuns.includes(run.key);
+                              const under =
+                                run.under === null ? "" : `${run.under > 0 ? "+" : ""}${run.under.toFixed(3)} under`;
+                              return (
+                                <li key={run.key}>
+                                  <label className="flex items-start gap-2 cursor-pointer text-gray-400">
+                                    <input
+                                      type="checkbox"
+                                      checked={included}
+                                      onChange={(e) => toggleQualRun(run.key, e.target.checked)}
+                                      className="accent-nhra-red cursor-pointer mt-0.5"
+                                    />
+                                    <span>
+                                      <span className="text-gray-200 font-mono">{run.car || "—"}</span>{" "}
+                                      {run.round} {run.timestamp}
+                                      {run.et !== null ? ` · ET ${run.et.toFixed(3)}` : ""}
+                                      {run.dial !== null ? ` · dial ${run.dial.toFixed(2)}` : ""}
+                                      {under ? ` · ${under}` : ""}
+                                      {run.name ? ` · ${run.name}` : ""}
+                                    </span>
+                                  </label>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </details>
+                      ));
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

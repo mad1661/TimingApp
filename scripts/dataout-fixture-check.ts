@@ -16,6 +16,7 @@ import {
   buildDataOutExport,
   buildQdatExport,
   detectTimingSystem,
+  qualRunKey,
   elimRoundsForCategory,
   fmtRt,
   racedataFileText,
@@ -596,6 +597,190 @@ const T = (h: string) => `06/19/2026 ${h}`;
     "time trials on: the best run may be the T pass",
     mixedOn.qualifiers.map((e) => `${e.car}:${e.et}`).join(" ") === "2101:6.4 2102:6.55",
     mixedOn.qualifiers.map((e) => `${e.car}:${e.et}`).join(" "),
+  );
+}
+
+// ——— 16. AccuTime T-as-Q: under-dial best run, uncheck, round-1 ladder ———
+// Stock / Super Stock / Comp rank each car's best counting pass by ET − dial
+// (more negative is better), not by raw ET or by the later pass. Round 1 is
+// the check: it should be the sportsman ladder of that sheet.
+{
+  const field = (category: string, classIndex: string) => {
+    // Best under is neither the quickest ET nor the later pass.
+    // 401: T1 −1.10 (10.40/11.50), T2 −0.20 (10.10/10.30) quicker and later.
+    // 402: T2 −0.90 (10.20/11.10) beats T1 −0.50 (10.00/10.50).
+    // 403: T1 −0.60 (9.90/10.50) — quickest ET in the field, third under.
+    // 404: T1 −0.10 (11.00/11.10).
+    const spec: [string, string, number, number, number][] = [
+      ["401", "09:00:00 AM", 10.4, 11.5, 0],
+      ["401", "11:00:00 AM", 10.1, 10.3, 4],
+      ["402", "09:01:00 AM", 10.0, 10.5, 0],
+      ["402", "11:01:00 AM", 10.2, 11.1, 3],
+      ["403", "09:02:00 AM", 9.9, 10.5, 2],
+      ["403", "11:02:00 AM", 10.8, 11.0, 0],
+      ["404", "09:03:00 AM", 11.0, 11.1, 1],
+      ["404", "11:03:00 AM", 10.05, 10.1, 0],
+    ];
+    const qual = spec.map(([car, h, et, dial, pos], i) =>
+      pass(i % 2 === 0 ? "T1" : "T2", `06/18/2026 ${h}`, car, et, {
+        category,
+        class_index: classIndex,
+        dial_in: dial,
+        qual_pos: pos,
+      }),
+    );
+    // Chart of 4: 1v3 and 2v4. Winners are the better qualifiers so the
+    // on-file pair text stays in sheet order.
+    const elim = [
+      pass("E1", T("10:00:00 AM"), "401", 10.5, { category, class_index: classIndex, dial_in: 11.5 }, true),
+      pass("E1", T("10:00:00 AM"), "403", 10.6, { category, class_index: classIndex, dial_in: 10.5 }),
+      pass("E1", T("10:02:00 AM"), "402", 10.4, { category, class_index: classIndex, dial_in: 11.1 }, true),
+      pass("E1", T("10:02:00 AM"), "404", 11.2, { category, class_index: classIndex, dial_in: 11.1 }),
+    ];
+    return { qual, elim, rows: [...qual, ...elim] };
+  };
+
+  const orderOf = (category: string, classIndex: string) => {
+    const { rows } = field(category, classIndex);
+    const off = buildDataOutExport(rows, [], {});
+    check(
+      `${category}: time trials off emits no QDAT`,
+      !off.qdat.some((f) => f.category === category),
+    );
+    const on = buildDataOutArtifacts(rows, [], { pdfs: false, timeTrialsAsQualifying: true });
+    const q = on.qdat.find((f) => f.category === category);
+    const got = q?.qualifiers.map((e) => `${e.car}:${e.et}:${e.index}`).join(" ");
+    check(
+      `${category}: best under-dial pass, then that order — not raw ET or the later run`,
+      got === "401:10.4:11.5 402:10.2:11.1 403:9.9:10.5 404:11:11.1",
+      got,
+    );
+    check(
+      `${category}: a Q Pos on the T rows does not override under-dial`,
+      !!q && on.warnings.some((w) => w.startsWith(`${category}: time-trial Q Pos ignored`)),
+      on.warnings.filter((w) => w.startsWith(category)).join(" | "),
+    );
+    return { rows, on, q };
+  };
+
+  const stock = orderOf("STOCK", "B/SA");
+  orderOf("SUPER STOCK", "SS/BA");
+  orderOf("COMPETITION ELIMINATOR", "C/DA");
+
+  const stockMatch = stock.on.ladderChecks.find((c) => c.category === "STOCK");
+  check(
+    "STOCK: round 1 matches the sportsman ladder of the under-dial sheet",
+    stockMatch?.ok === true &&
+      stockMatch.summary === "STOCK: round 1 matches this sheet (401 vs 403, 402 vs 404).",
+    stockMatch?.summary,
+  );
+  check(
+    "STOCK: a matching round 1 is not a warning",
+    !stock.on.warnings.some((w) => w.includes("round 1")),
+  );
+
+  const best = stock.rows.find((r) => r.car_number === "401" && r.round === "T1")!;
+  const dropped = buildDataOutArtifacts(stock.rows, [], {
+    pdfs: false,
+    timeTrialsAsQualifying: true,
+    excludedQualKeys: [qualRunKey(best)],
+  });
+  const droppedSheet = dropped.qdat.find((f) => f.category === "STOCK")?.qualifiers.map((e) => `${e.car}:${e.et}`).join(" ");
+  check(
+    "STOCK: unchecking the best under-dial pass lets the next one count",
+    droppedSheet === "402:10.2 403:9.9 401:10.1 404:11",
+    droppedSheet,
+  );
+  check(
+    "STOCK: the unchecked pass stays in the candidate list",
+    dropped.qualCandidates.some((c) => c.key === qualRunKey(best) && c.under === -1.1 && c.category === "STOCK"),
+  );
+  const droppedCheck = dropped.ladderChecks.find((c) => c.category === "STOCK");
+  check(
+    "STOCK: after that uncheck, round 1 no longer matches the sheet",
+    droppedCheck?.ok === false && (droppedCheck?.summary || "").includes("doesn't match this sheet"),
+    droppedCheck?.summary,
+  );
+  check(
+    "STOCK: that mismatch is a warning",
+    dropped.warnings.some((w) => w.includes("round 1 doesn't match this sheet")),
+  );
+  const edat = dropped.edat.find((f) => f.category === "STOCK");
+  check(
+    "STOCK: leaving a time trial out of the QDAT does not drop it — or round 1 — from the EDAT",
+    !!edat && edat.content.includes("401,") && edat.content.includes("403,"),
+    edat?.content,
+  );
+
+  // Same under-dial sheet, but round 1 is paired 1v2 / 3v4.
+  const crossedRows = [
+    ...stock.rows.filter((r) => r.round !== "E1"),
+    pass("E1", T("10:00:00 AM"), "401", 10.5, { category: "STOCK", class_index: "B/SA", dial_in: 11.5 }, true),
+    pass("E1", T("10:00:00 AM"), "402", 10.4, { category: "STOCK", class_index: "B/SA", dial_in: 11.1 }),
+    pass("E1", T("10:02:00 AM"), "403", 10.6, { category: "STOCK", class_index: "B/SA", dial_in: 10.5 }, true),
+    pass("E1", T("10:02:00 AM"), "404", 11.2, { category: "STOCK", class_index: "B/SA", dial_in: 11.1 }),
+  ];
+  const crossedOut = buildDataOutExport(crossedRows, [], { timeTrialsAsQualifying: true });
+  check(
+    "STOCK: round 1 paired off the chart is reported against the sheet",
+    crossedOut.ladderChecks.some(
+      (c) =>
+        c.category === "STOCK" &&
+        !c.ok &&
+        c.summary.includes("Expected 401 vs 403, 402 vs 404") &&
+        c.summary.includes("on file 401 vs 402, 403 vs 404"),
+    ),
+    crossedOut.ladderChecks.find((c) => c.category === "STOCK")?.summary,
+  );
+
+  const missing = [
+    ...stock.rows.filter((r) => r.round !== "E1"),
+    pass("E1", T("10:00:00 AM"), "401", 10.5, { category: "STOCK", class_index: "B/SA", dial_in: 11.5 }, true),
+    pass("E1", T("10:00:00 AM"), "403", 10.6, { category: "STOCK", class_index: "B/SA", dial_in: 10.5 }),
+    pass("E1", T("10:02:00 AM"), "402", 10.4, { category: "STOCK", class_index: "B/SA", dial_in: 11.1 }, true),
+    pass("E1", T("10:02:00 AM"), "999", 11.2, { category: "STOCK", class_index: "B/SA", dial_in: 11.1 }),
+  ];
+  const missingOut = buildDataOutExport(missing, [], { timeTrialsAsQualifying: true });
+  check(
+    "STOCK: a round-1 field that isn't the top of the sheet is its own warning",
+    missingOut.warnings.some((w) => w === "STOCK: round 1 isn't the top 4 on this sheet."),
+    missingOut.warnings.filter((w) => w.includes("round 1")).join(" | "),
+  );
+
+  // 3-car Comp: #1 bye, then 2 vs 3. 503 is quicker than 502 and less under.
+  const comp = "COMPETITION ELIMINATOR";
+  const byeRows: RunRow[] = [
+    pass("T1", "06/18/2026 09:00:00 AM", "501", 10.0, { category: comp, class_index: "D/A", dial_in: 11.0 }),
+    pass("T2", "06/18/2026 11:00:00 AM", "501", 10.5, { category: comp, class_index: "D/A", dial_in: 10.6 }),
+    pass("T1", "06/18/2026 09:01:00 AM", "502", 10.2, { category: comp, class_index: "E/A", dial_in: 10.6 }),
+    pass("T1", "06/18/2026 09:02:00 AM", "503", 10.05, { category: comp, class_index: "F/A", dial_in: 10.15 }),
+    pass("E1", T("10:00:00 AM"), "501", 10.1, { category: comp, class_index: "D/A", dial_in: 11.0 }, true),
+    pass("E1", T("10:02:00 AM"), "502", 10.3, { category: comp, class_index: "E/A", dial_in: 10.6 }, true),
+    pass("E1", T("10:02:00 AM"), "503", 10.4, { category: comp, class_index: "F/A", dial_in: 10.15 }),
+  ];
+  const byeOut = buildDataOutExport(byeRows, [], { timeTrialsAsQualifying: true });
+  const byeSheet = byeOut.qdat.find((f) => f.category === comp)?.qualifiers.map((e) => e.car).join(" ");
+  check("COMP: three cars order by under-dial, not raw ET", byeSheet === "501 502 503", byeSheet);
+  const byeCheck = byeOut.ladderChecks.find((c) => c.category === comp);
+  check(
+    "COMP: round 1 is the #1 bye plus 2 vs 3",
+    byeCheck?.ok === true && byeCheck.summary === "COMPETITION ELIMINATOR: round 1 matches this sheet (501 bye, 502 vs 503).",
+    byeCheck?.summary,
+  );
+
+  const winner = pass("E1", T("10:00:00 AM"), "301", 8.92, { category: "SUPER COMP", dial_in: 8.9, class_index: "SC" }, true);
+  const loser = pass("E1", T("10:00:00 AM"), "302", 8.7, { category: "SUPER COMP", dial_in: 8.9, class_index: "SC" });
+  const superOut = buildDataOutExport([winner, loser], [], {
+    timeTrialsAsQualifying: true,
+    excludedQualKeys: [qualRunKey(winner)],
+  });
+  check(
+    "SUPER COMP: an excluded key does not take a round-1 winner off the sheet",
+    superOut.qdat.find((f) => f.category === "SUPER COMP")?.qualifiers.map((e) => e.car).join(" ") === "301",
+  );
+  check(
+    "SUPER COMP: round-1 winners are not qualifying-run checkboxes",
+    !superOut.qualCandidates.some((c) => c.category === "SUPER COMP"),
   );
 }
 

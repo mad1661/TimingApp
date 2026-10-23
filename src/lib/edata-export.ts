@@ -3,6 +3,7 @@ import { RACE_CLASSES } from "./schedule-classes";
 import { groupRunsByTimestamp, parseTsToDate } from "./timestamp-utils";
 import { finishEt, finishMph } from "./run-finish";
 import { assignCompulinkClassNumbers } from "./accutime-points";
+import { sportsmanFirstRoundPairs } from "./class-elims";
 
 /**
  * Builder for CompuLink StarTrak "EData" elimination files (C##EDAT.TXT) — the
@@ -162,6 +163,12 @@ export interface DataOutExportOptions {
    * the class's usual rule. Super Comp / Gas / Street stay round-1 winners.
    */
   timeTrialsAsQualifying?: boolean;
+  /**
+   * Qualifying passes (Q/QC/C1, and T rounds when time trials count) left out
+   * of the QDAT. Keys are `qualRunKey`. Eliminations are not affected.
+   * Absent keys stay in. Used when an AccuTime T pass is still a real time trial.
+   */
+  excludedQualKeys?: readonly string[];
 }
 
 const EOL = "\r\n";
@@ -1348,9 +1355,21 @@ export interface QdatExportFile {
   hasIndex: boolean;
 }
 
+/** Round 1 compared with the sportsman ladder of the QDAT order. A match is not a warning. */
+export interface QualLadderCheck {
+  category: string;
+  ok: boolean;
+  /** Includes the category, so it can be shown on its own. */
+  summary: string;
+}
+
 export interface QdatExportResult {
   files: QdatExportFile[];
   warnings: string[];
+  /** T/Q passes the sheet could count, including ones left out. Super classes are not listed. */
+  qualCandidates: QualCandidateRun[];
+  /** Set only when time trials count and the class has T rounds plus a 2-wide round 1. */
+  ladderChecks: QualLadderCheck[];
 }
 
 interface QualifierAgg {
@@ -1459,12 +1478,40 @@ function passIndex(run: RunRow): number | null {
 }
 
 /**
+ * Stable id for one qualifying pass, so the Data Out page can leave a single
+ * run out of the QDAT and send that choice back. Stored runs use their dedup
+ * key; a row that has none (a fixture, a fresh parse) falls back to the fields
+ * that distinguish one pass from the next.
+ */
+export function qualRunKey(run: RunRow): string {
+  const stamped = (run._dedup_key || "").trim();
+  if (stamped) return stamped;
+  return [run.timestamp || "", norm(run.car_number), norm(run.round), norm(run.lane), norm(run.category), String(run._scrape_seq ?? "")].join("|");
+}
+
+/** A pass the QDAT might count, shown so it can be unchecked. `under` is ET − dial. */
+export interface QualCandidateRun {
+  key: string;
+  category: string;
+  car: string;
+  name: string;
+  round: string;
+  timestamp: string;
+  et: number | null;
+  dial: number | null;
+  under: number | null;
+}
+
+/**
  * How a class ranks its qualifying passes:
  *   - lowest: quickest ET (heads-up);
  *   - closest_over: closest to the index without going under — breakouts
  *     rank after every clean pass (Super Comp / Gas / Street);
  *   - closest_any: closest to the index either side (breakout OK);
- *   - furthest_under: most under the class index (Stock, Super Stock, Comp);
+ *   - furthest_under: most under the car's own dial (ET − dial; more negative
+ *     is better — Stock, Super Stock, Comp). 10.00 on an 11.00 dial is −1.00,
+ *     and −1.00 beats −0.50. Each car's best counting pass is chosen that way,
+ *     then the sheet is ordered by it;
  *   - best_rt: quickest reaction time.
  */
 export type QualRule = "lowest" | "closest_over" | "closest_any" | "furthest_under" | "best_rt";
@@ -1473,7 +1520,7 @@ export const QUAL_RULE_LABEL: Record<QualRule, string> = {
   lowest: "quickest ET",
   closest_over: "closest to index, no breakout",
   closest_any: "closest to index, breakout OK",
-  furthest_under: "furthest under index",
+  furthest_under: "furthest under dial",
   best_rt: "best reaction time",
 };
 
@@ -1586,6 +1633,69 @@ function compareKeys(a: [number, number], b: [number, number]): number {
   return a[0] - b[0] || a[1] - b[1];
 }
 
+function pairToken(cars: string[]): string {
+  return cars
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean)
+    .sort()
+    .join("|");
+}
+
+function describePair(cars: string[]): string {
+  if (cars.length <= 1) return `${cars[0] || "?"} bye`;
+  return `${cars[0]} vs ${cars[1]}`;
+}
+
+function describePairs(pairs: string[][]): string {
+  return pairs.map(describePair).join(", ");
+}
+
+/**
+ * Whether round 1 is the sportsman ladder of this sheet. The field is whoever
+ * actually ran round 1; they should be the top of the sheet, paired better
+ * against worse (a one-car pair is a bye). A 4-wide pair is not this ladder.
+ */
+function roundOneLadderCheck(category: string, sheetCars: string[], catRuns: RunRow[]): QualLadderCheck | null {
+  const rounds = elimRoundsForCategory(catRuns, category, []);
+  const e1 = rounds.find((r) => r.round === "E1");
+  if (!e1 || e1.pairs.length === 0) return null;
+  if (e1.pairs.some((p) => p.runs.length > 2)) return null;
+  const actual: string[][] = [];
+  const field = new Set<string>();
+  for (const p of e1.pairs) {
+    const cars = p.runs.map((r) => (r.car_number || "").trim()).filter(Boolean);
+    if (cars.length === 0) continue;
+    for (const c of cars) field.add(c.toUpperCase());
+    actual.push(cars);
+  }
+  if (field.size < 2) return null;
+  const top = sheetCars.filter(Boolean).slice(0, field.size);
+  const topSet = new Set(top.map((c) => c.toUpperCase()));
+  if (topSet.size !== field.size || [...field].some((c) => !topSet.has(c))) {
+    return {
+      category,
+      ok: false,
+      summary: `${category}: round 1 isn't the top ${field.size} on this sheet.`,
+    };
+  }
+  const expected = sportsmanFirstRoundPairs(top);
+  const expKeys = expected.map(pairToken).sort();
+  const actKeys = actual.map(pairToken).sort();
+  const same = expKeys.length === actKeys.length && expKeys.every((k, i) => k === actKeys[i]);
+  if (same) {
+    return {
+      category,
+      ok: true,
+      summary: `${category}: round 1 matches this sheet (${describePairs(expected)}).`,
+    };
+  }
+  return {
+    category,
+    ok: false,
+    summary: `${category}: round 1 doesn't match this sheet. Expected ${describePairs(expected)}; on file ${describePairs(actual)}.`,
+  };
+}
+
 function bestQualPass(passes: RunRow[], rule: QualRule, quarterMile: boolean, carIndex: number | null): RunRow | null {
   const judged = passes.filter((p) =>
     rule === "best_rt" ? p.rt !== null && p.rt !== undefined : passEt(p, quarterMile) !== null,
@@ -1626,9 +1736,13 @@ export function buildQdatExport(
   opts: DataOutExportOptions = {},
 ): QdatExportResult {
   const warnings: string[] = [];
+  const qualCandidates: QualCandidateRun[] = [];
+  const ladderChecks: QualLadderCheck[] = [];
   const timing = opts.timing || "compulink";
   const timeTrials = opts.timeTrialsAsQualifying === true;
+  const excluded = new Set((opts.excludedQualKeys || []).map((k) => k.trim()).filter(Boolean));
   const countsAsQual = (round: string | null | undefined) => isQualRound(round, timeTrials);
+  let emptiedByExclusion = false;
   const { runs: current, superseded } = findSupersededCopies(runs);
   warnings.push(...supersededWarnings(superseded.filter((c) => countsAsQual(c.run.round)), "QDAT"));
 
@@ -1691,7 +1805,28 @@ export function buildQdatExport(
         racers.set(key, agg);
       }
       agg.latest = run;
-      if (counts(run)) agg.qualPasses.push(run);
+      if (counts(run)) {
+        // Super Comp / Gas / Street list round-1 winners; leaving a T pass
+        // unchecked must not take a winner off that sheet.
+        if (!superClass) {
+          const et = passEt(run, quarterMile);
+          const dial = passIndex(run);
+          qualCandidates.push({
+            key: qualRunKey(run),
+            category,
+            car: (run.car_number || "").trim(),
+            name: (run.name || "").trim(),
+            round: (run.round || "").trim(),
+            timestamp: run.timestamp || "",
+            et,
+            dial,
+            under: et !== null && dial !== null ? Math.round((et - dial) * 1000) / 1000 : null,
+          });
+          if (!excluded.has(qualRunKey(run))) agg.qualPasses.push(run);
+        } else {
+          agg.qualPasses.push(run);
+        }
+      }
       if (run.qual_pos !== null && run.qual_pos !== undefined && run.qual_pos > 0) {
         const ts = tsMillis(run.timestamp);
         if (ts > agg.lastPosTs || (ts === agg.lastPosTs && seq > agg.lastPosSeq)) {
@@ -1713,6 +1848,13 @@ export function buildQdatExport(
       catRuns.filter((r) => (r.name || "").trim() || classDesignation(r)).map((r) => norm(r.car_number)),
     );
     const qualifiers = [...racers.values()].filter((a) => a.qualPasses.length > 0 && (!a.car || known.has(norm(a.car))));
+    // Unchecking every counting pass drops the file. A class that never had a
+    // countable pass still follows the old empty-sheet path below.
+    if (qualifiers.length === 0 && excluded.size > 0 && ordered.some(counts)) {
+      warnings.push(`${category}: every qualifying pass is unchecked — no QDAT.`);
+      emptiedByExclusion = true;
+      return;
+    }
     const allQualPasses = qualifiers.flatMap((a) => a.qualPasses);
     const elimLadder = qualifiers.some((a) => a.elimPos !== null);
     const hasIndex = allQualPasses.some((p) => passIndex(p) !== null);
@@ -1794,9 +1936,15 @@ export function buildQdatExport(
     // classes after Q4); before eliminations the class rule orders the sheet.
     const shownPos = rows.map((r) => r.pos).filter((p): p is number => p !== null);
     const brokenLadder = !elimLadder && new Set(shownPos).size < shownPos.length;
+    // AccuTime stores the grid as time trials, so a Q Pos on a T row is not a
+    // tower ladder. Stock / Super Stock / Comp — and any class that ranks
+    // furthest under its dial — take each car's best counting pass, then that
+    // order. An elimination ladder still pins, as a national sheet does.
+    const forceRuleOrder =
+      timeTrials && !elimLadder && !superClass && (classStyle === "index" || rule === "furthest_under");
     if (elimLadder) {
       rows.splice(0, rows.length, ...pinnedSheetOrder(rows, byRule));
-    } else if (brokenLadder) {
+    } else if (brokenLadder || forceRuleOrder) {
       rows.sort(byRule);
     } else {
       rows.sort((a, b) => {
@@ -1812,6 +1960,10 @@ export function buildQdatExport(
     if (brokenLadder) {
       warnings.push(
         `${category}: getresults repeats qualifying positions — the order is computed from the passes (${QUAL_RULE_LABEL[rule]}).`,
+      );
+    } else if (forceRuleOrder && positioned > 0) {
+      warnings.push(
+        `${category}: time-trial Q Pos ignored — the sheet is ordered by ${QUAL_RULE_LABEL[rule]} (each car's best pass).`,
       );
     } else if (computedOrder && !superClass) {
       warnings.push(
@@ -1877,13 +2029,29 @@ export function buildQdatExport(
       topSpeed,
       hasIndex: style === "index" || style === "super",
     });
+
+    // Round 1 is the check on an AccuTime sheet: the sportsman ladder of this
+    // order (better vs worse, byes included). National sheets have no T rounds,
+    // so they are not judged here. A match is reported; a mismatch is a warning.
+    const hasTimeTrial = allQualPasses.some((p) => /^T\d+$/i.test((p.round || "").trim()));
+    if (timeTrials && hasTimeTrial && !superClass && (classStyle === "index" || rule === "furthest_under")) {
+      const check = roundOneLadderCheck(
+        category,
+        rows.map((r) => r.entry.car),
+        catRuns,
+      );
+      if (check) {
+        ladderChecks.push(check);
+        if (!check.ok) warnings.push(check.summary);
+      }
+    }
   });
 
-  if (files.length === 0) {
+  if (files.length === 0 && !emptiedByExclusion) {
     warnings.push("No qualifying rounds (Q1, Q2, …) on file for this event yet.");
   }
 
-  return { files, warnings };
+  return { files, warnings, qualCandidates, ladderChecks };
 }
 
 // ——— Data Out: EDAT + QDAT together, one class number per class ———
@@ -1892,9 +2060,11 @@ export interface DataOutExportResult {
   edat: EdataExportFile[];
   qdat: QdatExportFile[];
   warnings: string[];
+  qualCandidates: QualCandidateRun[];
+  ladderChecks: QualLadderCheck[];
 }
 
-export interface DataOutTextOptions extends Pick<DataOutExportOptions, "qualRules" | "timing" | "timeTrialsAsQualifying"> {
+export interface DataOutTextOptions extends Pick<DataOutExportOptions, "qualRules" | "timing" | "timeTrialsAsQualifying" | "excludedQualKeys"> {
   /** C# the user pinned per normalized category — the tower's slot for a class it numbers its own way. */
   classNumberPresets?: Map<string, number>;
 }
@@ -1935,6 +2105,7 @@ export function buildDataOutExport(
     qualRules: opts.qualRules,
     timing: opts.timing,
     timeTrialsAsQualifying: timeTrials,
+    excludedQualKeys: opts.excludedQualKeys,
   });
   const qualPositions = new Map<string, Map<string, number>>();
   for (const f of qdat.files) {
@@ -1952,5 +2123,11 @@ export function buildDataOutExport(
   } else {
     warnings.push(...edat.warnings, ...qdat.warnings);
   }
-  return { edat: edat.files, qdat: qdat.files, warnings };
+  return {
+    edat: edat.files,
+    qdat: qdat.files,
+    warnings,
+    qualCandidates: qdat.qualCandidates,
+    ladderChecks: qdat.ladderChecks,
+  };
 }

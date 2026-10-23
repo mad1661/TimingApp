@@ -96,6 +96,26 @@ export function chartForSize(n: number): (number | null)[] {
   return slots;
 }
 
+/**
+ * First-round pairings the sportsman chart gives this qualifying order
+ * (index 0 is position 1). A one-car pair is a bye. Structural holes are
+ * dropped. This is the round-1 check on a QDAT: if the order is right, the
+ * event's round-1 pairs match these.
+ */
+export function sportsmanFirstRoundPairs(order: string[]): string[][] {
+  const slots = chartForSize(order.length);
+  const pairs: string[][] = [];
+  for (let i = 0; i < slots.length; i += 2) {
+    const cars: string[] = [];
+    for (const seed of [slots[i], slots[i + 1]]) {
+      const car = seed !== null ? order[seed - 1] : "";
+      if (car) cars.push(car);
+    }
+    if (cars.length) pairs.push(cars);
+  }
+  return pairs;
+}
+
 // ─── Category / transmission classification ───────────────────────────────
 
 export type CategoryKind = "stock" | "super_stock" | "other";
