@@ -159,6 +159,99 @@ export function extractDivisionNumber(value: string | null | undefined): string 
   return matches[matches.length - 1];
 }
 
+/**
+ * Division printed on a points row. The tech card's home division wins. A row
+ * that still has none stays blank (the file prints 0) unless the user typed a
+ * division for that row. Nothing is inferred from the car number.
+ */
+export function pointsDivision(fromTechCard: string | null | undefined, typed: string | null | undefined): string {
+  const card = extractDivisionNumber(fromTechCard);
+  if (card && card !== "0") return card;
+  const t = (typed || "").trim();
+  if (!/^\d{1,3}$/.test(t) || t === "0") return "";
+  return String(parseInt(t, 10));
+}
+
+export function divisionFixKey(scope: string, category: string, car: string): string {
+  return `${scope}|${(category || "").trim().toUpperCase()}|${(car || "").trim().toUpperCase()}`;
+}
+
+interface PointsFileParts {
+  header: string;
+  rows: { car: string; member: string; name: string; division: string; points: string; deduction: string }[];
+  trailer: string[];
+}
+
+/** Split a Compulink/Portatree points file into its rows. Names may contain commas. */
+function splitPointsFile(content: string): PointsFileParts {
+  const text = content.replace(/\x1a+\s*$/, "");
+  const lines = text.split(/\r?\n/);
+  const header = lines[0] || "";
+  const rows: PointsFileParts["rows"] = [];
+  const trailer: string[] = [];
+  let inRows = false;
+  for (const line of lines.slice(1)) {
+    if (!line || /^End of File/i.test(line)) {
+      trailer.push(line);
+      inRows = true;
+      continue;
+    }
+    if (inRows) {
+      trailer.push(line);
+      continue;
+    }
+    const parts = line.split(",");
+    if (parts.length < 6) {
+      trailer.push(line);
+      continue;
+    }
+    rows.push({
+      car: parts[0],
+      member: parts[1],
+      division: parts[parts.length - 3],
+      points: parts[parts.length - 2],
+      deduction: parts[parts.length - 1],
+      name: parts.slice(2, parts.length - 3).join(","),
+    });
+  }
+  return { header, rows, trailer };
+}
+
+/**
+ * Rewrite division 0 / blank on a points file where the user typed one.
+ * A row that already has a division is left alone. Line endings stay CRLF
+ * when the file used them; a trailing Ctrl-Z block is kept.
+ */
+/** Points-file rows whose division is still blank or 0. */
+export function blankDivisionRows(content: string): { car: string; name: string }[] {
+  return splitPointsFile(content)
+    .rows.filter((r) => {
+      const d = (r.division || "").trim();
+      return !d || d === "0";
+    })
+    .map((r) => ({ car: r.car, name: r.name }));
+}
+
+export function rewritePointsFileDivisions(
+  content: string,
+  divisionFor: (car: string) => string | null | undefined,
+): string {
+  const ctrl = content.match(/\x1a[\s\x1a]*$/)?.[0] || "";
+  const crlf = content.includes("\r\n");
+  const nl = crlf ? "\r\n" : "\n";
+  const { header, rows, trailer } = splitPointsFile(content);
+  const body = [header];
+  for (const row of rows) {
+    const current = (row.division || "").trim();
+    const typed = !current || current === "0" ? pointsDivision("", divisionFor(row.car)) : "";
+    const division = typed || current || "0";
+    body.push([row.car, row.member, row.name, division, row.points, row.deduction].join(","));
+  }
+  for (const line of trailer) if (line) body.push(line);
+  const joined = body.join(nl) + (content.endsWith("\n") || crlf ? nl : "");
+  return ctrl ? joined.replace(/\x1a[\s\x1a]*$/, "") + ctrl : joined;
+}
+
 export interface AccuPointsRow {
   car_number: string;
   member_number: string;

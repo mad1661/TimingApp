@@ -544,7 +544,7 @@ function buildDataOutPoints(
   }
   if (noDivision) {
     opts.warnings.push(
-      `${noDivision} points row${noDivision === 1 ? "" : "s"} print division 0 — the timing data has no home division, and no tech card with one matched. Import the event's tech cards to fill it.`,
+      `${noDivision} points row${noDivision === 1 ? "" : "s"} print division 0 — no tech card with a home division matched. Import tech cards, or fill the ones you know under Fix missing divisions. The car number is not used as a division.`,
     );
   }
   return files;
