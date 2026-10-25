@@ -28,7 +28,8 @@ const NO_STORE_HEADERS = {
  * POST /api/accutime-export  (multipart: files[], prior_sessions?, event_name?)
  *
  * Parses AccuTime session files — the unlocked text export (…dat.txt /
- * …qly.txt / Driversdbf.txt, one folder per class) or the Jet .dat / .qly /
+ * …qly.txt / Driversdbf.txt, one folder per class), an Access .mdb export
+ * (one Logging table per class, or a zip of it), or the Jet .dat / .qly /
  * Class.ini / Drivers.dbf, loose or zipped; the password-locked .acc is
  * skipped with a warning — merges the shared tech_cards store, and returns the
  * Compulink export package as JSON: QDAT + EDAT text files plus base64 finals

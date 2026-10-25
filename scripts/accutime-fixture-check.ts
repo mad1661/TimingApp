@@ -50,9 +50,12 @@ import {
   type QualPdfCategory,
 } from "../src/lib/racedata-pdf";
 import {
+  blankDivisionRows,
   buildPointsFileContent,
   compulinkClassNumber,
   countdownSeedPoints,
+  pointsDivision,
+  rewritePointsFileDivisions,
   scoreAccuTimeSession,
   type ProEventScale,
 } from "../src/lib/accutime-points";
@@ -1493,6 +1496,172 @@ function pdfStrings(pdf: Uint8Array | null): string[] {
     shown.includes("D/S") && shown.includes("A/SA") && shown.includes("11.50") && !shown.includes("STK"),
     shown.filter((s) => s === "D/S" || s === "A/SA" || s === "STK" || s === "11.50").join(" | "),
   );
+}
+
+// ——— Access .mdb export + elimination-round gaps (v1.53.0) ———
+{
+  const header = "RunNumber,RoundNumber,RaceType,WinnerFlag,Lane,CarNumber,LastName,DialIn,ReactionTime,et14,mph14,TimeStamp";
+  const row = (
+    run: number,
+    round: number,
+    raceType: number,
+    won: boolean,
+    lane: string,
+    car: string,
+    ts: string,
+  ) => `${run},${round},${raceType},${won ? 1 : 0},${lane},${car},Driver ${car},9.90,0.50,9.95,140.00,${ts}`;
+  // 8 cars. Qualifying (race type 0) then eliminations 1, 2, 4 — round 3 was
+  // never run; round 4 is round 2's two winners.
+  const lines = [header];
+  const cars = ["A", "B", "C", "D", "E", "F", "G", "H"];
+  cars.forEach((car, i) => {
+    lines.push(row(i + 1, 1, 0, i % 2 === 0, i % 2 ? "R" : "L", car, "10/22/26 9:00:00"));
+  });
+  const elim: [string, string, boolean, string][] = [
+    ["A", "B", true, "10/23/2026 13:00:00"],
+    ["C", "D", true, "10/23/2026 13:02:00"],
+    ["E", "F", true, "10/23/2026 13:04:00"],
+    ["G", "H", true, "10/23/2026 13:06:00"],
+    ["A", "C", true, "10/23/26 16:00:00"],
+    ["E", "G", true, "10/23/2026 16:02:00"],
+    ["A", "E", true, "10/24/2026 11:00:00"],
+  ];
+  elim.forEach(([left, right, leftWon, ts], i) => {
+    const round = i < 4 ? 1 : i < 6 ? 2 : 4;
+    lines.push(row(100 + i, round, 1, leftWon, "L", left, ts));
+    lines.push(row(100 + i, round, 1, !leftWon, "R", right, ts));
+  });
+  const parsed = parseAccuTimePack([
+    { name: "Rock/Super Gas/sessiondat.txt", data: latin1(lines.join("\r\n") + "\r\n") },
+  ]);
+  const sg = parsed.sessions[0];
+  check(
+    "gap: skipped elimination round stays an elimination and closes (E1 E2 F)",
+    sg?.classCode === "SG" && sg.elimRounds.map((r) => r.round).join(" ") === "E1 E2 F",
+    sg?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ") + " | " + (sg?.warnings || []).join(" / "),
+  );
+  check(
+    "gap: round 4's pairing is the final, previous round's winners",
+    sg?.elimRounds.at(-1)?.pairs[0]?.runs.map((r) => r.car_number).sort().join(",") === "A,E",
+    sg?.elimRounds.at(-1)?.pairs[0]?.runs.map((r) => r.car_number).join(","),
+  );
+  check(
+    "2-digit year: 10/23/26 expands to 2026",
+    (sg?.runs.find((r) => r.round === "E2")?.timestamp || "").includes("/2026"),
+    sg?.runs.find((r) => r.round === "E2")?.timestamp || "",
+  );
+
+  // The same gap with RaceType left at 0 (the text export) still follows the ladder.
+  const textLines = [header];
+  elim.forEach(([left, right, leftWon, ts], i) => {
+    const round = i < 4 ? 1 : i < 6 ? 2 : 4;
+    textLines.push(row(100 + i, round, 0, leftWon, "L", left, ts));
+    textLines.push(row(100 + i, round, 0, !leftWon, "R", right, ts));
+  });
+  const textGap = parseAccuTimePack([
+    { name: "Rock/Super Gas/sessiondat.txt", data: latin1(textLines.join("\r\n") + "\r\n") },
+  ]);
+  check(
+    "gap without race types: later round stays an elimination",
+    textGap.sessions[0]?.elimRounds.map((r) => r.round).join(" ") === "E1 E2 F",
+    textGap.sessions[0]?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ") +
+      " | " +
+      textGap.sessions[0]?.warnings.join(" / "),
+  );
+
+  check("division: a tech card number is kept", pointsDivision("NED — Division 1", "7") === "1");
+  check("division: a blank stays blank", pointsDivision("", "") === "" && pointsDivision("0", "") === "");
+  check("division: a typed value fills only a blank", pointsDivision("", "4") === "4" && pointsDivision("2", "9") === "2");
+  check("division: a car number is not accepted as a guess", pointsDivision("", "3651") === "");
+  const file = buildPointsFileContent("SUPER GAS", [
+    { car_number: "12", member_number: "1", name: "Ada", division: "", points: 20 },
+    { car_number: "34", member_number: "2", name: "Bea", division: "1", points: 10 },
+  ]);
+  const rewritten = rewritePointsFileDivisions(file, (car) => (car === "12" ? "3" : "9"));
+  check(
+    "division: the file prints the typed division and leaves a filled one",
+    rewritten.includes("12,1,Ada,3,20,0") && rewritten.includes("34,2,Bea,1,10,0"),
+    rewritten,
+  );
+  check("division: blank rows are the ones still 0", blankDivisionRows(file).map((r) => r.car).join(",") === "12");
+
+  const two = parseAccuTimePack(
+    [
+      { name: "Hemi Throwdown/sessiondat.txt", data: latin1(textLines.join("\r\n") + "\r\n") },
+      { name: "Jr Dragster Novice/sessiondat.txt", data: latin1(textLines.join("\r\n") + "\r\n") },
+    ],
+    { classCode: "JR" },
+  );
+  check(
+    "class pick does not stamp every unnamed class",
+    two.sessions.length === 2 && two.sessions.every((s) => s.classCode === ""),
+    two.sessions.map((s) => `${s.className}:${s.classCode}`).join(" | "),
+  );
+}
+
+{
+  const mdbPath = process.env.ROCK_MDB || "/tmp/rock/Rock Race 1 Export.mdb";
+  if (fs.existsSync(mdbPath)) {
+    const data = new Uint8Array(fs.readFileSync(mdbPath));
+    const { sessions, warnings } = parseAccuTimePack([{ name: "Rock Race 1 Export.mdb", data }]);
+    const by = new Map(sessions.map((s) => [s.classCode, s]));
+    const want = ["SC", "SG", "SS", "SST", "STK", "TD", "TS", "COMP"];
+    check(
+      "mdb: sportsman classes parse with their codes",
+      want.every((c) => by.has(c)),
+      sessions.map((s) => `${s.classCode || "—"}:${s.className}`).join(", "),
+    );
+    const sg = by.get("SG");
+    check(
+      "mdb: Super Gas closes the round-4 gap (E1–E5 F)",
+      sg?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" ") === "E1(32) E2(16) E3(8) E4(4) E5(2) F(1)",
+      sg?.elimRounds.map((r) => `${r.round}(${r.pairs.length})`).join(" "),
+    );
+    check(
+      "mdb: race dates are 2026",
+      want.every((c) => by.get(c)?.raceDate?.startsWith("2026")),
+      want.map((c) => `${c}=${by.get(c)?.raceDate}`).join(" "),
+    );
+    check(
+      "mdb: one event, not one per class",
+      accuEventGroups(sessions.filter((s) => want.includes(s.classCode))).length === 1,
+      String(accuEventGroups(sessions).length),
+    );
+    check(
+      "mdb: empty classes and test sessions are warned, not exported as races",
+      warnings.some((w) => /empty/i.test(w)) &&
+        warnings.some((w) => /test/i.test(w)) &&
+        !sessions.some((s) => /\bTEST\b/i.test(s.className) || s.className === "FUNNY CAR" || s.className === "TOP FUEL"),
+      warnings.filter((w) => /empty|test/i.test(w)).join(" | ") +
+        " || " +
+        sessions.map((s) => s.className).join(", "),
+    );
+    const sportsman = sessions.filter((s) => want.includes(s.classCode));
+    const arts = buildAccuTimeArtifacts(sportsman, [], { pointsRaceCode: "1", calcPoints: true });
+    check(
+      "mdb: EDAT, points, IDX and a finals PDF",
+      arts.edat.length === 8 && arts.points.length === 8 && !!arts.idx?.content && !!arts.finalsPdf?.length,
+      `edat=${arts.edat.length} points=${arts.points.length} idx=${arts.idx?.filename} pdf=${arts.finalsPdf?.length}`,
+    );
+    check(
+      "mdb: divisions are not invented",
+      arts.points.every((p) => p.rows.every((r) => !r.division || r.division === "0")),
+      arts.points
+        .flatMap((p) => p.rows.filter((r) => r.division && r.division !== "0").map((r) => `${p.classCode}:${r.car_number}=${r.division}`))
+        .slice(0, 5)
+        .join(", "),
+    );
+    const zipped = parseAccuTimePack([
+      { name: "rock.zip", data: zipSync({ "Rock Race 1 Export.mdb": data }) },
+    ]);
+    check(
+      "mdb: a zip of the database parses the same classes",
+      want.every((c) => zipped.sessions.some((s) => s.classCode === c)),
+      zipped.sessions.map((s) => s.classCode).join(","),
+    );
+  } else {
+    console.log("  skip  mdb sample (set ROCK_MDB)");
+  }
 }
 
 if (failures > 0) {

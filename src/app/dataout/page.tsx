@@ -7,10 +7,14 @@ import { RACE_CLASSES } from "@/lib/schedule-classes";
 import {
   DEDUCTION_REASONS,
   PRO_EVENT_SCALES,
+  blankDivisionRows,
   buildDeductionsSheet,
   buildPointsFileContent,
   deductionsFor,
+  divisionFixKey,
+  pointsDivision,
   proScaleLabel,
+  rewritePointsFileDivisions,
   type AccuPointsCategory,
   type AccuPointsSkipped,
   type PointsDeduction,
@@ -507,6 +511,67 @@ function downloadBytes(filename: string, bytes: Uint8Array, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+function MissingDivisionsPanel({
+  rows,
+  fixes,
+  onChange,
+}: {
+  rows: { key: string; category: string; car: string; name: string }[];
+  fixes: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (rows.length === 0) return null;
+  const filled = rows.filter((r) => pointsDivision("", fixes[r.key])).length;
+  return (
+    <div className="mt-3 border border-yellow-500/30 rounded-xl bg-yellow-500/5">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 text-left">
+        <p className="text-xs font-semibold text-yellow-500">
+          Fix missing divisions ({rows.length - filled} still blank{filled ? `, ${filled} filled` : ""})
+          <span className="text-gray-500 font-normal"> — {open ? "hide" : "show"}</span>
+        </p>
+        <p className="text-[11px] text-gray-400 mt-0.5">
+          These points rows have no home division on a tech card. Type a division to print it; a blank stays 0.
+          Nothing is guessed from the car number.
+        </p>
+      </button>
+      {open && (
+        <div className="max-h-80 overflow-auto border-t border-yellow-500/20">
+          <table className="w-full text-xs">
+            <thead className="text-gray-500 uppercase tracking-wider sticky top-0 bg-nhra-darker">
+              <tr>
+                <th className="text-left px-4 py-1.5 font-medium">Class</th>
+                <th className="text-left px-2 py-1.5 font-medium">Car</th>
+                <th className="text-left px-2 py-1.5 font-medium">Driver</th>
+                <th className="text-left px-4 py-1.5 font-medium">Division</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key} className="border-t border-nhra-border/40">
+                  <td className="px-4 py-1 text-gray-400">{r.category}</td>
+                  <td className="px-2 py-1 text-gray-300 font-mono">{r.car || "—"}</td>
+                  <td className="px-2 py-1 text-white">{r.name || "—"}</td>
+                  <td className="px-4 py-1">
+                    <input
+                      value={fixes[r.key] || ""}
+                      onChange={(e) => onChange(r.key, e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
+                      inputMode="numeric"
+                      placeholder="0"
+                      aria-label={`Division for ${r.car} ${r.name}`}
+                      className="w-14 px-2 py-1 bg-nhra-darker border border-nhra-border rounded text-xs text-white placeholder-gray-600"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DataOutPage() {
   const live = useLiveData();
   const source = live.config?.dataSource ?? "scraper";
@@ -607,6 +672,10 @@ export default function DataOutPage() {
   // Race code in the points filename: "16" → C10A16DP.TXT (golden sample).
   const [accuRaceCode, setAccuRaceCode] = useState("16");
   const [accuDeductions, setAccuDeductions] = useState<(PointsDeduction & { id: number })[]>([]);
+  // Divisions the user typed for points rows a tech card left blank. Keyed so
+  // an AccuTime pack and a getresults export don't share a car number's fix.
+  const DIVISION_FIX_LS = "timindata_dataout_division_fixes";
+  const [divisionFixes, setDivisionFixes] = useState<Record<string, string> | null>(null);
   const dedId = useRef(1);
   const [dedCat, setDedCat] = useState("");
   const [dedCar, setDedCar] = useState("");
@@ -639,7 +708,21 @@ export default function DataOutPage() {
   function pointsRowsFinal(cat: AccuPointsCategory) {
     return cat.rows.map((r) => {
       const deducted = deductionsFor(accuDeductions, cat.category, r.car_number);
-      return { ...r, deducted, final: r.points - deducted };
+      return {
+        ...r,
+        division: pointsDivision(r.division, divisionFixes?.[divisionFixKey("a", cat.category, r.car_number)]),
+        deducted,
+        final: r.points - deducted,
+      };
+    });
+  }
+
+  function setDivisionFix(key: string, value: string) {
+    setDivisionFixes((prev) => {
+      const next = { ...(prev || {}) };
+      if (!value) delete next[key];
+      else next[key] = value;
+      return next;
     });
   }
 
@@ -664,6 +747,33 @@ export default function DataOutPage() {
       ),
     );
   }
+
+  // Divisions typed for points rows a tech card left blank. Loaded once so a
+  // refresh doesn't wipe them, and not written back until that load lands.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DIVISION_FIX_LS);
+      const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+      const next: Record<string, string> = {};
+      if (parsed && typeof parsed === "object") {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === "string" && pointsDivision("", v)) next[k] = pointsDivision("", v);
+        }
+      }
+      setDivisionFixes(next);
+    } catch {
+      setDivisionFixes({});
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!divisionFixes) return;
+    try {
+      localStorage.setItem(DIVISION_FIX_LS, JSON.stringify(divisionFixes));
+    } catch {
+      // private mode — the fixes still apply for this visit
+    }
+  }, [divisionFixes]);
 
   // Restore the last-used header logos.
   useEffect(() => {
@@ -977,7 +1087,13 @@ export default function DataOutPage() {
       if (!selectedClasses.has(c.category)) continue;
       if (includeQdat && c.qdat) out.push({ filename: c.qdat.filename, content: racedataFileText(c.qdat.content, exportTiming) });
       if (includeEdat && c.edat) out.push({ filename: c.edat.filename, content: racedataFileText(c.edat.content, exportTiming) });
-      if (includePoints && c.points) out.push(c.points);
+      if (includePoints && c.points) {
+        const scope = `g|${eventCode.trim()}|${season.trim()}`;
+        out.push({
+          filename: c.points.filename,
+          content: rewritePointsFileDivisions(c.points.content, (car) => divisionFixes?.[divisionFixKey(scope, c.category, car)]),
+        });
+      }
     }
     return out;
   }
@@ -1047,7 +1163,7 @@ export default function DataOutPage() {
     // it's dropped from the upload with a note rather than failing everything.
     const kept = entries.filter((e) => !isJunkEntry(e.path));
     const accFiles = kept.filter((e) => /\.acc$/i.test(e.path));
-    const valid = kept.filter((e) => /\.(dat|qly|ini|dbf|zip|txt|csv)$/i.test(e.path));
+    const valid = kept.filter((e) => /\.(dat|qly|ini|dbf|zip|txt|csv|mdb)$/i.test(e.path));
     setAccuNote(
       accFiles.length > 0
         ? `${accFiles.map((e) => e.file.name).join(", ")} skipped — AccuTime .acc archives are password-locked. Use AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt) or the loose .qly / .dat / Class.ini / Drivers.dbf files instead.`
@@ -1057,7 +1173,7 @@ export default function DataOutPage() {
       setAccuError(
         accFiles.length > 0
           ? ""
-          : "Upload AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class — a zip of the whole event is fine), the session files (.dat / .qly / Class.ini / Drivers.dbf), or Compulink C#QDAT/C#EDAT .TXT.",
+          : "Upload AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class — a zip of the whole event is fine), an Access .mdb export, the session files (.dat / .qly / Class.ini / Drivers.dbf), or Compulink C#QDAT/C#EDAT .TXT.",
       );
       if (accuFileRef.current) accuFileRef.current.value = "";
       return;
@@ -1138,10 +1254,15 @@ export default function DataOutPage() {
       const parsed = body as unknown as AccuResult;
       const sessionsFull = Array.isArray(parsed.sessionsFull) ? parsed.sessionsFull : [];
       if (answer.packMode === "replace") {
-        // A new event: the old pack's deductions don't apply to it.
+        // A new event: the old pack's deductions and typed divisions don't apply.
         setAccuDeductions([]);
         setDedCat("");
         setDedCar("");
+        setDivisionFixes((prev) => {
+          const next = { ...(prev || {}) };
+          for (const key of Object.keys(next)) if (key.startsWith("a|")) delete next[key];
+          return next;
+        });
       }
       setAccuResult(parsed);
       setAccuSessions(sessionsFull);
@@ -1194,6 +1315,11 @@ export default function DataOutPage() {
     setAccuError("");
     setAccuNote("");
     setAccuDeductions([]);
+    setDivisionFixes((prev) => {
+      const next = { ...(prev || {}) };
+      for (const key of Object.keys(next)) if (key.startsWith("a|")) delete next[key];
+      return next;
+    });
     setDedCat("");
     setDedCar("");
     setAccuClassPick("");
@@ -1252,6 +1378,29 @@ export default function DataOutPage() {
   }
 
   const warnings = (result?.perFile || []).flatMap((f) => f.warnings);
+
+  const fixes = divisionFixes || {};
+  const accuMissingDivisions = (accuResult?.points || []).flatMap((cat) =>
+    cat.rows
+      .filter((r) => !pointsDivision(r.division, ""))
+      .map((r) => ({
+        key: divisionFixKey("a", cat.category, r.car_number),
+        category: cat.category,
+        car: r.car_number,
+        name: r.name,
+      })),
+  );
+  const grScope = `g|${eventCode.trim()}|${season.trim()}`;
+  const grMissingDivisions = (exportClasses || []).flatMap((c) =>
+    c.points
+      ? blankDivisionRows(c.points.content).map((r) => ({
+          key: divisionFixKey(grScope, c.category, r.car),
+          category: c.category,
+          car: r.car,
+          name: r.name,
+        }))
+      : [],
+  );
 
   return (
     <div className="max-w-4xl mx-auto pb-16">
@@ -1976,6 +2125,8 @@ export default function DataOutPage() {
         )}
       </div>
 
+        <MissingDivisionsPanel rows={grMissingDivisions} fixes={fixes} onChange={setDivisionFix} />
+
       {/* ——— AccuTime export: build the whole Compulink package from the
           timing computer's own session files ——— */}
       <div className="bg-nhra-card border border-nhra-border rounded-xl p-6 mb-6">
@@ -2004,8 +2155,9 @@ export default function DataOutPage() {
             <span className="font-mono">Class.ini</span> /{" "}
             <span className="font-mono">Drivers.dbf</span>) and Compulink{" "}
             <span className="font-mono">C#QDAT.TXT</span> +{" "}
-            <span className="font-mono">C#EDAT.TXT</span> still work. The{" "}
-            <span className="font-mono">.acc</span> archive is password-locked and can&apos;t be
+            <span className="font-mono">C#EDAT.TXT</span> still work. An AccuTime Access export (
+            <span className="font-mono">.mdb</span>, one table per class, or a zip of it) does too.
+            The <span className="font-mono">.acc</span> archive is password-locked and can&apos;t be
             read — the unlocked export carries the same data.
           </p>
           <p className="text-xs text-gray-400 mt-1.5 max-w-2xl">
@@ -2117,7 +2269,7 @@ export default function DataOutPage() {
             ref={accuFileRef}
             type="file"
             multiple
-            accept=".dat,.qly,.ini,.dbf,.zip,.txt,.csv,.DAT,.QLY,.INI,.DBF,.ZIP,.TXT,.CSV"
+            accept=".dat,.qly,.ini,.dbf,.zip,.txt,.csv,.mdb,.DAT,.QLY,.INI,.DBF,.ZIP,.TXT,.CSV,.MDB"
             className="hidden"
             onChange={(e) =>
               handleAccuUpload(
@@ -2129,12 +2281,13 @@ export default function DataOutPage() {
             }
           />
           <p className="text-white font-medium mb-1">
-            {accuUploading ? "Working…" : "Drop the AccuTime text zip or session files here"}
+            {accuUploading ? "Working…" : "Drop the AccuTime text zip, Access .mdb, or session files here"}
           </p>
           <p className="text-xs text-gray-500">
             Unlocked text export (…dat.txt + …qly.txt + Driversdbf.txt per class folder — the
-            whole-event zip is fine), race.dat + race.qly + Class.ini + Drivers.dbf, or Compulink
-            C#QDAT/C#EDAT .TXT — folders and zips welcome; the .acc is locked and not needed
+            whole-event zip is fine), an Access .mdb (one table per class), race.dat + race.qly +
+            Class.ini + Drivers.dbf, or Compulink C#QDAT/C#EDAT .TXT — folders and zips welcome;
+            the .acc is locked and not needed
           </p>
         </div>
 
@@ -2263,11 +2416,12 @@ export default function DataOutPage() {
 
         {accuResult && accuResult.sessions.some((s) => !s.classCode) && (
           <div className="mt-3 bg-yellow-500/5 border border-yellow-500/30 text-yellow-500 rounded-xl px-4 py-3 text-xs">
-            {accuResult.sessions.filter((s) => !s.classCode).length === accuResult.sessions.length
-              ? "No class code was found in the session files"
-              : "A session came through without a class code"}{" "}
-            — Class.ini or the class folder&apos;s name normally carries it. Pick the class above and hit Rebuild package;
-            until then those files export with the class marked UNKNOWN.
+            {accuResult.sessions.filter((s) => !s.classCode).length === 1
+              ? "One class has no code. Pick it above and hit Rebuild package."
+              : `${accuResult.sessions.filter((s) => !s.classCode).length} classes have no code (${accuResult.sessions
+                  .filter((s) => !s.classCode)
+                  .map((s) => s.className)
+                  .join(", ")}). They stay under those names — one pick can't name all of them.`}
           </div>
         )}
 
@@ -2429,6 +2583,10 @@ export default function DataOutPage() {
                     .join(" · ")}
                 </p>
               )}
+            </div>
+
+            <div className="px-4 pb-3">
+              <MissingDivisionsPanel rows={accuMissingDivisions} fixes={fixes} onChange={setDivisionFix} />
             </div>
 
             {accuResult.points.map((cat) => {

@@ -247,6 +247,7 @@ export function buildAccuTimeArtifacts(
   const qualCats: QualPdfCategory[] = [];
   const points: AccuPointsCategory[] = [];
   const pointsSkipped: AccuPointsSkipped[] = [];
+  let noDivision = 0;
   const idxEntries: IdxEntry[] = [];
   const calcPoints = opts.calcPoints !== false;
   const raceCode = (opts.pointsRaceCode || "").trim().replace(/-/g, "");
@@ -307,6 +308,7 @@ export function buildAccuTimeArtifacts(
           rows: scored.rows,
           notes: scored.notes,
         });
+        for (const row of scored.rows) if (!row.division || row.division === "0") noDivision++;
       }
     }
 
@@ -511,6 +513,11 @@ export function buildAccuTimeArtifacts(
   const qualifyingPdf = qualCats.length ? buildQualifyingPdf(pdfEvent, qualCats) : null;
 
   if (!anyElim) warnings.push("No elimination rounds were found in the AccuTime data — EDAT and the finals PDF are empty.");
+  if (noDivision > 0) {
+    warnings.push(
+      `${noDivision} points row${noDivision === 1 ? "" : "s"} have no home division on a tech card, so they print 0. Fill the ones you know under Fix missing divisions — the car number is not used as a division.`,
+    );
+  }
 
   const idxFile: AccuTimeTextFile | null = idxEntries.length
     ? { filename: "IDX14.TXT", category: "", content: buildIdxFile(idxEntries) }

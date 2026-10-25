@@ -65,6 +65,17 @@ import { RACE_CLASSES } from "./schedule-classes";
  * from the stamp. Every class of one event shares the stamp, which is also
  * how two events in one drop are told apart.
  *
+ * AccuTime's Access export (Cody's "Rock Race 1 Export.mdb", or a zip of it)
+ * is the same Jet format with one Logging table per class ("Super Gas") and a
+ * companion "Super Gas Drivers" table — not the single Logging table race.dat
+ * uses. RaceType 0 is qualifying and 1 is eliminations. A 2-digit year is
+ * expanded (26 → 2026); a year Jet stored as 19xx for that same window is
+ * moved up a century. Empty pro tables and test sessions are skipped. An
+ * elimination round number AccuTime skipped (Super Gas has no round 4; round
+ * 5 is round 3's winners) stays an elimination and the later rounds are
+ * renumbered so the ladder stays consecutive. The password-locked .acc is
+ * still not opened.
+ *
  * Splitting qualifying from eliminations can't rely on the calendar day
  * alone: alcohol and sportsman classes often run Q1 and E1 on the same day
  * under the same RoundNumber, and a round stopped by curfew finishes the next
@@ -177,7 +188,7 @@ function dirName(name: string): string {
 
 /** Folder or archive name without the archive extension: "FC.zip" → "FC". */
 function folderLabel(path: string): string {
-  return baseName(path).replace(/\.(zip|acc)$/i, "").trim();
+  return baseName(path).replace(/\.(zip|acc|mdb)$/i, "").trim();
 }
 
 /** macOS / Windows clutter that rides along in zips and folder drops. */
@@ -274,16 +285,45 @@ function readJetTable(data: Uint8Array, wanted: string): Record<string, unknown>
  * convention mdb-reader uses for Jet's local times, so fmtTimestamp and the
  * date keys read both sources alike.
  */
+/**
+ * Two-digit years on AccuTime stamps. 00–69 is the 2000s (26 → 2026, this
+ * app's races); 70–99 stays in the 1900s.
+ */
+function expandTwoDigitYear(year: number): number {
+  if (!Number.isFinite(year) || year >= 100) return year;
+  const yy = Math.trunc(year);
+  return yy >= 70 ? 1900 + yy : 2000 + yy;
+}
+
+/**
+ * Access stores a 2-digit year that some Jet readers surface as 19xx
+ * (26 → 1926). A race date in 1900–1969 is that window; shift it up a century.
+ * Full 4-digit years from 1970 on are left alone.
+ */
+function expandAccessDate(d: Date): Date {
+  if (Number.isNaN(d.getTime())) return d;
+  const y = d.getUTCFullYear();
+  const next = y >= 1900 && y < 1970 ? y + 100 : expandTwoDigitYear(y);
+  if (next === y) return d;
+  return new Date(Date.UTC(next, d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()));
+}
+
 function parseAccuTimeStamp(v: unknown): Date | null {
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    // mdb-reader hands back a Date. Expand a 2-digit / 19xx Access year here
+    // so a race.dat that already carries a real 1970+ timestamp is unchanged
+    // (expandAccessDate is a no-op then) and an Access table is corrected.
+    return expandAccessDate(v);
+  }
   const s = str(v);
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
   if (!m) return null;
   let hour = parseInt(m[4], 10);
   const ap = (m[7] || "").toUpperCase();
   if (ap === "PM" && hour < 12) hour += 12;
   if (ap === "AM" && hour === 12) hour = 0;
-  const d = new Date(Date.UTC(+m[3], +m[1] - 1, +m[2], hour, +m[5], +(m[6] || 0)));
+  const d = new Date(Date.UTC(expandTwoDigitYear(+m[3]), +m[1] - 1, +m[2], hour, +m[5], +(m[6] || 0)));
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -461,6 +501,12 @@ function classCodeFromName(name: string): string {
 interface LogRow {
   runNumber: number;
   roundNumber: number;
+  /**
+   * AccuTime's RaceType when the table has one: 0 qualifying, 1 eliminations.
+   * The unlocked text export often leaves it 0 for every pass, so it is only
+   * trusted when a session contains both.
+   */
+  raceType: number | null;
   winner: boolean;
   lane: string;
   car: string;
@@ -495,6 +541,7 @@ function readLogging(data: Uint8Array): LogRow[] {
     return {
       runNumber: num(r["runnumber"]) ?? 0,
       roundNumber: num(r["roundnumber"]) ?? 0,
+      raceType: num(r["racetype"]),
       winner: flag === true || flag === 1 || /^(1|-1|true|yes)$/i.test(str(flag)),
       lane: str(r["lane"]).toUpperCase(),
       car: str(r["carnumber"]),
@@ -793,10 +840,15 @@ function splitQualElim(
         }
       }
     } else {
-      // The ladder runs round after round: no skipped numbers.
-      const follows = rn === prevRn + 1 && cand.start > prev.start;
-      isElim = follows && shareIn(cand.cars, prev.winners) >= LADDER_SHARE;
-      if (!isElim && follows && cand.start > prev.end) {
+      // AccuTime sometimes skips a number (Super Gas has no round 4; round 5
+      // is round 3's winners). A later round that is those winners still
+      // belongs to the ladder — dropping it would file the rest as qualifying.
+      const later = cand.start > prev.start;
+      const ladders = shareIn(cand.cars, prev.winners) >= LADDER_SHARE;
+      const consecutive = rn === prevRn + 1;
+      const gap = rn > prevRn + 1;
+      isElim = later && ladders && (consecutive || gap);
+      if (!isElim && consecutive && cand.start > prev.end) {
         warnings.push(
           `Round ${rn}: the last passes don't follow the elimination ladder (cars that lost or never ran the previous round are in them) — left out of the eliminations. Check the output.`,
         );
@@ -831,6 +883,101 @@ function splitQualElim(
     );
   }
   return { qual, elim };
+}
+
+function passField(passes: Pass[]): { cars: Set<string>; winners: Set<string> } {
+  const cars = new Set<string>();
+  const winners = new Set<string>();
+  for (const p of passes) {
+    const real = p.rows.filter((r) => !isByeRow(r));
+    for (const r of real) {
+      const key = carKey(r);
+      cars.add(key);
+      if (r.winner || real.length === 1) winners.add(key);
+    }
+  }
+  return { cars, winners };
+}
+
+/**
+ * Renumber elimination rounds so a skipped AccuTime number doesn't leave a hole
+ * (round 5 of a 1–3, 5–7 ladder becomes round 4). A gap closes only when the
+ * later round's cars are the previous round's winners; anything else keeps its
+ * own number and is reported.
+ */
+function compactElimRounds(elim: Map<number, Pass[]>, warnings: string[]): Map<number, Pass[]> {
+  const keys = [...elim.keys()].sort((a, b) => a - b);
+  if (keys.length < 2 || keys.every((k, i) => k === keys[0] + i)) return elim;
+
+  const out = new Map<number, Pass[]>();
+  let assigned = keys[0];
+  out.set(assigned, elim.get(keys[0])!);
+  let prevKey = keys[0];
+  const skipped: string[] = [];
+  for (let i = 1; i < keys.length; i++) {
+    const k = keys[i];
+    const prevWinners = passField(elim.get(prevKey)!).winners;
+    const these = passField(elim.get(k)!).cars;
+    const ladders = shareIn(these, prevWinners) >= LADDER_SHARE;
+    if (k === prevKey + 1 || (k > prevKey + 1 && ladders)) {
+      if (k > prevKey + 1) {
+        const from = prevKey + 1;
+        const to = k - 1;
+        skipped.push(from === to ? String(from) : `${from}–${to}`);
+      }
+      assigned += 1;
+    } else {
+      assigned = k;
+      warnings.push(
+        `Round ${k} is numbered as an elimination but its cars aren't the previous round's winners — left at round ${k}.`,
+      );
+    }
+    out.set(assigned, elim.get(k)!);
+    prevKey = k;
+  }
+  if (skipped.length) {
+    warnings.push(
+      `AccuTime skipped elimination round ${skipped.join(" and ")} — the next round is the previous round's winners, so it stayed an elimination and the later rounds were renumbered to close the gap.`,
+    );
+  }
+  return out;
+}
+
+/**
+ * When a session records both race types, AccuTime already split qualifying
+ * (0) from eliminations (1) — the text export usually doesn't, and leaves 0
+ * on every pass, so this returns null and the ladder split decides.
+ */
+function splitByRecordedRaceType(
+  rows: LogRow[],
+  warnings: string[],
+): { qual: Map<number, Pass[][]>; elim: Map<number, Pass[]> } | null {
+  let hasQual = false;
+  let hasElim = false;
+  for (const r of rows) {
+    if (r.raceType === 0) hasQual = true;
+    else if (r.raceType === 1) hasElim = true;
+  }
+  if (!hasQual || !hasElim) return null;
+
+  const qual = new Map<number, Pass[][]>();
+  for (const [rn, passes] of buildPasses(rows.filter((r) => r.raceType === 0))) {
+    const segs = segmentRound(passes);
+    const sessions = segs.length ? qualSessionsOf(segs) : [];
+    if (sessions.length) qual.set(rn, sessions);
+  }
+  const elim = new Map<number, Pass[]>();
+  for (const [rn, passes] of buildPasses(rows.filter((r) => r.raceType === 1))) {
+    const kept = segmentRound(passes).flatMap((s) => s.passes);
+    if (kept.length) elim.set(rn, kept);
+  }
+  const other = rows.filter((r) => r.raceType !== 0 && r.raceType !== 1).length;
+  if (other > 0) {
+    warnings.push(
+      `${other} pass${other === 1 ? "" : "es"} had a race type other than qualifying (0) or eliminations (1) — left out.`,
+    );
+  }
+  return { qual, elim: compactElimRounds(elim, warnings) };
 }
 
 // ——— Session grouping: one drop can hold many classes ———
@@ -873,7 +1020,7 @@ function accuKind(f: PackFile): AccuFileKind {
   const base = baseName(f.name);
   let kind: AccuFileKind = "other";
   if (isJetDb(f.data)) {
-    if (/\.dat$/i.test(base)) kind = "dat";
+    if (/\.dat$/i.test(base) || /\.mdb$/i.test(base)) kind = "dat";
     else if (/\.dbf$/i.test(base) || /drivers/i.test(base)) kind = "dbf";
   } else if (isLoggingCsv(f.data)) {
     kind = "dat";
@@ -1481,12 +1628,300 @@ function expandArchives(files: PackFile[], topWarnings: string[], depth = 0): Pa
   return out;
 }
 
+// ——— AccuTime Access export: one Logging table per class ———
+
+const LOGGING_COLUMNS = ["runnumber", "roundnumber", "carnumber", "reactiontime"];
+
+interface JetTable {
+  name: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+}
+
+const jetTableCache = new WeakMap<Uint8Array, JetTable[] | null>();
+
+/** Every table of a Jet/Access file, keys lower-cased. Null when it isn't one or it won't open. */
+function readJetTables(data: Uint8Array): JetTable[] | null {
+  const cached = jetTableCache.get(data);
+  if (cached !== undefined) return cached;
+  if (!isJetDb(data)) {
+    jetTableCache.set(data, null);
+    return null;
+  }
+  try {
+    const reader = new MDBReader(toBuffer(data));
+    const tables = reader.getTableNames().map((name) => {
+      const table = reader.getTable(name);
+      const columns = table.getColumns().map((c) => c.name.toLowerCase());
+      const rows = table.getData().map((row) => {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(row)) out[k.toLowerCase()] = v;
+        return out;
+      });
+      return { name, columns, rows };
+    });
+    jetTableCache.set(data, tables);
+    return tables;
+  } catch {
+    jetTableCache.set(data, null);
+    return null;
+  }
+}
+
+function isLoggingTable(columns: string[]): boolean {
+  return LOGGING_COLUMNS.every((c) => columns.includes(c));
+}
+
+function isTestClassName(name: string): boolean {
+  return /\bTEST\b/i.test(name);
+}
+
+function isShellClassName(name: string): boolean {
+  return /^class$/i.test(name.trim());
+}
+
+function csvEscape(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function csvLine(fields: unknown[]): string {
+  return fields.map(csvEscape).join(",");
+}
+
+function latin1Bytes(s: string): Uint8Array {
+  return Buffer.from(s, "latin1");
+}
+
+function accessClock(v: unknown): Date | null {
+  const d = parseAccuTimeStamp(v);
+  return d;
+}
+
+function clockStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+}
+
+function csvClock(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()} ${d.getUTCHours()}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+function loggedCar(v: unknown): string {
+  return str(v);
+}
+
+function isPlaceholderCar(car: string): boolean {
+  return !car || /^BYE$/i.test(car) || /^(LEFT|RIGHT)$/i.test(car);
+}
+
+function rowHasInterval(r: Record<string, unknown>): boolean {
+  for (const key of ["ft60", "ft330", "et18", "mph18", "et1000", "mph1000", "et14", "mph14"]) {
+    const n = num(r[key]);
+    if (n !== null && n > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Turn an Access database that holds one Logging table per class into the
+ * per-class text export the rest of the parser already reads. A race.dat
+ * (one table named Logging) is left untouched.
+ */
+function expandAccessDatabases(files: PackFile[], warnings: string[]): PackFile[] {
+  const out: PackFile[] = [];
+  for (const f of files) {
+    const tables = readJetTables(f.data);
+    const logging = (tables || []).filter((t) => isLoggingTable(t.columns) && t.name.trim().toLowerCase() !== "logging");
+    if (!tables || logging.length === 0) {
+      out.push(f);
+      continue;
+    }
+    try {
+      out.push(...accessClassFiles(f, tables, logging, warnings));
+    } catch (err) {
+      warnings.push(
+        `${baseName(f.name)}: could not read this Access database (${err instanceof Error ? err.message : err}).`,
+      );
+    }
+  }
+  return out;
+}
+
+function accessClassFiles(f: PackFile, tables: JetTable[], logging: JetTable[], warnings: string[]): PackFile[] {
+  const byName = new Map(tables.map((t) => [t.name.trim().toLowerCase(), t]));
+  const skippedEmpty: string[] = [];
+  const skippedTest: string[] = [];
+  const included: { table: JetTable; rows: Record<string, unknown>[] }[] = [];
+  let emptyPasses = 0;
+
+  for (const table of logging) {
+    if (table.rows.length === 0) {
+      skippedEmpty.push(table.name);
+      continue;
+    }
+    if (isTestClassName(table.name) || isShellClassName(table.name)) {
+      skippedTest.push(`${table.name} (${table.rows.length} pass${table.rows.length === 1 ? "" : "es"})`);
+      continue;
+    }
+    const groups = new Map<string, Record<string, unknown>[]>();
+    for (const row of table.rows) {
+      const ts = accessClock(row["timestamp"]);
+      const key = `${num(row["racetype"]) ?? ""}|${num(row["roundnumber"]) ?? ""}|${num(row["runnumber"]) ?? ""}|${ts ? ts.getTime() : ""}`;
+      const list = groups.get(key);
+      if (list) list.push(row);
+      else groups.set(key, [row]);
+    }
+    const kept: Record<string, unknown>[] = [];
+    for (const group of groups.values()) {
+      const timed = group.some((r) => !isPlaceholderCar(loggedCar(r["carnumber"])) && rowHasInterval(r));
+      if (!timed) {
+        emptyPasses += 1;
+        continue;
+      }
+      kept.push(...group);
+    }
+    if (kept.length === 0) {
+      skippedEmpty.push(table.name);
+      continue;
+    }
+    included.push({ table, rows: kept });
+  }
+
+  const label = baseName(f.name);
+  if (skippedEmpty.length) {
+    warnings.push(`${label}: skipped ${skippedEmpty.length} empty class${skippedEmpty.length === 1 ? "" : "es"} (${skippedEmpty.join(", ")}).`);
+  }
+  if (skippedTest.length) {
+    warnings.push(`${label}: skipped test sessions ${skippedTest.join(", ")}.`);
+  }
+  if (emptyPasses > 0) {
+    warnings.push(
+      `${label}: left out ${emptyPasses} empty pass${emptyPasses === 1 ? "" : "es"} with no times.`,
+    );
+  }
+  if (included.length === 0) return [];
+
+  let earliest: Date | null = null;
+  for (const { rows } of included) {
+    for (const row of rows) {
+      const ts = accessClock(row["timestamp"]);
+      if (ts && (!earliest || ts < earliest)) earliest = ts;
+    }
+  }
+  const stamp = earliest ? raceStampOf(clockStamp(earliest)) : null;
+  const root = f.name.replace(/\.mdb$/i, "");
+  const produced: PackFile[] = [];
+  const unnamed: string[] = [];
+
+  for (const { table, rows } of included) {
+    const drivers = byName.get(`${table.name.trim().toLowerCase()} drivers`);
+    const nameByCar = new Map<string, string>();
+    if (drivers) {
+      for (const d of drivers.rows) {
+        const car = loggedCar(d["carnumber"]).toUpperCase();
+        if (!car || nameByCar.has(car)) continue;
+        const name = [str(d["firstname"]), str(d["lastname"])].filter(Boolean).join(" ");
+        if (name) nameByCar.set(car, name);
+      }
+    }
+    if (!classCodeFromName(table.name)) unnamed.push(table.name);
+
+    const logHeader = [
+      "RunNumber", "RoundNumber", "RaceType", "WinnerFlag", "Lane", "CarNumber", "LastName",
+      "DialIn", "IndexClass", "ReactionTime", "ft60", "ft330", "mph18", "et18", "mph1000",
+      "et1000", "mph14", "et14", "Margin", "TimeStamp",
+    ];
+    const logLines = [csvLine(logHeader)];
+    for (const row of rows) {
+      const ts = accessClock(row["timestamp"]);
+      const car = loggedCar(row["carnumber"]);
+      const flag = row["winnerflag"];
+      const won = flag === true || flag === 1 || /^(1|-1|true|yes)$/i.test(str(flag));
+      logLines.push(
+        csvLine([
+          num(row["runnumber"]) ?? "",
+          num(row["roundnumber"]) ?? "",
+          num(row["racetype"]) ?? "",
+          won ? "1" : "0",
+          str(row["lane"]),
+          car,
+          nameByCar.get(car.toUpperCase()) || "",
+          row["dialin"] ?? "",
+          str(row["indexclass"]),
+          row["reactiontime"] ?? "",
+          row["ft60"] ?? "",
+          row["ft330"] ?? "",
+          row["mph18"] ?? "",
+          row["et18"] ?? "",
+          row["mph1000"] ?? "",
+          row["et1000"] ?? "",
+          row["mph14"] ?? "",
+          row["et14"] ?? "",
+          row["margin"] ?? "",
+          ts ? csvClock(ts) : "",
+        ]),
+      );
+    }
+    const folder = table.name.replace(/[\\/]/g, " ").trim() || "Class";
+    const stem = stamp || "session";
+    produced.push({
+      name: `${root}/${folder}/${stem}dat.txt`,
+      data: latin1Bytes(logLines.join("\r\n") + "\r\n"),
+    });
+
+    if (drivers && drivers.rows.length > 0) {
+      const drvHeader = [
+        "CarNumber", "FirstName", "LastName", "City", "State", "IndexClass", "EngineMake",
+        "MakeOfCar", "ModelOfCar", "CuIn", "Membership", "AdvertisedHP", "FactoredHP",
+      ];
+      const drvLines = [csvLine(drvHeader)];
+      for (const d of drivers.rows) {
+        if (!loggedCar(d["carnumber"]) && !str(d["lastname"]) && !str(d["firstname"])) continue;
+        drvLines.push(
+          csvLine([
+            loggedCar(d["carnumber"]),
+            str(d["firstname"]),
+            str(d["lastname"]),
+            str(d["city"]),
+            str(d["state"]),
+            str(d["indexclass"]),
+            str(d["enginemake"]),
+            str(d["makeofcar"]),
+            str(d["modelofcar"]),
+            str(d["cuin"]),
+            str(d["membership"]),
+            str(d["advertisedhp"]),
+            str(d["factoredhp"]),
+          ]),
+        );
+      }
+      produced.push({
+        name: `${root}/${folder}/Driversdbf.txt`,
+        data: latin1Bytes(drvLines.join("\r\n") + "\r\n"),
+      });
+    }
+  }
+
+  if (unnamed.length) {
+    warnings.push(
+      `${label}: ${unnamed.join(", ")} ${unnamed.length === 1 ? "isn't a known class" : "aren't known classes"} — kept under ${unnamed.length === 1 ? "that name" : "those names"} with no class code. Pick a class on the page only when a single class needs one.`,
+    );
+  }
+  if (!stamp) {
+    warnings.push(`${label}: no pass had a readable date — the race date is unknown.`);
+  }
+  return produced;
+}
+
 export function parseAccuTimePack(
   inputFiles: PackFile[],
   opts: AccuTimeParseOptions = {},
 ): { sessions: AccuTimeSession[]; warnings: string[] } {
   const topWarnings: string[] = [];
-  const all = expandArchives(inputFiles, topWarnings);
+  const all = expandAccessDatabases(expandArchives(inputFiles, topWarnings), topWarnings);
 
   // Path B: Compulink QDAT/EDAT text builds sessions directly. A lone
   // Class.ini / Drivers.dbf dropped alongside belongs to those sessions
@@ -1557,12 +1992,18 @@ export function parseAccuTimePack(
       if (!fileStamp) warnings.push("No Class.ini and no race stamp in the file names — the race date is unknown.");
     }
 
-    // Class.ini's own code wins, then the class folder's name; the user's
-    // pick fills in only when neither gave one. Never "X" — that's the
+    // Class.ini's own code wins, then the class folder's name. The page's pick
+    // fills in only when exactly one session in the drop has no code — one
+    // pick can't name several unnamed classes. Never "X": that's the
     // schedule's Secure placeholder, and falling back to it printed X/SECURE
     // on every export of a classless session.
-    const classCode = ini.classCode || (opts.classCode || "").trim().toUpperCase();
-    const className = classCode ? CLASS_NAME_BY_CODE.get(classCode) || classCode : "UNKNOWN";
+    const classCode = ini.classCode;
+    const hinted = (group.classHint || "").trim();
+    const className = classCode
+      ? CLASS_NAME_BY_CODE.get(classCode) || classCode
+      : hinted
+        ? hinted.toUpperCase()
+        : "UNKNOWN";
     if (!classCode) {
       warnings.push(
         `${group.label}: no class code found — Class.ini normally carries it in the [Menu] section (FC, TF, PS, …), and the folder name "${group.classHint}" isn't a class name. Pick the class on the page and rebuild, name the folder after the class, or add Class.ini to the upload.`,
@@ -1634,8 +2075,14 @@ export function parseAccuTimePack(
     }));
     const seedByCar = new Map(qualifying.map((q) => [q.car_number.toUpperCase(), q.pos]));
 
-    // Split the log into qualifying sessions and elimination rounds.
-    const { qual, elim } = splitQualElim(buildPasses(logRows), warnings);
+    // Split the log into qualifying sessions and elimination rounds. A session
+    // that records both race types (the Access export) already separated them;
+    // everything else goes by the ladder, then a skipped elimination number is
+    // closed when the later round is the previous round's winners.
+    const recorded = splitByRecordedRaceType(logRows, warnings);
+    const split = recorded ?? splitQualElim(buildPasses(logRows), warnings);
+    const qual = split.qual;
+    const elim = recorded ? split.elim : compactElimRounds(split.elim, warnings);
 
     // Low ET / Top Speed across all qualifying passes (fall back to the .qly).
     let lowEt: AccuTimeSession["lowEt"] = null;
@@ -1785,13 +2232,23 @@ export function parseAccuTimePack(
     );
   }
 
+  // One class pick names one classless session. Several unnamed classes (an
+  // Access file's juniors and exhibition classes) stay as they parsed.
+  const pick = (opts.classCode || "").trim().toUpperCase();
+  if (pick && sessions.filter((s) => !s.classCode).length === 1) {
+    const i = sessions.findIndex((s) => !s.classCode);
+    const filled = applyAccuClassPick([sessions[i]], pick)[0];
+    filled.warnings = filled.warnings.filter((w) => !w.includes("no class code found"));
+    sessions[i] = filled;
+  }
+
   // Class order, pros first — the order the exports use; a whole-event drop
   // otherwise lists its classes in zip order.
   sessions.sort((a, b) => classOrder(a.classCode) - classOrder(b.classCode));
 
   if (sessions.length === 0) {
     topWarnings.push(
-      "No AccuTime sessions found — upload AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class) or the .dat / .qly / Class.ini / Drivers.dbf files from the session folder; a zip of either works. The .acc archive is password-locked and can't be read.",
+      "No AccuTime sessions found — upload AccuTime's unlocked text export (…dat.txt / …qly.txt / Driversdbf.txt, one folder per class), an Access .mdb export, or the .dat / .qly / Class.ini / Drivers.dbf files from the session folder; a zip of any of them works. The .acc archive is password-locked and can't be read.",
     );
   }
 
@@ -1974,7 +2431,9 @@ export function sanitizeAccuSessions(raw: unknown): AccuTimeSession[] {
  */
 export function applyAccuClassPick(sessions: AccuTimeSession[], classCode: string): AccuTimeSession[] {
   const code = (classCode || "").trim().toUpperCase();
-  if (!code) return sessions;
+  // One pick names one class. Stamping every unnamed session would merge an
+  // Access file's juniors and exhibition classes into that single code.
+  if (!code || sessions.filter((s) => !s.classCode).length !== 1) return sessions;
   return sessions.map((s) => {
     if (s.classCode) return s;
     const className = CLASS_NAME_BY_CODE.get(code) || code;
